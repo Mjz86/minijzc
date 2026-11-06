@@ -91,11 +91,17 @@
 //                       minijz_compiler.cpp -o minijz
 // Build (compile-time): add  -DMJZ_CX_ASSERT -fconstexpr-depth=8192 \
 //                       -fconstexpr-ops-limit=4000000000
-//   -> the ENTIRE pipeline (lex, parse, CFG, mjz graph analyses, SSA,
-//      optimization incl. call-graph SCC + inlining + unrolling, SSA
-//      destruction, bytecode emission, VM execution) then runs inside a
-//      static_assert at compile time (functions, recursion, mutual
-//      recursion and unrolled loops included).
+//   -> a static_assert compiles and executes a nontrivial program (loops,
+//      arrays, 2-D stores, input(), functions, mutual recursion) THROUGH THE
+//      PIPELINE at compile time: lex, parse, CFG (+ merge-tree
+//      normalization), mjz graph analyses, SSA, tier-0 + tier-1
+//      optimization (incl. array mem2reg), stack-array analysis, SSA
+//      destruction, register allocation, bytecode emission and the VM.
+//      g++'s constexpr evaluator retains bookkeeping for every evaluation
+//      step, so the compile-time run uses a bounded middle configuration
+//      (see cx_pipeline); --selftest runs the same program through the FULL
+//      default configuration (inlining, unrolling, closed forms, trap
+//      elimination, divmagic) at runtime.
 //
 // Usage:  minijz [options] [file.mjz]
 //   no file + tty  -> interactive REPL (blank line runs the buffer)
@@ -2294,6 +2300,31 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
     table.resize(mark); // leaving b: its entries go out of scope
     st.pop_back();
   }
+  // ---- final resolve sweep --------------------------------------------------
+  // A PHI argument's defining block need only dominate the PREDECESSOR EDGE,
+  // not the phi's own block, so the dominator preorder above can visit (and
+  // scan) a phi BEFORE the sibling block that CSE'd its argument away; the
+  // in-walk resolve misses that use and would leave it pointing at the
+  // dropped def. ren[v] = w implies w's def dominates v's def (the table is
+  // dominator-scoped), hence every ordinary use AND every pred-edge use of v
+  // is dominated by w's def — so resolving everything once more, globally,
+  // is sound.
+  for (uint32_t b = 0; b < fn.nblocks(); ++b)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+      Instr &I = fn.code[i];
+      auto rwt = [&](uint32_t &v) {
+        if (v == NONE || v >= nv || ren[v] == NONE) return;
+        uint32_t r = resolve(v);
+        if (r != v) {
+          v = r;
+          changed = true;
+        }
+      };
+      rwt(I.a);
+      rwt(I.b2);
+      rwt(I.c2);
+      for (uint32_t &av : I.args) rwt(av);
+    }
   if (changed) { // sweep CSE'd instrs, preserving block ranges
     bool any_drop = false;
     for (char c : drop) any_drop |= (c != 0);
@@ -3025,8 +3056,8 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
   std::vector<Iv> exit_((size_t)nb * nv, Iv{0, 0, true});
   std::vector<char> touched(nb, 0);
   std::vector<Iv> st(nv), edge(nv);
-  const uint32_t plain = 4 * nb + 16;
-  const uint32_t widened_cap = 4 * nb + 16;
+  const uint32_t plain = nb + 16;           // plain rounds: intervals
+  const uint32_t widened_cap = 2 * nb + 16; // converge in <= nb rounds
   bool widening = false;
   uint32_t round = 0;
   bool converged = false;
@@ -3277,6 +3308,9 @@ constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
 // delete writes, cuz why not") and Len(h) folds to the constant L.
 constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
   if (!lift_ok) return false;
+  bool did = false; // only report CHANGED when something was really mutated
+                     // (a previously-processed array re-classifies as "dead"
+                     // every round; without this the tier-1 fixpoint livelocks)
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nb || !nv) return false;
@@ -3460,6 +3494,7 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
             cls[AI.single[I.a]].dead) {
           drop[i] = 1;
           os.mem2reg_dses++;
+          did = true;
           continue;
         }
         nc.push_back(I);
@@ -3472,6 +3507,7 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
             nc.push_back({.k = K::Const, .dst = v, .c = 0});
           }
           os.mem2reg_lifts++;
+          did = true; // init consts + slot machinery: a real change
         }
       }
       fn.blocks[b].end = (uint32_t)nc.size();
@@ -3571,7 +3607,7 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
       }
     }
   }
-  return true;
+  return did;
 }
 
 // --- 9b2. linear forms: shared by reassociation & loop closed forms ------
@@ -3679,6 +3715,13 @@ constexpr uint32_t lin_cost(const LinForm &L) {
 // materialize L into `out`; the LAST instruction defines `dst`
 constexpr void lin_emit(Fn &fn, std::vector<Instr> &out, const LinForm &L,
                         uint32_t dst) {
+  // `out` may be a caller's larger accumulator (reassoc passes the whole
+  // rebuilt code vector): only instructions pushed BELOW are ours. Without
+  // the mark, a chain that collapses to a bare vreg (zero instructions,
+  // e.g. x = 0 + y) would tail-rewrite the dst of the LAST UNRELATED
+  // instruction — silently redefining it and leaving the bare vreg
+  // dangling.
+  const size_t mark = out.size();
   std::vector<std::pair<uint32_t, val_t>> ts{};
   for (const auto &p : L.t)
     if (p.second != 0) ts.push_back(p);
@@ -3732,8 +3775,9 @@ constexpr void lin_emit(Fn &fn, std::vector<Instr> &out, const LinForm &L,
     out.push_back({.k = K::Bin, .b = B::Add, .dst = r, .a = acc, .b2 = cv});
     acc = r;
   }
-  // acc must land in dst: rewrite the last emitted def, or Copy
-  if (!out.empty() && out.back().dst == acc && acc != dst) {
+  // acc must land in dst: rewrite the last emitted def (of THIS chain), or
+  // emit a Copy
+  if (out.size() > mark && out.back().dst == acc && acc != dst) {
     out.back().dst = dst;
   } else if (acc != dst) {
     out.push_back({.k = K::Copy, .dst = dst, .a = acc});
@@ -5837,20 +5881,20 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
     for (uint32_t it = 0; it < cap; ++it) {
       bool ch = false, c = false;
       c = opt_constprop(fn, os); // fold/identities/branch folds
-      dbg_pass(cfg.debug, fn, "fold", c);
+      if (cfg.debug) dbg_pass(cfg.debug, fn, "fold", c);
       ch |= c;
       normalize_phis(fn);
 #ifndef MJZ_DBG_NO_COPYPROP
       if (cfg.p_copyprop) {
         c = opt_copyprop(fn, os); // copies -> uses of the source
-        dbg_pass(cfg.debug, fn, "copyprop", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "copyprop", c);
         ch |= c;
       }
 #endif
       normalize_phis(fn);
       if (cfg.p_canon) {
         c = opt_canon(fn, os); // canonical forms + NOT-of-compare
-        dbg_pass(cfg.debug, fn, "canon", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "canon", c);
         ch |= c;
       }
       normalize_phis(fn);
@@ -5858,28 +5902,28 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_cse) {
         An A = analyze(fn);
         c = opt_cse(fn, A, os); // dominating recomputation -> reuse
-        dbg_pass(cfg.debug, fn, "cse", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "cse", c);
         ch |= c;
         normalize_phis(fn);
       }
 #endif
       if (cfg.p_unreach) {
         c = opt_remove_unreachable(fn, os); // dead blocks + phi degeneration
-        dbg_pass(cfg.debug, fn, "unreach", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "unreach", c);
         ch |= c;
       }
       normalize_phis(fn);
 #ifndef MJZ_DBG_NO_SPLICE
       if (cfg.p_splice) {
         c = opt_splice(fn, os); // collapse single-pred/succ jump chains
-        dbg_pass(cfg.debug, fn, "splice", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "splice", c);
         ch |= c;
       }
 #endif
       normalize_phis(fn);
       if (cfg.p_dce) {
         c = opt_dce(fn, os);
-        dbg_pass(cfg.debug, fn, "dce", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "dce", c);
         ch |= c;
       }
       normalize_phis(fn);
@@ -5897,14 +5941,14 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_mem2reg) {
         An A = analyze(fn);
         c = opt_mem2reg(fn, A, os, cfg.lift_ok);
-        dbg_pass(cfg.debug, fn, "mem2reg", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "mem2reg", c);
         ch |= c;
         normalize_phis(fn);
       }
       if (cfg.p_trapelim) {
         An A = analyze(fn);
         c = opt_trapelim(fn, A, os); // ranges + aliasing -> nt flags
-        dbg_pass(cfg.debug, fn, "trapelim", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "trapelim", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5912,7 +5956,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_licm) {
         An A = analyze(fn);
         c = opt_licm(fn, A, os); // hoist invariants to the preheader
-        dbg_pass(cfg.debug, fn, "licm", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "licm", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5920,7 +5964,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #ifndef MJZ_DBG_NO_DIVMAGIC
       if (cfg.p_divmagic) {
         c = opt_divmagic(fn, os); // /constant -> mulhi+shift
-        dbg_pass(cfg.debug, fn, "divmagic", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "divmagic", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5928,7 +5972,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #ifndef MJZ_DBG_NO_REASSOC
       if (cfg.p_reassoc) {
         c = opt_reassoc(fn, os); // canonicalize +/-/*c chains (feeds LCF)
-        dbg_pass(cfg.debug, fn, "reassoc", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "reassoc", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5946,7 +5990,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_unroll && cfg.unroll) {
         An A = analyze(fn);
         bool c = opt_unroll(fn, A, os, cfg.unroll);
-        dbg_pass(cfg.debug, fn, "unroll", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "unroll", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5955,7 +5999,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_lcf) {
         An A2 = analyze(fn); // unrolling may have reshaped the CFG
         bool c = opt_lcf(fn, A2, os); // closed forms / simulators
-        dbg_pass(cfg.debug, fn, "lcf", c);
+        if (cfg.debug) dbg_pass(cfg.debug, fn, "lcf", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -9950,7 +9994,23 @@ constexpr bool cx_pipeline() {
       "print dd / 7;\n"
       "print dd % 7;\n"; // divmagic lowering, runtime dividend
   std::vector<val_t> tape{19, 23, 1000003}; // the input() reads (EOF -> 0)
-  Program P = compile(src);
+  // Bounded fixpoint budgets for the compile-time run: the constexpr
+  // evaluator tracks every allocation of every round, and the full default
+  // budget (24 rounds x tiers x fns x inline rounds) does not fit in a
+  // 4 GiB cc1plus. The mechanics are identical; --selftest runs the same
+  // program through the DEFAULT config at runtime.
+  // g++'s constexpr evaluator retains bookkeeping for EVERY evaluation
+  // step; the full default configuration (inlining rounds, unrolled copies,
+  // the interval fixpoint's stores) does not fit a 4 GiB cc1plus. The
+  // static_assert therefore runs a bounded middle configuration; the same
+  // program goes through the FULL default pipeline in --selftest at runtime.
+  PassCfg cxcfg{};
+  cxcfg.set_level(2);
+  cxcfg.fp_limit = 4;
+  cxcfg.p_trapelim = false; // the range analysis's per-store bookkeeping
+                            // is the single largest constexpr consumer
+  cxcfg.p_divmagic = false; // the 128-bit reciprocal algebra is the second
+  Program P = compile(src, cxcfg);
   if (!P.ok) return false;
   if (!P.uses_input) return false;
   // the analyses really ran: one loop with nesting info from the lib
