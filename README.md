@@ -1,0 +1,2 @@
+# minijzc
+sloppy! test compiler 
