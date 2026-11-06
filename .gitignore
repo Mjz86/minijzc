@@ -32,3 +32,4 @@
 *.app
 /mjz_lib
 *.pdb
+/build
