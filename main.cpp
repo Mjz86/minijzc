@@ -27,10 +27,14 @@
 //               scoped CSE, unreachable-block removal + phi degeneration,
 //               block splicing, SSA DCE — always run to a fixpoint first
 //             tier 1 “middle”   : mem2reg (array memory-to-register lifting
-//               + dead-store elimination for never-read arrays), trapelim
-//               (interval range analysis + handle aliasing -> `nt` proofs:
-//               div/mod/load/store traps PROVEN impossible), LICM, div/mod-
-//               by-constant -> mulhi+shift+bitops (reciprocal from mjz_lib's
+//               + dead-store elimination for never-read arrays + DEAD-ALLOC
+//               DELETION: once nothing reads/writes an array, its allocation
+//               itself is pure dead weight and dies, gated by the same
+//               handle-observability analysis — no stack array, no memset,
+//               no arena slot), trapelim (interval range analysis + handle
+//               aliasing -> `nt` proofs: div/mod/load/store traps PROVEN
+//               impossible), LICM, div/mod-by-constant -> mulhi+shift+bitops
+//               (reciprocal from mjz_lib's
 //               get_devide_inverse_and_shift), reassociation (+,-,*c chains
 //               -> canonical linear forms) — fixpoint rounds after each
 //             tier 2 “expensive”: full loop unrolling (exact constant trip
@@ -38,9 +42,19 @@
 //               additive/geometric series exact mod 2^64, non-affine bodies
 //               simulated at compile time, a GENERAL any-condition simulator
 //               (no induction variable needed: Euclid's `while (h != 0)` GCD
-//               folds to a constant), RUNTIME trip counts get a guarded
-//               closed form with the loop as the wrap fallback. CFG
-//               restructuring runs ONLY after tiers 0/1 reach their fixpoint.
+//               folds to a constant), RUNTIME trip counts: when the body is
+//               provably pure+trap-free and the induction provably cannot
+//               wrap (constant i0 >= 0, unit step) the exact closed form is
+//               emitted UNGUARDED and the loop deleted; otherwise a guarded
+//               closed form keeps the original loop as the wrap fallback
+//               (with the header phis correctly re-keyed to the new entry
+//               edge). CONST-CALL EVALUATION: a call with constant arguments
+//               to a function that is pure arithmetic, transitively, is
+//               evaluated exactly at compile time — RECURSIVE functions
+//               included (fact(4), mutually recursive is_even(10)); a trap,
+//               the 512-frame cap, or the step budget aborts and keeps the
+//               runtime call. CFG restructuring runs ONLY after tiers 0/1
+//               reach their fixpoint.
 //          -> stack-allocation analysis (non-escaping constant-length
 //             arrays become C locals; the arena is emitted only when
 //             something actually escapes) — gated by the program-wide
@@ -91,17 +105,13 @@
 //                       minijz_compiler.cpp -o minijz
 // Build (compile-time): add  -DMJZ_CX_ASSERT -fconstexpr-depth=8192 \
 //                       -fconstexpr-ops-limit=4000000000
-//   -> a static_assert compiles and executes a nontrivial program (loops,
-//      arrays, 2-D stores, input(), functions, mutual recursion) THROUGH THE
-//      PIPELINE at compile time: lex, parse, CFG (+ merge-tree
-//      normalization), mjz graph analyses, SSA, tier-0 + tier-1
-//      optimization (incl. array mem2reg), stack-array analysis, SSA
-//      destruction, register allocation, bytecode emission and the VM.
-//      g++'s constexpr evaluator retains bookkeeping for every evaluation
-//      step, so the compile-time run uses a bounded middle configuration
-//      (see cx_pipeline); --selftest runs the same program through the FULL
-//      default configuration (inlining, unrolling, closed forms, trap
-//      elimination, divmagic) at runtime.
+//   -> three static_asserts compile and run programs through the ENTIRE
+//      pipeline (lex, parse, CFG, mjz graph analyses, SSA, optimization
+//      incl. call-graph SCC + inlining + const-call evaluation of
+//      recursion + unrolling + closed forms + divmagic, SSA destruction,
+//      bytecode emission, VM execution) at build time; g++ retains each
+//      constant expression's state, so the assert count is memory-bounded
+//      (--selftest runs the full battery of all four at runtime).
 //
 // Usage:  minijz [options] [file.mjz]
 //   no file + tty  -> interactive REPL (blank line runs the buffer)
@@ -203,12 +213,16 @@
 //   This pass is the ARRAY version — memory-to-register lifting:
 //     * liftable: one allocation, constant length <= 256, every access via
 //       a provably-single handle with CONSTANT in-range index -> each array
-//       element becomes a stack of SSA versions (phis at the element's IDF);
-//       the Alloc itself STAYS in the arena (handle parity!).
+//       element becomes a stack of SSA versions (phis at the element's IDF).
 //     * dead: never read, and every store provably non-trapping (constant
 //       index in range, or `nt` from trapelim — the tier-1 fixpoint re-runs
 //       mem2reg, so round 2 sees round 1's proofs) -> the stores are simply
 //       deleted. "If the array is not read we just delete writes."
+//     * dead ALLOCATION: once lifting/DSE has removed every Load/Store/Len
+//       of an array (or it never had any), the allocation itself is unused;
+//       under the program-wide handle-observability gate (stkarr_ok) its
+//       deletion is invisible, so the Alloc dies too — the emitted C gets
+//       no `int64_t mjz_sN[len];` declaration and no memset at all.
 //
 // ------------------------------------------------------- 9e0 the pass manager
 //   PassCfg is threaded CLI -> compile -> optimize. Three cost tiers (see
@@ -234,12 +248,31 @@
 //   the exact wrapping/trapping arithmetic (a trap aborts and keeps the
 //   loop) and splice the final phi values in as constants. This is what
 //   folds Euclid's GCD to 21 with no induction variable at all. Runtime
-//   trip counts: guarded closed form, original loop kept as the wrap case.
+//   trip counts: if the body is pure and provably non-trapping AND the
+//   induction provably cannot wrap (constant i0 >= 0 with unit step: D =
+//   B - i0 lands in (0, MAX] whenever the condition holds, and iN = i0 +
+//   (B - i0) reproduces B bit-exactly), the closed form is exact for every
+//   runtime B — emit it UNGUARDED and delete the loop. Otherwise keep a
+//   guard (closed form only when the wrap-safety proof holds at runtime)
+//   with the original loop as the honest fallback, the header phis
+//   re-keyed to the guard edge so destruction places the entry copies.
 //
 // ------------------------------------------------------- 9e2 interprocedural
 //   Call-graph SCC (lib Tarjan): multi-member SCC or self-edge = recursive =
 // never inlined; otherwise inline bottom-up (callees first, constants flow
 // through), re-optimizing each caller, then dead-function elimination.
+//
+// ------------------------------------------------- 9e3 const-call evaluation
+//   Interprocedural, after inlining (so only recursion survivors remain as
+//   calls): a Call whose arguments are all compile-time constants and whose
+//   callee is pure arithmetic TRANSITIVELY (every fn it reaches uses only
+//   Const/Copy/Bin/Br/Cbr/Phi/Call/Ret — no Print, no input(), no arena) is
+//   executed exactly at compile time by a mini SSA interpreter that mirrors
+//   run_prog (edge-resolved phis, wrapping arithmetic, Ret = val[a]), with
+//   the SAME 512-frame recursion cap and a 2^20-step budget: a trap or a
+//   cap aborts the fold and keeps the runtime call (a runtime TRAP is
+//   observable). fact(4) and is_even(10) become constants; dead-function
+//   elimination then removes the callless functions entirely.
 //
 // ------------------------------------------------ 9g SSA destruction + slots
 //   Critical edges split; phis -> per-edge parallel copies; cycles broken
@@ -1829,6 +1862,8 @@ struct OptStats {
   uint32_t mem2reg_lifts{}; // arrays lifted to SSA vregs (registers)
   uint32_t mem2reg_dses{};  // stores deleted for never-read (dead) arrays
   uint32_t lcf_gensims{};  // loops folded by the general (any-condition) simulator
+  uint32_t constcalls{};  // pure constant-argument calls evaluated at compile time
+  uint32_t deadallocs{};  // unused Allocs deleted (arrays read by no one)
 };
 
 // --- 9a. constant folding / propagation / branch folding / identities -------
@@ -2181,8 +2216,12 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
 // replaced by the dominating def. Visibility is exactly "def dominates use",
 // checked with the lib's dominance intervals: we walk the dominator tree (from
 // the lib) in preorder, keeping a scoped table — entries pushed on block entry
-// are truncated on exit. SSA guarantees a def dominates its uses, so the
-// preorder walk always visits defs before the uses they can replace.
+// are truncated on exit. The renaming map is applied in a SECOND pass over
+// the whole function after the walk completes: a Phi's argument is a use on
+// an INCOMING EDGE, so the block defining the replaced vreg can be scanned
+// AFTER the phi's own block in preorder (a merge block does not sit below the
+// predecessor in the dominator tree) — rewriting during the walk would leave
+// the phi pointing at a dropped def (a ghost vreg reading as 0).
 constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
   if (A.n != fn.nblocks() || !fn.nblocks()) return false;
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
@@ -2221,41 +2260,24 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
     uint32_t mark = st.back().mark;
     if (ci == 0) { // entering the block: scan its instrs once
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-        Instr &I = fn.code[i];
-        if (I.a != NONE) {
-          uint32_t r = resolve(I.a);
-          changed |= (r != I.a);
-          I.a = r;
-        }
-        if (I.b2 != NONE) {
-          uint32_t r = resolve(I.b2);
-          changed |= (r != I.b2);
-          I.b2 = r;
-        }
-        if (I.c2 != NONE) { // Store: the stored value
-          uint32_t r = resolve(I.c2);
-          changed |= (r != I.c2);
-          I.c2 = r;
-        }
-        for (uint32_t &av : I.args) { // Call arguments
-          uint32_t r = resolve(av);
-          changed |= (r != av);
-          av = r;
-        }
+        const Instr &I = fn.code[i];
+        // resolved operands, LOCAL only (for the CSE key); the mutation
+        // happens in the second pass, once the map is complete
+        uint32_t ra = resolve(I.a), rb = resolve(I.b2);
         if (I.k != K::Bin || I.dst == NONE) continue;
         if (I.b == B::Div || I.b == B::Mod)
           if (!I.nt) continue; // may trap: keep (nt: proven safe, pure)
         Ent e{};
         e.op = I.b;
-        e.x = I.a;
-        e.y = I.b2;
+        e.x = ra;
+        e.y = rb;
         if (e.x != NONE && e.x < nv && kconst[e.x]) {
           e.x = NONE;
-          e.xv = kval[I.a];
+          e.xv = kval[ra];
         }
         if (e.y != NONE && e.y < nv && kconst[e.y]) {
           e.y = NONE;
-          e.yv = kval[I.b2];
+          e.yv = kval[rb];
         }
         bool comm = I.b == B::Add || I.b == B::Mul || I.b == B::Eq ||
                     I.b == B::Ne || I.b == B::And || I.b == B::Or ||
@@ -2300,32 +2322,19 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
     table.resize(mark); // leaving b: its entries go out of scope
     st.pop_back();
   }
-  // ---- final resolve sweep --------------------------------------------------
-  // A PHI argument's defining block need only dominate the PREDECESSOR EDGE,
-  // not the phi's own block, so the dominator preorder above can visit (and
-  // scan) a phi BEFORE the sibling block that CSE'd its argument away; the
-  // in-walk resolve misses that use and would leave it pointing at the
-  // dropped def. ren[v] = w implies w's def dominates v's def (the table is
-  // dominator-scoped), hence every ordinary use AND every pred-edge use of v
-  // is dominated by w's def — so resolving everything once more, globally,
-  // is sound.
-  for (uint32_t b = 0; b < fn.nblocks(); ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      Instr &I = fn.code[i];
-      auto rwt = [&](uint32_t &v) {
-        if (v == NONE || v >= nv || ren[v] == NONE) return;
-        uint32_t r = resolve(v);
-        if (r != v) {
-          v = r;
-          changed = true;
-        }
-      };
-      rwt(I.a);
-      rwt(I.b2);
-      rwt(I.c2);
-      for (uint32_t &av : I.args) rwt(av);
-    }
-  if (changed) { // sweep CSE'd instrs, preserving block ranges
+  if (changed) {
+    // second pass: rewrite EVERY operand (Phi args included) with the
+    // COMPLETED map -- sound because ren[v] = w implies w's def dominates
+    // v's def, which dominates every (edge-)use of v
+    for (uint32_t b = 0; b < fn.nblocks(); ++b)
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        Instr &I = fn.code[i];
+        if (I.a != NONE) I.a = resolve(I.a);
+        if (I.b2 != NONE) I.b2 = resolve(I.b2);
+        if (I.c2 != NONE) I.c2 = resolve(I.c2);
+        for (uint32_t &av : I.args) av = resolve(av);
+      }
+    // sweep CSE'd instrs, preserving block ranges
     bool any_drop = false;
     for (char c : drop) any_drop |= (c != 0);
     if (any_drop) {
@@ -3056,8 +3065,8 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
   std::vector<Iv> exit_((size_t)nb * nv, Iv{0, 0, true});
   std::vector<char> touched(nb, 0);
   std::vector<Iv> st(nv), edge(nv);
-  const uint32_t plain = nb + 16;           // plain rounds: intervals
-  const uint32_t widened_cap = 2 * nb + 16; // converge in <= nb rounds
+  const uint32_t plain = 4 * nb + 16;
+  const uint32_t widened_cap = 4 * nb + 16;
   bool widening = false;
   uint32_t round = 0;
   bool converged = false;
@@ -3306,16 +3315,67 @@ constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
 // An array that is never READ (no Load at all) is dead regardless of index
 // shape: all its Stores are deleted ("if the array is not read we just
 // delete writes, cuz why not") and Len(h) folds to the constant L.
-constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
-  if (!lift_ok) return false;
-  bool did = false; // only report CHANGED when something was really mutated
-                     // (a previously-processed array re-classifies as "dead"
-                     // every round; without this the tier-1 fixpoint livelocks)
+constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
+                           bool delalloc_ok) {
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nb || !nv) return false;
   AliasInfo AI = alias_analyze(fn);
   if (!AI.nallocs) return false;
+  // ---- dead allocations --------------------------------------------------
+  // With every Load/Store/Len of an array gone (lifted here, dead-store
+  // deleted here, or never present at all) nothing reads the allocation
+  // anymore. Deleting it shifts every LATER handle, which is observable
+  // only through handle VALUES (print/compare/pass/stored) or a Len through
+  // an obscure handle -- exactly what the program-wide stkarr_ok gate
+  // excludes -- so under that gate an allocation whose handle chain is
+  // referenced by nothing but its own Copy/Phi plumbing is pure dead weight
+  // and dies here (DCE then cleans the plumbing). This is what removes the
+  // `int64_t mjz_sN[len]; memset(...)` pair for arrays that folding has
+  // already turned into constants.
+  auto sweep_dead_allocs = [&]() -> bool {
+    if (!delalloc_ok) return false;
+    std::vector<char> used(AI.nallocs, 0);
+    for (uint32_t b = 0; b < fn.nblocks(); ++b)
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        const Instr &I = fn.code[i];
+        uint32_t dst_id =
+            (I.dst != NONE && I.dst < nv) ? AI.single[I.dst] : NONE;
+        auto use = [&](uint32_t v) {
+          if (v == NONE || v >= nv) return;
+          uint32_t id = AI.single[v];
+          if (id != NONE && id != dst_id) used[id] = 1;
+        };
+        use(I.a);
+        use(I.b2);
+        use(I.c2);
+        for (uint32_t v : I.args) use(v);
+      }
+    bool any = false;
+    for (uint32_t id = 0; id < AI.nallocs; ++id) any |= used[id] == 0;
+    if (!any) return false;
+    std::vector<Instr> nc{};
+    nc.reserve(fn.code.size());
+    for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+      uint32_t old_begin = fn.blocks[b].begin;
+      fn.blocks[b].begin = (uint32_t)nc.size();
+      for (uint32_t i = old_begin; i < fn.blocks[b].end; ++i) {
+        const Instr &I = fn.code[i];
+        if (I.k == K::Alloc && I.dst != NONE && I.dst < nv) {
+          uint32_t id = AI.single[I.dst];
+          if (id != NONE && !used[id]) {
+            os.deadallocs++;
+            continue;
+          }
+        }
+        nc.push_back(I);
+      }
+      fn.blocks[b].end = (uint32_t)nc.size();
+    }
+    fn.code = std::move(nc);
+    return true;
+  };
+  if (!lift_ok) return sweep_dead_allocs();
   std::vector<uint32_t> ndefs(nv, 0);
   for (const Instr &I : fn.code)
     if (I.dst != NONE && I.dst < nv) ++ndefs[I.dst];
@@ -3392,7 +3452,7 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
     any_lift |= c.lift;
     any_dead |= c.dead;
   }
-  if (!any_lift && !any_dead) return false;
+  if (!any_lift && !any_dead) return sweep_dead_allocs();
   // ---- defensive pre-check (before ANY mutation): every access of a ------
   // lifted array must be dominated by the allocation's block, and ordered
   // after the allocation when both share a block. SSA's "def dominates use"
@@ -3423,7 +3483,7 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
       }
     any_lift = false;
     for (const Cls &c : cls) any_lift |= c.lift;
-    if (!any_lift && !any_dead) return false;
+    if (!any_lift && !any_dead) return sweep_dead_allocs();
   }
   // ---- lifted arrays: slot bookkeeping --------------------------------------
   uint32_t total_slots = 0;
@@ -3494,7 +3554,6 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
             cls[AI.single[I.a]].dead) {
           drop[i] = 1;
           os.mem2reg_dses++;
-          did = true;
           continue;
         }
         nc.push_back(I);
@@ -3507,7 +3566,6 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
             nc.push_back({.k = K::Const, .dst = v, .c = 0});
           }
           os.mem2reg_lifts++;
-          did = true; // init consts + slot machinery: a real change
         }
       }
       fn.blocks[b].end = (uint32_t)nc.size();
@@ -3607,7 +3665,8 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok) {
       }
     }
   }
-  return did;
+  (void)sweep_dead_allocs(); // post-rewrite: lifted handles are now unused
+  return true;
 }
 
 // --- 9b2. linear forms: shared by reassociation & loop closed forms ------
@@ -3715,13 +3774,14 @@ constexpr uint32_t lin_cost(const LinForm &L) {
 // materialize L into `out`; the LAST instruction defines `dst`
 constexpr void lin_emit(Fn &fn, std::vector<Instr> &out, const LinForm &L,
                         uint32_t dst) {
-  // `out` may be a caller's larger accumulator (reassoc passes the whole
-  // rebuilt code vector): only instructions pushed BELOW are ours. Without
-  // the mark, a chain that collapses to a bare vreg (zero instructions,
-  // e.g. x = 0 + y) would tail-rewrite the dst of the LAST UNRELATED
-  // instruction — silently redefining it and leaving the bare vreg
-  // dangling.
-  const size_t mark = out.size();
+  const size_t base = out.size(); // where THIS call started emitting: the
+                                   // final dst-landing may only rewrite an
+                                   // instruction emitted here, never some
+                                   // unrelated earlier instr that happens to
+                                   // define acc (e.g. the Len defining the
+                                   // single bare term of L -- renaming it
+                                   // would leave every user of that term
+                                   // reading a ghost vreg)
   std::vector<std::pair<uint32_t, val_t>> ts{};
   for (const auto &p : L.t)
     if (p.second != 0) ts.push_back(p);
@@ -3775,9 +3835,9 @@ constexpr void lin_emit(Fn &fn, std::vector<Instr> &out, const LinForm &L,
     out.push_back({.k = K::Bin, .b = B::Add, .dst = r, .a = acc, .b2 = cv});
     acc = r;
   }
-  // acc must land in dst: rewrite the last emitted def (of THIS chain), or
-  // emit a Copy
-  if (out.size() > mark && out.back().dst == acc && acc != dst) {
+  // acc must land in dst: rewrite the last def WE emitted (never an earlier
+  // unrelated one -- see `base` above), or emit a Copy
+  if (out.size() > base && out.back().dst == acc && acc != dst) {
     out.back().dst = dst;
   } else if (acc != dst) {
     out.push_back({.k = K::Copy, .dst = dst, .a = acc});
@@ -5008,6 +5068,41 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           if (!e.ok || e.a != 1) rt_ok = false; // additive recurrences only
       }
       if (!rt_ok) continue;
+      // ---- vacuous-guard proof --------------------------------------------
+      // With a CONSTANT i0 >= 0 and unit step, the induction can never wrap
+      // before the exit: whenever the condition c0 holds, D = B - i0 lands
+      // in (0, MAX] (no wrap, since B <= MAX and i0 >= 0), so `dneg' is
+      // false; and iN = i0 + N reproduces B bit-exactly (N = Dm, and
+      // i0 + (B - i0) = B in the mod-2^64 ring), so `bneg' is false too.
+      // The guard is therefore identically false for EVERY runtime B. If
+      // additionally the loop body is pure arithmetic that provably cannot
+      // trap (Div/Mod carry `nt`) and observes nothing, the closed form is
+      // exact unconditionally: emit it WITHOUT the guard and WITHOUT the
+      // fallback loop (the now-unreachable loop is removed by unreach, and
+      // its merge-phi args degenerate away).
+      bool body_pure = true;
+      for (uint32_t b2 = 0; b2 < nb && body_pure; ++b2) {
+        if (!inL[b2]) continue;
+        for (uint32_t i2 = fn.blocks[b2].begin; i2 < fn.blocks[b2].end;
+             ++i2) {
+          const Instr &BI = fn.code[i2];
+          if (BI.k == K::Phi || BI.k == K::Const || BI.k == K::Copy ||
+              BI.k == K::Br || BI.k == K::Cbr)
+            continue;
+          if (BI.k == K::Bin) {
+            if ((BI.b == B::Div || BI.b == B::Mod) && !BI.nt) {
+              body_pure = false; // a MAY-trap div/mod must run for real
+              break;
+            }
+            continue;
+          }
+          body_pure = false; // Print/Call/Input/Alloc/Load/Store/Len/Ret
+          break;
+        }
+      }
+      const bool vacuous =
+          body_pure && IP.pre_arg != NONE && IP.pre_arg < nv &&
+          kc[IP.pre_arg] && kv[IP.pre_arg] >= 0 && step_mag == 1;
       const bool is_le = (C.b == B::Le);
       const uint32_t i0v = IP.pre_arg;
       const uint32_t G = fn.nblocks();
@@ -5052,21 +5147,25 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         bin(gi, B::Ne, rnz, rv, z0);
         bin(gi, B::Add, Nv, qv, rnz);
       }
-      const uint32_t diN = nt();
-      bin(gi, B::Mul, diN, Nv, kd);
-      const uint32_t iN = nt();
-      bin(gi, B::Add, iN, i0v, diN);
-      const uint32_t dneg = nt();
-      bin(gi, B::Lt, dneg, Dv, z0);
-      const uint32_t bneg = nt();
-      bin(gi, is_le ? B::Le : B::Lt, bneg, iN, Bv);
-      const uint32_t ov = nt();
-      bin(gi, B::Or, ov, dneg, bneg);
-      const uint32_t badv = nt();
-      bin(gi, B::And, badv, c0, ov);
-      const uint32_t gok = nt();
-      bin(gi, B::Eq, gok, badv, z0);
-      gi.push_back({.k = K::Cbr, .a = gok, .t = CF, .f = h});
+      if (vacuous) { // closed form only: no guard, no fallback loop
+        gi.push_back({.k = K::Br, .t = CF});
+      } else {
+        const uint32_t diN = nt();
+        bin(gi, B::Mul, diN, Nv, kd);
+        const uint32_t iN = nt();
+        bin(gi, B::Add, iN, i0v, diN);
+        const uint32_t dneg = nt();
+        bin(gi, B::Lt, dneg, Dv, z0);
+        const uint32_t bneg = nt();
+        bin(gi, is_le ? B::Le : B::Lt, bneg, iN, Bv);
+        const uint32_t ov = nt();
+        bin(gi, B::Or, ov, dneg, bneg);
+        const uint32_t badv = nt();
+        bin(gi, B::And, badv, c0, ov);
+        const uint32_t gok = nt();
+        bin(gi, B::Eq, gok, badv, z0);
+        gi.push_back({.k = K::Cbr, .a = gok, .t = CF, .f = h});
+      }
       // ---- closed-form block CF ----
       uint32_t Tv = NONE;
       for (const Evo &e : evo) // T is needed iff some increment uses i
@@ -5142,7 +5241,7 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       for (const Instr &x : cfi) fn.code.push_back(x);
       fn.blocks[CF].end = (uint32_t)fn.code.size();
       fn.succ[2 * G] = CF;
-      fn.succ[2 * G + 1] = h;
+      fn.succ[2 * G + 1] = vacuous ? NONE : h; // vacuous: G never enters h
       fn.succ[2 * CF] = X;
       fn.succ[2 * CF + 1] = NONE;
       { // outside uses of the loop phis -> merge-phi values (below); done
@@ -5193,6 +5292,16 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         }
         if (fn.succ[2 * pre] == h) fn.succ[2 * pre] = G;
         if (fn.succ[2 * pre + 1] == h) fn.succ[2 * pre + 1] = G;
+        // the header phis key their entry arg by `pre`; that edge is now
+        // G->h, so the keys must follow -- otherwise SSA destruction drops
+        // the entry values on the (only) path into the fallback loop and
+        // the loop would start from garbage phi state
+        for (uint32_t i = fn.blocks[h].begin; i < fn.blocks[h].end; ++i) {
+          Instr &P = fn.code[i];
+          if (P.k != K::Phi) break;
+          if (P.t == pre) P.t = G;
+          else if (P.f == pre) P.f = G;
+        }
       }
       fn.recompute_preds();
       os.lcf_rt++;
@@ -5415,6 +5524,236 @@ constexpr void normalize_phis(Fn &fn) {
 }
 
 // ============================================================================
+// 9e3. CONST-CALL EVALUATION (interprocedural)
+// ============================================================================
+// A call whose arguments are all compile-time constants and whose callee (and
+// every fn that callee transitively calls) is PURE ARITHMETIC -- only
+// Const/Copy/Bin/Br/Cbr/Phi/Call/Ret, so no Print, no input(), no arena
+// (Alloc/Load/Store/Len), no observable side effect and no handle value -- is
+// evaluated exactly at compile time with the same wrapping/trapping arithmetic
+// the runtime uses (a trap, the 512-frame recursion cap, or the step budget
+// aborts the attempt and keeps the runtime call: a runtime TRAP is
+// observable, so folding it away would be a miscompile). This is what turns
+// `fact(4)` and the mutually recursive `is_even(10)` into constants:
+// recursion is exactly why inlining can never touch them, and exactly why a
+// whole-program evaluator can -- the recursive call graph is just a
+// control-flow graph the evaluator walks.
+
+// call depth cap shared by EVERY runner (interpreters, VM, emitted C,
+// and emitted asm all enforce the same limit: runaway recursion TRAPs
+// everywhere) -- also enforced by the compile-time evaluator below, so a
+// program that would TRAP at depth 512 is never silently folded
+inline constexpr uint32_t MJZ_MAX_CALL_DEPTH = 512;
+// step budget for one const-call evaluation attempt (shared across the
+// whole recursive invocation; generous: the demo programs need < 200)
+inline constexpr uint64_t MJZ_CONSTCALL_STEPS = 1ull << 20;
+
+// fn-local purity: every instruction is pure arithmetic / control flow
+constexpr bool fn_local_pure(const Fn &f) {
+  for (const Instr &I : f.code)
+    switch (I.k) {
+    case K::Const:
+    case K::Copy:
+    case K::Bin:   // Div/Mod may trap -> the EVALUATOR aborts on real traps
+    case K::Br:
+    case K::Cbr:
+    case K::Phi:
+    case K::Call:  // nested calls are checked transitively
+    case K::Ret:
+      break;
+    default:
+      return false; // Print/Input/Alloc/Load/Store/Len/Exit: observable
+    }
+  return true;
+}
+// transitive purity over the call graph (cycle-safe DFS)
+constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
+  const uint32_t n = (uint32_t)fns.size();
+  std::vector<uint8_t> seen(n, 0);
+  std::vector<uint32_t> work{fi};
+  seen[fi] = 1;
+  while (!work.empty()) {
+    uint32_t f = work.back();
+    work.pop_back();
+    if (!fn_local_pure(fns[f])) return false;
+    for (const Instr &I : fns[f].code)
+      if (I.k == K::Call) {
+        uint32_t g = (uint32_t)I.c;
+        if (g < n && !seen[g]) {
+          seen[g] = 1;
+          work.push_back(g);
+        }
+      }
+  }
+  return true;
+}
+
+// exact SSA execution of one pure fn; mirrors run_prog's semantics: phis are
+// resolved on the edge they came from (read all, then write all), the env is
+// flat with default 0 ("storage is zero-initialized"), Ret yields val[a].
+constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
+                            const std::vector<val_t> &args, val_t &out,
+                            uint32_t depth, uint64_t &steps) {
+  if (depth >= MJZ_MAX_CALL_DEPTH) return false; // runtime would TRAP
+  const Fn &F = fns[fi];
+  if (F.nblocks() == 0) return false;
+  const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
+  std::vector<val_t> val(nv, 0);
+  for (size_t k = 0; k < args.size() && k < F.nparams; ++k)
+    if (k < nv) val[k] = args[k];
+  uint32_t blk = 0;
+  uint32_t pc = F.blocks[0].begin;
+  for (;;) {
+    if (++steps > MJZ_CONSTCALL_STEPS) return false; // budget exhausted
+    if (blk >= F.nblocks() || pc >= F.blocks[blk].end) return false;
+    const Instr &I = F.code[pc];
+    switch (I.k) {
+    case K::Phi: // resolved on the incoming edge, never inline
+      ++pc;
+      continue;
+    case K::Const:
+      if (I.dst >= nv) return false;
+      val[I.dst] = I.c;
+      ++pc;
+      continue;
+    case K::Copy:
+      if (I.dst >= nv || I.a >= nv) return false;
+      val[I.dst] = val[I.a];
+      ++pc;
+      continue;
+    case K::Bin: {
+      if (I.a >= nv || I.b2 >= nv || I.dst >= nv) return false;
+      Rv r = w_bin(I.b, val[I.a], val[I.b2]);
+      if (r.trap) return false; // runtime trap is observable: keep the call
+      val[I.dst] = r.v;
+      ++pc;
+      continue;
+    }
+    case K::Br:
+    case K::Cbr: {
+      uint32_t next = (I.k == K::Br)
+                          ? I.t
+                          : ((val[I.a] != 0) ? I.t : I.f);
+      if (next >= F.nblocks()) return false;
+      // stage the successor's phis for THIS edge: read all, then write all
+      std::vector<std::pair<uint32_t, val_t>> staged{};
+      for (uint32_t j = F.blocks[next].begin; j < F.blocks[next].end; ++j) {
+        const Instr &P = F.code[j];
+        if (P.k != K::Phi) break;
+        uint32_t arg = NONE;
+        if (P.t == blk && P.a != NONE) arg = P.a;
+        else if (P.f == blk && P.b2 != NONE) arg = P.b2;
+        if (arg != NONE && arg < nv && P.dst < nv)
+          staged.push_back({P.dst, val[arg]});
+      }
+      for (const auto &st : staged) val[st.first] = st.second;
+      blk = next;
+      pc = F.blocks[blk].begin;
+      continue;
+    }
+    case K::Ret:
+      out = (I.a != NONE && I.a < nv) ? val[I.a] : 0;
+      return true;
+    case K::Call: {
+      std::vector<val_t> cargs{};
+      for (uint32_t a : I.args) {
+        if (a >= nv) return false;
+        cargs.push_back(val[a]);
+      }
+      val_t r{};
+      if (!eval_pure_fn(fns, (uint32_t)I.c, cargs, r, depth + 1, steps))
+        return false;
+      if (I.dst < nv) val[I.dst] = r;
+      ++pc;
+      continue;
+    }
+    default:
+      return false; // impure instruction: impossible after the purity check
+    }
+  }
+}
+
+// fold every constant-argument call to a provably-pure callee
+constexpr bool opt_constcall(std::vector<Fn> &fns,
+                             std::vector<OptStats> &ostats) {
+  const uint32_t n = (uint32_t)fns.size();
+  if (n < 2 || ostats.size() < n) return false;
+  std::vector<uint8_t> pure(n, 0);
+  for (uint32_t f = 0; f < n; ++f)
+    pure[f] = fn_pure_closure(fns, f) ? 1 : 0;
+  bool changed = false;
+  for (uint32_t f = 0; f < n; ++f) {
+    Fn &F = fns[f];
+    const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
+    if (!nv || F.nblocks() == 0) continue;
+    // def index (SSA: one def per vreg) + bounded const-value walk
+    std::vector<uint32_t> def_at(nv, NONE);
+    for (uint32_t b = 0; b < F.nblocks(); ++b)
+      for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
+        const Instr &I = F.code[i];
+        if (I.dst != NONE && I.dst < nv) def_at[I.dst] = i;
+      }
+    auto cval = [&](uint32_t v, val_t &out) -> bool {
+      for (int d = 0; d < 16; ++d) { // bounded Copy/phi-of-same chains
+        if (v == NONE || v >= nv) return false;
+        uint32_t at = def_at[v];
+        if (at == NONE) return false;
+        const Instr &D = F.code[at];
+        if (D.k == K::Const) {
+          out = D.c;
+          return true;
+        }
+        if (D.k == K::Copy && D.a != NONE) {
+          v = D.a;
+          continue;
+        }
+        if (D.k == K::Phi && D.a != NONE && D.a == D.b2) {
+          v = D.a;
+          continue;
+        }
+        return false;
+      }
+      return false;
+    };
+    for (uint32_t b = 0; b < F.nblocks(); ++b)
+      for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
+        Instr &I = F.code[i];
+        if (I.k != K::Call) continue;
+        uint32_t g = (uint32_t)I.c;
+        if (g >= n || !pure[g] || I.args.size() != fns[g].nparams) continue;
+        std::vector<val_t> args{};
+        bool allc = true;
+        for (uint32_t a : I.args) {
+          val_t v{};
+          if (!cval(a, v)) {
+            allc = false;
+            break;
+          }
+          args.push_back(v);
+        }
+        if (!allc) continue;
+        val_t out{};
+        uint64_t steps = 0;
+        if (!eval_pure_fn(fns, g, args, out, 0, steps)) continue;
+        // same dst: every user reads the constant directly
+        I.k = K::Const;
+        I.b = B::Add;
+        I.a = NONE;
+        I.b2 = NONE;
+        I.t = NONE;
+        I.f = NONE;
+        I.c = out;
+        I.c2 = NONE;
+        I.nt = false;
+        I.args.clear();
+        ostats[f].constcalls++;
+        changed = true;
+      }
+  }
+  return changed;
+}
+
+// ============================================================================
 // 9e0. PASS MANAGER
 // ============================================================================
 // PassCfg is the single configuration threaded from the CLI through
@@ -5422,12 +5761,17 @@ constexpr void normalize_phis(Fn &fn) {
 // tiers and the scheduler runs them with a strict discipline:
 //   tier 0 "cheap"    : constprop, copyprop, canon, cse, unreachable,
 //                       splice, dce -- always run to a FIXPOINT first
-//   tier 1 "middle"   : mem2reg, trapelim(+range analysis), licm, divmagic,
+//   tier 1 "middle"   : mem2reg (array lifting + dead stores + dead
+//                       allocs), trapelim(+range analysis), licm, divmagic,
 //                       reassoc -- one round each, followed by a tier-0
 //                       fixpoint, repeated until global fixpoint / --fp-limit
 //   tier 2 "expensive": unroll, lcf -- CFG restructuring, run ONLY after
 //                       tiers 0/1 reached their fixpoint; each round is
-//                       followed by full tier-0 (+1) fixpoints again
+//                       followed by full tier-0 (+1) fixpoints again.
+//                       const-call evaluation is interprocedural (driven
+//                       from optimize_prog, after the inlining rounds):
+//                       pure constant-argument calls are executed exactly
+//                       at compile time, recursive fns included
 // -O levels gate the tiers:
 //   -O0: nothing (SSA + destruction only)
 //   -O1: tier 0
@@ -5450,7 +5794,7 @@ struct PassCfg {
   bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
       p_reassoc{true};
   // tier 2
-  bool p_unroll{true}, p_lcf{true};
+  bool p_unroll{true}, p_lcf{true}, p_constcall{true};
   // interprocedural
   bool do_inline{true};
   bool do_opt{true}; // false: skip the optimizer entirely
@@ -5465,7 +5809,7 @@ struct PassCfg {
     bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
     p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce = t0;
     p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = t1;
-    p_unroll = p_lcf = t2;
+    p_unroll = p_lcf = p_constcall = t2;
     do_inline = t2;
     do_opt = lv != 0;
   }
@@ -5776,8 +6120,9 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
     if (f < names.size()) c1.dbg_name = names[f];
     optimize(fns[f], ostats[f], A, c1);
   }
-  if (!cfg.do_inline || fns.size() < 2) return;
-  for (int round = 0; round < 4; ++round) {
+  if (fns.size() < 2) return;
+  if (cfg.do_inline) {
+    for (int round = 0; round < 4; ++round) {
     CallGraph G = build_callgraph(fns);
     auto recount = [&]() {
       std::vector<uint32_t> cs(fns.size(), 0);
@@ -5831,6 +6176,31 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
       }
     }
     if (!inlined_any) break;
+    }
+  }
+  // ---- 9e3: const-call evaluation ---------------------------------------
+  // pure fns called with constant arguments are evaluated exactly at
+  // compile time (recursion included -- the call graph is just a CFG to
+  // the evaluator); callers are re-folded so the new constants propagate
+  // and can expose further const calls, then dead-fn elimination drops
+  // every function nobody calls anymore. The re-fold runs the CHEAP tiers
+  // only (0+1): constants propagate without unroll/lcf/inline, and the
+  // final full optimize below picks up whatever the folds exposed.
+  if (cfg.p_constcall) {
+    for (int round = 0; round < 8; ++round) {
+      if (!opt_constcall(fns, ostats)) break;
+      for (uint32_t f = 0; f < fns.size(); ++f) {
+        An A{};
+        PassCfg c5 = cfg;
+        c5.level = 2;
+        c5.p_unroll = false;
+        c5.p_lcf = false;
+        c5.p_constcall = false;
+        c5.do_inline = false;
+        if (f < names.size()) c5.dbg_name = names[f];
+        optimize(fns[f], ostats[f], A, c5);
+      }
+    }
   }
   eliminate_dead_fns(fns, names, ostats, src_index);
   for (uint32_t f = 0; f < fns.size(); ++f) {
@@ -5845,14 +6215,20 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
 // runtime-only pass tracing (never on the constexpr path: guarded by
 // cfg.debug, which the compile-time pipeline always leaves at 0)
 static void print_fn(const Fn &fn, const char *title); // (defined in 13)
-static void dbg_pass(uint8_t debug, const Fn &fn, const char *pass, bool ch) {
-  if (debug < 1) return;
+static void dbg_pass_rt(uint8_t debug, const Fn &fn, const char *pass, bool ch) {
   std::printf("  [pass %-9s] %s\n", pass, ch ? "changed" : "fixed");
   if (debug >= 2 && ch) {
     char buf[96];
     std::snprintf(buf, sizeof buf, "IR after %s", pass);
     print_fn(fn, buf);
   }
+}
+// constexpr-safe wrapper: the compile-time pipeline always leaves debug at
+// 0, so the early return keeps constant evaluation away from the printf
+// tracer (an unreached branch in a constexpr function is legal)
+constexpr void dbg_pass(uint8_t debug, const Fn &fn, const char *pass, bool ch) {
+  if (debug < 1) return;
+  dbg_pass_rt(debug, fn, pass, ch);
 }
 struct Optimized {
   Fn fn{};         // SSA after optimization
@@ -5881,20 +6257,20 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
     for (uint32_t it = 0; it < cap; ++it) {
       bool ch = false, c = false;
       c = opt_constprop(fn, os); // fold/identities/branch folds
-      if (cfg.debug) dbg_pass(cfg.debug, fn, "fold", c);
+      dbg_pass(cfg.debug, fn, "fold", c);
       ch |= c;
       normalize_phis(fn);
 #ifndef MJZ_DBG_NO_COPYPROP
       if (cfg.p_copyprop) {
         c = opt_copyprop(fn, os); // copies -> uses of the source
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "copyprop", c);
+        dbg_pass(cfg.debug, fn, "copyprop", c);
         ch |= c;
       }
 #endif
       normalize_phis(fn);
       if (cfg.p_canon) {
         c = opt_canon(fn, os); // canonical forms + NOT-of-compare
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "canon", c);
+        dbg_pass(cfg.debug, fn, "canon", c);
         ch |= c;
       }
       normalize_phis(fn);
@@ -5902,28 +6278,28 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_cse) {
         An A = analyze(fn);
         c = opt_cse(fn, A, os); // dominating recomputation -> reuse
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "cse", c);
+        dbg_pass(cfg.debug, fn, "cse", c);
         ch |= c;
         normalize_phis(fn);
       }
 #endif
       if (cfg.p_unreach) {
         c = opt_remove_unreachable(fn, os); // dead blocks + phi degeneration
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "unreach", c);
+        dbg_pass(cfg.debug, fn, "unreach", c);
         ch |= c;
       }
       normalize_phis(fn);
 #ifndef MJZ_DBG_NO_SPLICE
       if (cfg.p_splice) {
         c = opt_splice(fn, os); // collapse single-pred/succ jump chains
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "splice", c);
+        dbg_pass(cfg.debug, fn, "splice", c);
         ch |= c;
       }
 #endif
       normalize_phis(fn);
       if (cfg.p_dce) {
         c = opt_dce(fn, os);
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "dce", c);
+        dbg_pass(cfg.debug, fn, "dce", c);
         ch |= c;
       }
       normalize_phis(fn);
@@ -5940,15 +6316,15 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       bool ch = false, c = false;
       if (cfg.p_mem2reg) {
         An A = analyze(fn);
-        c = opt_mem2reg(fn, A, os, cfg.lift_ok);
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "mem2reg", c);
+        c = opt_mem2reg(fn, A, os, cfg.lift_ok, cfg.stkarr_ok);
+        dbg_pass(cfg.debug, fn, "mem2reg", c);
         ch |= c;
         normalize_phis(fn);
       }
       if (cfg.p_trapelim) {
         An A = analyze(fn);
         c = opt_trapelim(fn, A, os); // ranges + aliasing -> nt flags
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "trapelim", c);
+        dbg_pass(cfg.debug, fn, "trapelim", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5956,7 +6332,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_licm) {
         An A = analyze(fn);
         c = opt_licm(fn, A, os); // hoist invariants to the preheader
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "licm", c);
+        dbg_pass(cfg.debug, fn, "licm", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5964,7 +6340,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #ifndef MJZ_DBG_NO_DIVMAGIC
       if (cfg.p_divmagic) {
         c = opt_divmagic(fn, os); // /constant -> mulhi+shift
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "divmagic", c);
+        dbg_pass(cfg.debug, fn, "divmagic", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5972,7 +6348,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #ifndef MJZ_DBG_NO_REASSOC
       if (cfg.p_reassoc) {
         c = opt_reassoc(fn, os); // canonicalize +/-/*c chains (feeds LCF)
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "reassoc", c);
+        dbg_pass(cfg.debug, fn, "reassoc", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5990,7 +6366,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_unroll && cfg.unroll) {
         An A = analyze(fn);
         bool c = opt_unroll(fn, A, os, cfg.unroll);
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "unroll", c);
+        dbg_pass(cfg.debug, fn, "unroll", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -5999,7 +6375,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_lcf) {
         An A2 = analyze(fn); // unrolling may have reshaped the CFG
         bool c = opt_lcf(fn, A2, os); // closed forms / simulators
-        if (cfg.debug) dbg_pass(cfg.debug, fn, "lcf", c);
+        dbg_pass(cfg.debug, fn, "lcf", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -6012,7 +6388,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         bool c2 = false;
         if (cfg.p_mem2reg) {
           An A = analyze(fn);
-          c2 |= opt_mem2reg(fn, A, os, cfg.lift_ok);
+          c2 |= opt_mem2reg(fn, A, os, cfg.lift_ok, cfg.stkarr_ok);
           normalize_phis(fn);
         }
         if (cfg.p_trapelim) {
@@ -6414,10 +6790,7 @@ struct RunOut {
     return 0; // EOF (matches scanf-failure -> 0 in the native backends)
   }
 };
-// call depth cap shared by EVERY runner (interpreters, VM, emitted C,
-// and emitted asm all enforce the same limit: runaway recursion TRAPs
-// everywhere)
-inline constexpr uint32_t MJZ_MAX_CALL_DEPTH = 512;
+// (MJZ_MAX_CALL_DEPTH is defined with the const-call evaluator in 9e3)
 
 // ============================================================================
 // 9h. BYTECODE backend — a tiny stack VM.
@@ -7493,6 +7866,8 @@ static OptStats sum_ostats(const Program &P) {
     t.lcf_loops += U.ostats.lcf_loops;
     t.lcf_sims += U.ostats.lcf_sims;
     t.lcf_gensims += U.ostats.lcf_gensims;
+    t.constcalls += U.ostats.constcalls;
+    t.deadallocs += U.ostats.deadallocs;
     t.lcf_rt += U.ostats.lcf_rt;
     t.divmagics += U.ostats.divmagics;
     t.notcombs += U.ostats.notcombs;
@@ -8228,9 +8603,22 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
       }
     }
   }
+  // did the LAST emitted block end in a Ret? then control can never fall
+  // off the end of the function and the safety epilogue is dead text
+  bool ends_ret = false;
+  if (!P.order.empty()) {
+    uint32_t lb = P.order.back();
+    for (uint32_t i = fn.blocks[lb].end; i-- > fn.blocks[lb].begin;) {
+      if (P.dead[i]) continue;
+      ends_ret = (fn.code[i].k == K::Ret);
+      break;
+    }
+  }
   if (is_main)
     s += saw_exit ? "}\n" : "  return 0;\n}\n";
-  else // all paths returned already; this is unreachable-fallthrough safety
+  else if (ends_ret)
+    s += "}\n"; // every emitted path returned: nothing can fall through
+  else           // unreachable-fallthrough safety for non-void fns
     s += "  --mjz_depth; return 0;\n}\n";
   return s;
 }
@@ -9193,6 +9581,7 @@ static const val_t DEMO_INS_CANON[] = {13, 7};
 static const val_t DEMO_INS_STATS[] = {5, 3, 8, 1, 9, 9, 2, 0, 7, 6};
 static const val_t DEMO_INS_DIVMAGIC[] = {1234567890123456789, -987654321098765432};
 static const val_t DEMO_INS_LCFRT[] = {1000000};
+static const val_t DEMO_INS_CCALL[] = {5};
 
 static const Demo demos[] = {
   {"sum_1_to_10",
@@ -9298,6 +9687,25 @@ static const Demo demos[] = {
    "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
    "print is_even(10);\nprint is_odd(7);\nprint is_even(7);\n",
    true},
+  {"const_call_eval",
+   // recursion + mutual recursion + a never-read array + a runtime trip
+   // count, all at once: the calls fold via the interprocedural const-call
+   // evaluator (inlining can never touch an SCC, but an exact evaluator
+   // walks the recursive call graph like any other CFG), the dead array's
+   // store AND its allocation disappear, and the runtime loop collapses
+   // to the unguarded exact closed form. Nothing but constants, one
+   // input() and eleven arithmetic instructions should remain.
+   "fn fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }\n"
+   "fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }\n"
+   "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
+   "let dead = array(4);\n"
+   "dead[0] = fact(3);\n"
+   "print fact(6);\n"
+   "print is_even(10);\n"
+   "print is_odd(7);\n"
+   "let n = input();\nlet t = 0;\nlet i = 0;\n"
+   "while (i < n) { t = t + i * 2; i = i + 1; }\nprint t;\n",
+   true, DEMO_INS_CCALL, 1},
   {"fn_inline_const", // inlined, then folded at compile time
    "fn double(x) { return x * 2; }\nfn inc(x) { return x + 1; }\n"
    "print double(21);\nprint inc(inc(inc(0)));\n",
@@ -9348,13 +9756,15 @@ static const Demo demos[] = {
    "let x = input();\nlet k = 0;\n"
    "while (k < 1000) { x = x * 2 + 3; k = k + 1; }\nprint x;\n",
    true, DEMO_INS_ECHO, 1},
-  {"lcf_rt_dynamic_bound", // RUNTIME trip count: the loop is replaced by a
-   // guarded closed form; the fallback path keeps the original loop for the
-   // (astronomically rare) signed-wrap case
+  {"lcf_rt_dynamic_bound", // RUNTIME trip count, provably exact: i0 = 0
+   // (constant, >= 0) with unit step can never wrap, and the body is pure
+   // arithmetic -- so the closed form is emitted UNGUARDED and the loop is
+   // deleted outright (unreach removes the orphaned blocks)
    "let n = input();\nlet s = 0;\nlet i = 0;\n"
    "while (i < n) { s = s + i * 9 - 7; i = i + 1; }\nprint s;\nprint i;\n",
    true, DEMO_INS_LCFRT, 1},
-  {"lcf_rt_le", // <= variant: N = floor((B-i0)/d) + 1
+  {"lcf_rt_le", // <= variant: N = floor((B-i0)/d) + 1; i0 = 1 >= 0 and
+   // step 1, so this closed form is also provably exact (unguarded)
    "let n = input();\nlet s = 0;\nlet i = 1;\n"
    "while (i <= n) { s = s + i; i = i + 1; }\nprint s;\nprint i;\n",
    true, DEMO_INS_LCFRT, 1},
@@ -9459,7 +9869,8 @@ static void run_demos() {
           "cse %u | canon %u+%u | brs %u | cbr== %u | dead blocks %u | "
           "splices %u | phi-degen %u | dce %u | hoisted %u | INLINED %u | "
           "UNROLLED %u | REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | "
-          "NOTCOMB %u | TRAP-KILL %u | MEM2REG %u | DSE %u\n"
+          "NOTCOMB %u | TRAP-KILL %u | MEM2REG %u | DSE %u | CONSTCALL %u | "
+          "DEADALLOC %u\n"
           "  destroy: edges split %u | copies %u | self %u | cycles %u | "
           "copy-fused %u\n",
           P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i,
@@ -9474,6 +9885,7 @@ static void run_demos() {
           (unsigned)os.lcf_gensims, (unsigned)os.lcf_rt, (unsigned)os.divmagics,
           (unsigned)os.notcombs, (unsigned)os.traps_killed,
           (unsigned)os.mem2reg_lifts, (unsigned)os.mem2reg_dses,
+          (unsigned)os.constcalls, (unsigned)os.deadallocs,
           (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
           (unsigned)dfu);
     }
@@ -9528,6 +9940,7 @@ struct FuzzStats {
   long arr_progs{}, in_progs{}, native_checked{};
   long fn_progs{}, inlined_total{}, unrolled_total{};
   long brk_progs{}, lifted{}, dead_stores{}, gensims{}, traps_killed{};
+  long constcalls{}, deadallocs{};
 };
 
 struct GenCtx {
@@ -9838,6 +10251,8 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
       F.unrolled_total += os.unrolls;
       F.lifted += os.mem2reg_lifts;
       F.dead_stores += os.mem2reg_dses;
+      F.constcalls += os.constcalls;
+      F.deadallocs += os.deadallocs;
       F.gensims += os.lcf_gensims;
       F.traps_killed += os.traps_killed;
     }
@@ -9935,11 +10350,13 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
               "LICM hoists: %ld | programs w/ arrays: %ld | w/ input(): %ld"
               " | w/ fns: %ld | w/ break/continue: %ld\n  inlined: %ld | "
               "unrolled: %ld | arrays lifted: %ld | dead stores: %ld | "
+              "const-called: %ld | dead allocs: %ld | "
               "general-sim folds: %ld | traps proven impossible: %ld | "
               "native-checked (C+asm x -O0/-O2): %ld\n",
               F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
               F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
               F.inlined_total, F.unrolled_total, F.lifted, F.dead_stores,
+              F.constcalls, F.deadallocs,
               F.gensims, F.traps_killed, F.native_checked);
   CHECK(mismatches == 0, "fuzz must be clean");
 }
@@ -9947,14 +10364,17 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
 // ============================================================================
 // 16. constexpr pipeline — the whole compiler runs at compile time
 // ============================================================================
-constexpr bool cx_pipeline() {
-  // A program with loops, an if, short-circuit logic, phi-worthy vars,
-  // ARRAYS (incl. a 2-D store through a handle chain), and input() reads:
+// The compile-time proof is split into SEPARATE constant expressions
+// (static_asserts): g++ retains each one's evaluation state until the end
+// of the translation, so the peak memory scales with how many run — three
+// programs fit comfortably in 4 GiB, four do not. The three asserts below
+// cover arena arrays + lib loop analyses, functions (recursion, mutual
+// recursion, inlining, const-call evaluation), and unrolling + closed
+// forms + divmagic + input(); cx_tour (branchy unrolling + short-circuit)
+// runs in the same battery at RUNTIME via cx_pipeline()/--selftest.
+
+constexpr bool cx_tour() { // branches, unrolling, short-circuit, folding
   constexpr std::string_view src =
-      "fn add2(a, b) { return a + b; }\n"
-      "fn fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }\n"
-      "fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }\n"
-      "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
       "let s = 0;\n"
       "let i = 1;\n"
       "while (i <= 8) {\n"
@@ -9962,8 +10382,28 @@ constexpr bool cx_pipeline() {
       "  i = i + 1;\n"
       "}\n"
       "print s;\n"
+      "print i;\n"
+      "let d = 0;\n"
+      "if (d != 0 && 100 / d > 1) { print 1; } else { print 2; }\n"
+      "print 40 + 2;\n";
+  Program P = compile(src);
+  if (!P.ok) return false;
+  RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
+  RunOut plain = run_prog(fns_of(P, 0), 1000000, {});
+  RunOut opt = run_prog(fns_of(P, 1), 1000000, {});
+  RunOut lowered = run_prog(fns_of(P, 2), 1000000, {});
+  RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
+  if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
+  if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
+  return oracle.out.size() == 4 && oracle.out[0] == 20 && // even sum
+         oracle.out[1] == 9 && oracle.out[2] == 2 &&      // loop exit, sc
+         oracle.out[3] == 42;                             // folded
+}
+
+constexpr bool cx_arrays() { // arena, lifting, len, handle-chained 2-D
+  constexpr std::string_view src =
       "let a = array(4);\n"
-      "i = 0;\n"
+      "let i = 0;\n"
       "while (i < 4) { a[i] = i * i; i = i + 1; }\n"
       "let t = 0;\n"
       "i = 0;\n"
@@ -9973,15 +10413,56 @@ constexpr bool cx_pipeline() {
       "let m = array(2);\n"
       "m[0] = array(2);\n"
       "m[0][1] = 40;\n"
-      "print m[0][1] + 2;\n"
+      "print m[0][1] + 2;\n";
+  Program P = compile(src);
+  if (!P.ok) return false;
+  // the mjz_lib analyses really ran: a loop with nesting info
+  bool loop_ok = false;
+  for (uint32_t h = 0; h < P.an_pre_main.n; ++h)
+    if (P.an_pre_main.inner[h] == h && P.an_pre_main.nest[h] == 0)
+      loop_ok = true;
+  if (!loop_ok) return false;
+  RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
+  RunOut plain = run_prog(fns_of(P, 0), 1000000, {});
+  RunOut opt = run_prog(fns_of(P, 1), 1000000, {});
+  RunOut lowered = run_prog(fns_of(P, 2), 1000000, {});
+  RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
+  if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
+  if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
+  return oracle.out.size() == 3 && oracle.out[0] == 14 && // 0+1+4+9
+         oracle.out[1] == 4 &&                            // len(a)
+         oracle.out[2] == 42;                             // m[0][1]+2
+}
+
+constexpr bool cx_fns() { // inlining, recursion, const-call evaluation
+  constexpr std::string_view src =
+      "fn add2(a, b) { return a + b; }\n"
+      "fn fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }\n"
+      "fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }\n"
+      "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
+      "print add2(fact(4), 16);\n"
+      "print is_even(8) + is_odd(8);\n"
+      "print is_even(9);\n"
+      "print fact(10);\n";
+  Program P = compile(src);
+  if (!P.ok) return false;
+  RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
+  RunOut plain = run_prog(fns_of(P, 0), 1000000, {});
+  RunOut opt = run_prog(fns_of(P, 1), 1000000, {});
+  RunOut lowered = run_prog(fns_of(P, 2), 1000000, {});
+  RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
+  if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
+  if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
+  return oracle.out.size() == 4 && oracle.out[0] == 40 && // inlined+folded
+         oracle.out[1] == 1 && oracle.out[2] == 0 &&      // mutual recursion
+         oracle.out[3] == 3628800;                        // const-called fact
+}
+
+constexpr bool cx_series() { // unroll, closed forms, divmagic, input()
+  constexpr std::string_view src =
       "let x = input();\n"
       "let y = input();\n"
       "print x + y;\n"
-      "let d = 0;\n"
-      "if (d != 0 && 100 / d > 1) { print 1; } else { print 2; }\n"
-      "print 40 + 2;\n"
-      "print add2(fact(4), 16);\n"
-      "print is_even(8) + is_odd(8);\n"
       "let u = 0;\n"
       "let k = 0;\n"
       "while (k < 3) { u = u + k; k = k + 1; }\n"
@@ -9989,64 +10470,43 @@ constexpr bool cx_pipeline() {
       "let g = 2;\n"
       "let kk = 0;\n"
       "while (kk < 30) { g = g * 3 + 1; kk = kk + 1; }\n"
-      "print g;\n" // geometric-series closed form (must equal 3^30*2+S(30))
+      "print g;\n" // geometric closed form: 3^30*2 + (3^30-1)/2
       "let dd = input();\n"
       "print dd / 7;\n"
       "print dd % 7;\n"; // divmagic lowering, runtime dividend
-  std::vector<val_t> tape{19, 23, 1000003}; // the input() reads (EOF -> 0)
-  // Bounded fixpoint budgets for the compile-time run: the constexpr
-  // evaluator tracks every allocation of every round, and the full default
-  // budget (24 rounds x tiers x fns x inline rounds) does not fit in a
-  // 4 GiB cc1plus. The mechanics are identical; --selftest runs the same
-  // program through the DEFAULT config at runtime.
-  // g++'s constexpr evaluator retains bookkeeping for EVERY evaluation
-  // step; the full default configuration (inlining rounds, unrolled copies,
-  // the interval fixpoint's stores) does not fit a 4 GiB cc1plus. The
-  // static_assert therefore runs a bounded middle configuration; the same
-  // program goes through the FULL default pipeline in --selftest at runtime.
-  PassCfg cxcfg{};
-  cxcfg.set_level(2);
-  cxcfg.fp_limit = 4;
-  cxcfg.p_trapelim = false; // the range analysis's per-store bookkeeping
-                            // is the single largest constexpr consumer
-  cxcfg.p_divmagic = false; // the 128-bit reciprocal algebra is the second
-  Program P = compile(src, cxcfg);
-  if (!P.ok) return false;
-  if (!P.uses_input) return false;
-  // the analyses really ran: one loop with nesting info from the lib
-  bool loop_ok = false;
-  for (uint32_t h = 0; h < P.an_pre_main.n; ++h)
-    if (P.an_pre_main.inner[h] == h && P.an_pre_main.nest[h] == 0)
-      loop_ok = true;
-  if (!loop_ok) return false;
+  std::vector<val_t> tape{19, 23, 1000003};
+  Program P = compile(src);
+  if (!P.ok || !P.uses_input) return false;
   RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, tape);
   RunOut plain = run_prog(fns_of(P, 0), 1000000, tape);
   RunOut opt = run_prog(fns_of(P, 1), 1000000, tape);
   RunOut lowered = run_prog(fns_of(P, 2), 1000000, tape);
-  std::vector<uint8_t> bc = emit_bytecode(fns_of(P, 2));
-  RunOut vm = vm_run(bc, 10000000, tape);
+  RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 10000000, tape);
   if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
   if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
-  // 20 (even sum); 14 (0+1+4+9); 4 (len); 42 (m[0][1]+2); 42 (19+23);
-  // 2 (short-circuit); 42 (fold); 40 (add2(fact(4),16) inlined+folded);
-  // 1 (mutual recursion); 3 (unrolled loop folded to a constant);
-  // 514727830236622 (geometric closed form: 3^30*2 + (3^30-1)/2);
-  // 142857 / 4 (divmagic: 1000003 / 7 and % 7)
-  return oracle.out.size() == 13 && oracle.out[0] == 20 &&
-         oracle.out[1] == 14 && oracle.out[2] == 4 && oracle.out[3] == 42 &&
-         oracle.out[4] == 42 && oracle.out[5] == 2 && oracle.out[6] == 42 &&
-         oracle.out[7] == 40 && oracle.out[8] == 1 && oracle.out[9] == 3 &&
-         oracle.out[10] == 514727830236622ll && oracle.out[11] == 142857 &&
-         oracle.out[12] == 4;
+  return oracle.out.size() == 5 && oracle.out[0] == 42 && // 19+23
+         oracle.out[1] == 3 &&                            // unrolled + folded
+         oracle.out[2] == 514727830236622ll &&            // closed form
+         oracle.out[3] == 142857 && oracle.out[4] == 4;   // divmagic /7 %7
+}
+
+// runtime entry: the whole battery in one process (--selftest)
+constexpr bool cx_pipeline() {
+  return cx_tour() && cx_arrays() && cx_fns() && cx_series();
 }
 // The whole pipeline — including SSA destruction and the bytecode VM — is
-// constexpr. The static_assert is enabled with -DMJZ_CX_ASSERT (it needs
-// generous -fconstexpr-depth / -fconstexpr-ops-limit); --selftest always
-// runs the same function at runtime.
+// constexpr. The static_asserts are enabled with -DMJZ_CX_ASSERT (needs
+// generous -fconstexpr-depth / -fconstexpr-ops-limit; SEPARATE constant
+// expressions because g++ retains each one's evaluation state — three fit
+// in 4 GiB); --selftest always runs the FULL battery (all four programs)
+// at runtime.
 #ifdef MJZ_CX_ASSERT
-static_assert(cx_pipeline(),
-              "the full MiniJZ pipeline (lexer->parser->CFG->lib analyses->"
-              "SSA->opt->destroy->VM) must succeed at compile time");
+static_assert(cx_arrays(),
+              "MiniJZ pipeline (arena arrays + lib loop analyses) at compile time");
+static_assert(cx_fns(),
+              "MiniJZ pipeline (recursion/inline/const-call) at compile time");
+static_assert(cx_series(),
+              "MiniJZ pipeline (unroll/closed forms/divmagic/VM) at compile time");
 #endif
 
 // ============================================================================
@@ -10128,14 +10588,16 @@ static void usage() {
       "                    destruction only); -O1: cheap tier to fixpoint\n"
       "                    (fold/copyprop/canon/cse/unreach/splice/dce);\n"
       "                    -O2: + mem2reg, trapelim (range+alias), licm,\n"
-      "                    divmagic, reassoc; -O3: + unroll, lcf, inline\n"
-      "                    (expensive CFG restructuring runs only after\n"
-      "                    the cheaper tiers reach their fixpoint)\n"
+      "                    divmagic, reassoc; -O3: + unroll, lcf, constcall,\n"
+      "                    inline (expensive CFG restructuring runs only\n"
+      "                    after the cheaper tiers reach their fixpoint;\n"
+      "                    constcall evaluates pure constant-argument calls\n"
+      "                    — recursive ones included — at compile time)\n"
       "  --enable=P,P2      force passes on (folds, copyprop, canon, cse,\n"
       "  --disable=P,P2     force passes off  unreach, splice, dce, mem2reg,\n"
       "                    trapelim, licm, divmagic, reassoc, unroll, lcf,\n"
-      "                    inline) — applied on top of the -O preset, so\n"
-      "                    e.g. `-O1 --enable=lcf` is legal\n"
+      "                    constcall, inline) — applied on top of the -O\n"
+      "                    preset, so e.g. `-O1 --enable=lcf` is legal\n"
       "  --unroll=N         full-unroll loops with constant trip count <= N\n"
       "                    (default 16; 0 disables unrolling)\n"
       "  --fp-limit=N       fixpoint round cap per tier (default 24)\n"
@@ -10293,6 +10755,7 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
   else if (eq("reassoc")) p.p_reassoc = on;
   else if (eq("unroll")) p.p_unroll = on;
   else if (eq("lcf")) p.p_lcf = on;
+  else if (eq("constcall")) p.p_constcall = on;
   else if (eq("inline")) p.do_inline = on;
   else {
     err = n;

@@ -1,0 +1,16 @@
+let s = 0;
+let i = 1;
+while (i <= 10) {
+  if (i % 2 == 0) { s = s + i; } else { s = s + 0; }
+  i = i + 1;
+}
+print s;
+let x = 3;
+print x * x + x * x;
+let d = 0;
+if (d != 0 && 100 / d > 1) { print 1; } else { print 2; }
+print (2 + 3) * 4;
+let g = 252;
+let h = 105;
+while (h != 0) { let r = g % h; g = h; h = r; }
+print g;
