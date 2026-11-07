@@ -534,6 +534,7 @@ struct ScctcoHead {
   uint32_t cb{NONE}, ce{NONE}; // the sibling copy's block range
   uint32_t trip_src{NONE};     // trip ARRIVING at the entry (pre-phi)
   uint32_t trip_phi{NONE};     // ... and the phi result (post-phi)
+  std::vector<uint32_t> phi_vals{}; // self only: the param rotation phis
 };
 
 constexpr bool scctco_member(Fn &f, uint32_t self_fn,
@@ -654,6 +655,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
       phis.push_back(P);
       res.push_back(dst);
     }
+    if (Hd.root_pred == 0) // the self head: remember the param phis
+      Hd.phi_vals.assign(res.begin(), res.begin() + nparams);
     scctco_prepend(f, Hd.entry, phis);
     if (Hd.cb == NONE) { // self: whole body (D=0 / H=1 excluded)
       for (uint32_t v = 0; v < nparams; ++v)
@@ -829,6 +832,32 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
     } else {
       add_backedge(heads[callee], sb, vals);
     }
+  }
+
+  // ---- 3b. raw-param rotation fixup --------------------------------------
+  // A phi incoming arg that is still a RAW param vreg (arg < nparams)
+  // means the tail call passed that parameter through unchanged: gcd's
+  // `gcd(b, a % b)`, flat argument swaps, binary search's pass-through
+  // bounds. Every BODY read of p_w was rewritten to the rotation phi
+  // P_w -- but the phi args themselves were not: they sit in head blocks,
+  // which the rewrites skip (the self entry) or which were appended after
+  // the rewrite ran (merge-chain blocks). Pinned to the raw param, the
+  // loop would feed the ORIGINAL argument back forever. On every edge
+  // except the true entry (pred 0 = block D) the value that flows is the
+  // CURRENT P_w, so patch those args to the phi. This is also harmless
+  // for one-shot edges: on the first iteration P_w still holds the
+  // original argument. When self never got a back edge (self.phis false,
+  // nothing rotates anywhere), raw params are already correct.
+  if (self.phis) {
+    for (uint32_t b = 1; b < f.nblocks(); ++b)
+      for (uint32_t i = f.blocks[b].begin; i < f.blocks[b].end; ++i) {
+        Instr &P = f.code[i];
+        if (P.k != K::Phi) continue;
+        if (P.a != NONE && P.a < nparams && P.t != 0)
+          P.a = self.phi_vals[P.a];
+        if (P.b2 != NONE && P.b2 < nparams && P.f != 0)
+          P.b2 = self.phi_vals[P.b2];
+      }
   }
 
   scctco_resucc(f);
