@@ -9,6 +9,7 @@
 #include "minijz/runtime/astrun.hpp"
 #include "minijz/back/bytecode.hpp"
 #include "minijz/base/native_run.hpp"
+#include "minijz/apps/fuzz_gen.hpp"
 
 // ============================================================================
 // 15. differential fuzzer: random programs, five-way agreement

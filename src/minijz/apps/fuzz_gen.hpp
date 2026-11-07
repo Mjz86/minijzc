@@ -51,14 +51,14 @@ static const char *VAR_NAMES[] = {"v", "w", "u", "z", "q", "r", "p", "m"};
 // 2-D load / len(v) / division guarded by an && or || short-circuit.
 // `pure` expressions read no stdin, call nothing, and never trap: they are
 // safe as fn-call arguments and inside compound loop conditions.
-void GenCtx::gen_pure(std::string &out, int depth) {
+inline void GenCtx::gen_pure(std::string &out, int depth) {
   bool sv = pure;
   pure = true;
   gen_expr(out, depth);
   pure = sv;
 }
 
-void GenCtx::gen_expr(std::string &out, int depth) {
+inline void GenCtx::gen_expr(std::string &out, int depth) {
   if (depth <= 0 || pick(0, 5) == 0) {
     int leaf = pick(0, 9);
     if (leaf <= 1 && !vars.empty()) {
@@ -234,7 +234,7 @@ void GenCtx::gen_expr(std::string &out, int depth) {
 // `depth` is a hard budget for compound-statement nesting: ifs and whiles
 // consume one unit for their bodies, so the program tree is finite and small
 // (if-arms pick(1,2) stmts: branching factor stays subcritical).
-void GenCtx::gen_stmt(int depth) {
+inline void GenCtx::gen_stmt(int depth) {
   // break/continue bait: inside loops only, always guarded by an `if` so
   // the statements after it stay reachable (the generated loops decrement
   // their counter FIRST, so a guarded `continue` cannot spin forever)
@@ -415,7 +415,7 @@ void GenCtx::gen_stmt(int depth) {
     vars.push_back(n);
   }
 }
-void GenCtx::gen_stmts(int count, int depth) {
+inline void GenCtx::gen_stmts(int count, int depth) {
   for (int i = 0; i < count; ++i) gen_stmt(depth);
 }
 
@@ -424,7 +424,7 @@ void GenCtx::gen_stmts(int count, int depth) {
 // tail-recursive accumulator, a 3-member SCC and array-parameter helpers.
 // Bodies run with a FRESH scope (params only); every call site uses small
 // constant arguments so recursion depth stays far below the 512-frame trap.
-void GenCtx::gen_fn_defs() {
+inline void GenCtx::gen_fn_defs() {
   int n = pick(0, 2);
   if (pick(0, 1)) ++n;
   for (int f = 0; f < n; ++f) {

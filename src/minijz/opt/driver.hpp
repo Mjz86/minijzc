@@ -23,6 +23,7 @@
 #include "minijz/opt/linear/reassoc.hpp"
 #include "minijz/opt/linear/divmagic.hpp"
 #include "minijz/opt/interprocedural/callgraph.hpp"
+#include "minijz/opt/interprocedural/cdfold.hpp"
 
 struct Optimized {
   Fn fn{};         // SSA after optimization

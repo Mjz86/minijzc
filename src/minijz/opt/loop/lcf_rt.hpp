@@ -28,7 +28,6 @@
 // and emitted asm all enforce the same limit: runaway recursion TRAPs
 // everywhere) -- also enforced by the compile-time evaluator below, so a
 // program that would TRAP at depth 512 is never silently folded
-inline constexpr uint32_t MJZ_MAX_CALL_DEPTH = 512;
 // step budget for one const-call evaluation attempt (shared across the
 // whole recursive invocation; generous: the demo programs need < 200)
 inline constexpr uint64_t MJZ_CONSTCALL_STEPS = 1ull << 20;

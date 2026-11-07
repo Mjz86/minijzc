@@ -4,47 +4,6 @@
 
 #include "minijz/ir/instr.hpp"
 
-struct RunOut {
-  std::vector<val_t> out{};
-  bool trapped{};
-  bool timeout{};
-  // array arena (grows during execution; mirrors the C/asm static arenas)
-  std::vector<val_t> a_data{}; // the slots (zero-initialized by resize)
-  std::vector<val_t> a_lenv{}; // len[handle]; 0 = not an allocated handle
-  // stdin tape for input() (empty tape reads 0, like EOF)
-  std::vector<val_t> ins{};
-  size_t in_pos{};
-
-  constexpr Rv arena_alloc(val_t n) {
-    if (n < 0 || n > MJZ_ARENA_CAP ||
-        n > (val_t)MJZ_ARENA_CAP - (val_t)a_data.size())
-      return {0, true}; // negative size / out of arena memory
-    val_t h = (val_t)a_data.size();
-    a_data.resize(a_data.size() + (size_t)n, 0);
-    if ((size_t)h >= a_lenv.size()) a_lenv.resize((size_t)h + 1, 0);
-    a_lenv[(size_t)h] = n;
-    return {h, false};
-  }
-  constexpr val_t arena_len(val_t h) const {
-    if (h < 0 || (size_t)h >= a_lenv.size()) return 0;
-    return a_lenv[(size_t)h];
-  }
-  constexpr Rv arena_load(val_t h, val_t i) {
-    val_t l = arena_len(h); // bogus handle -> len 0 -> always out of bounds
-    if (i < 0 || i >= l) return {0, true};
-    return {a_data[(size_t)(h + i)], false};
-  }
-  constexpr bool arena_store(val_t h, val_t i, val_t v) {
-    val_t l = arena_len(h);
-    if (i < 0 || i >= l) return false;
-    a_data[(size_t)(h + i)] = v;
-    return true;
-  }
-  constexpr val_t next_input() {
-    if (in_pos < ins.size()) return ins[in_pos++];
-    return 0; // EOF (matches scanf-failure -> 0 in the native backends)
-  }
-};
 // (MJZ_MAX_CALL_DEPTH is defined with the const-call evaluator in 9e3)
 
 // ============================================================================

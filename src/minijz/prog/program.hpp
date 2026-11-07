@@ -6,6 +6,8 @@
 #include "minijz/ir/builder.hpp"
 #include "minijz/opt/driver.hpp"
 #include "minijz/ir/destruct.hpp"
+#include "minijz/back/stack_alloc.hpp"
+#include "minijz/runtime/astrun.hpp"
 
 // ============================================================================
 // 12. full pipeline driver

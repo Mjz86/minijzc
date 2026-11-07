@@ -4,6 +4,7 @@
 
 #include "minijz/front/ast.hpp"
 #include "minijz/ir/instr.hpp"
+#include "minijz/ir/pred_norm.hpp"
 
 constexpr B ir_op(Bk b) {   // AST binop -> IR binop (identical enumerators)
   switch (b) {

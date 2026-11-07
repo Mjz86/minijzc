@@ -127,6 +127,5 @@ constexpr void prog_handle_gates(const std::vector<Fn> &fns, bool &lift_ok,
 // index of the array's first element; allocation is monotonic (no free), so
 // handle values, aliasing, and allocation order are bit-identical everywhere.
 // CAP must match MJZ_ARENA_CAP emitted into the C/asm backends.
-inline constexpr val_t MJZ_ARENA_CAP = 2097152; // 2^21 int64 slots = 16 MiB
 
 // ============================================================================

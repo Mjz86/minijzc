@@ -373,6 +373,7 @@
 #define MJZ_HAVE_ISATTY 1
 #endif
 
+
 static int g_checks = 0, g_fails = 0;
 #define CHECK(cond, msg)                                                       \
   do {                                                                         \
@@ -392,6 +393,61 @@ struct Rv {                 // result of one arithmetic op
   val_t v{};
   bool trap{};
 };
+
+// the language caps recursion at 512 frames -> TRAP in every backend; the
+// const-call evaluator, the frame guard and the VM share this one constant
+inline constexpr uint32_t MJZ_MAX_CALL_DEPTH = 512;
+
+// the arena: 2^21 int64 slots = 16 MiB; CAP must match what the C/asm
+// backends emit (see opt/analysis/alias.hpp)
+inline constexpr val_t MJZ_ARENA_CAP = 2097152;
+
+// the runner contract shared by EVERY backend (interpreters included):
+// one "%lld\n" per print; "TRAP\n" appended if a div/mod traps; "TIMEOUT\n"
+// if a step-limited runner hit its limit. This struct also carries the
+// reference arena + stdin tape for the in-process interpreters.
+struct RunOut {
+  std::vector<val_t> out{};
+  bool trapped{};
+  bool timeout{};
+  // array arena (grows during execution; mirrors the C/asm static arenas)
+  std::vector<val_t> a_data{}; // the slots (zero-initialized by resize)
+  std::vector<val_t> a_lenv{}; // len[handle]; 0 = not an allocated handle
+  // stdin tape for input() (empty tape reads 0, like EOF)
+  std::vector<val_t> ins{};
+  size_t in_pos{};
+
+  constexpr Rv arena_alloc(val_t n) {
+    if (n < 0 || n > MJZ_ARENA_CAP ||
+        n > (val_t)MJZ_ARENA_CAP - (val_t)a_data.size())
+      return {0, true}; // negative size / out of arena memory
+    val_t h = (val_t)a_data.size();
+    a_data.resize(a_data.size() + (size_t)n, 0);
+    if ((size_t)h >= a_lenv.size()) a_lenv.resize((size_t)h + 1, 0);
+    a_lenv[(size_t)h] = n;
+    return {h, false};
+  }
+  constexpr val_t arena_len(val_t h) const {
+    if (h < 0 || (size_t)h >= a_lenv.size()) return 0;
+    return a_lenv[(size_t)h];
+  }
+  constexpr Rv arena_load(val_t h, val_t i) {
+    val_t l = arena_len(h); // bogus handle -> len 0 -> always out of bounds
+    if (i < 0 || i >= l) return {0, true};
+    return {a_data[(size_t)(h + i)], false};
+  }
+  constexpr bool arena_store(val_t h, val_t i, val_t v) {
+    val_t l = arena_len(h);
+    if (i < 0 || i >= l) return false;
+    a_data[(size_t)(h + i)] = v;
+    return true;
+  }
+  constexpr val_t next_input() {
+    if (in_pos < ins.size()) return ins[in_pos++];
+    return 0; // EOF (matches scanf-failure -> 0 in the native backends)
+  }
+};
+
 
 constexpr Rv w_add(val_t a, val_t b) {
   return {(val_t)((uint64_t)a + (uint64_t)b), false};

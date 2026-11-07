@@ -28,7 +28,7 @@ static std::string vname(const Fn &fn, uint32_t v) {
   return std::string(buf);
 }
 
-static void print_fn(const Fn &fn, const char *title) {
+inline void print_fn(const Fn &fn, const char *title) {
   std::printf("  ---- %s ----\n", title);
   for (uint32_t b = 0; b < fn.nblocks(); ++b) {
     if (fn.blocks[b].begin == fn.blocks[b].end &&

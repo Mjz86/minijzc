@@ -8,6 +8,7 @@
 #include "minijz/ir/instr.hpp"
 #include "minijz/opt/analysis/an.hpp"
 #include "minijz/opt/scalar/dce.hpp"
+#include "minijz/opt/loop/lcf_rt.hpp"
 
 struct CallGraph {
   std::vector<std::vector<ulen>> adj{}; // caller -> callees (with dups)
@@ -527,7 +528,7 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
 // --- 9e. driver ----------------------------------------------------------------
 // runtime-only pass tracing (never on the constexpr path: guarded by
 // cfg.debug, which the compile-time pipeline always leaves at 0)
-static void print_fn(const Fn &fn, const char *title); // (defined in 13)
+inline void print_fn(const Fn &fn, const char *title); // (defined in prog/runners.hpp)
 static void dbg_pass_rt(uint8_t debug, const Fn &fn, const char *pass, bool ch) {
   std::printf("  [pass %-9s] %s\n", pass, ch ? "changed" : "fixed");
   if (debug >= 2 && ch) {

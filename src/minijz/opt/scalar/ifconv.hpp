@@ -4,6 +4,7 @@
 
 #include "minijz/base/pass_cfg.hpp"
 #include "minijz/ir/instr.hpp"
+#include "minijz/opt/analysis/intervals.hpp"
 
 // ============================================================================
 // 9e6. IF-CONVERSION of provably-binary selects (ifconv)
