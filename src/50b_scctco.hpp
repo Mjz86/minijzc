@@ -667,6 +667,37 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
       for (uint32_t v = 0; v < nparams; ++v)
         scctco_rewrite(f, Hd.cb, Hd.ce, Hd.entry, Hd.root_vals[v], res[v]);
       scctco_rewrite(f, Hd.cb, Hd.ce, Hd.entry, Hd.trip_src, res[nparams]);
+      // BUGFIX (bug 3, scctco sibling-copy rotation): the copy's ENTRY
+      // block is real body code -- the sibling's first block (its
+      // base-case test; for a one-block sibling even a guard site).
+      // Its reads were left pinned to the RAW root-edge vregs, so on
+      // every back edge that does not pass through the root edge's
+      // defining block the entry test saw a STALE argument forever:
+      // fa(8) -> fb(2) -> fb(0) kept testing the fa-entry value (2) at
+      // fb's `n==0`, never hit the base case and spun to the trip TRAP.
+      // The phis yield exactly the value that arrived on the taken
+      // edge, so rewriting the entry block's NON-PHI reads to them is
+      // exact. Phi instructions are skipped: their args must keep the
+      // raw root-edge value (rewriting them would make each phi
+      // self-referential on its root edge).
+      for (uint32_t i = f.blocks[Hd.entry].begin;
+           i < f.blocks[Hd.entry].end; ++i) {
+        Instr &I = f.code[i];
+        if (I.k == K::Phi) continue;
+        for (uint32_t v = 0; v < nparams; ++v) {
+          const uint32_t from = Hd.root_vals[v], to = res[v];
+          if (I.a == from) I.a = to;
+          if (I.b2 == from) I.b2 = to;
+          if (I.c2 == from) I.c2 = to;
+          for (uint32_t &u : I.args)
+            if (u == from) u = to;
+        }
+        if (I.a == Hd.trip_src) I.a = res[nparams];
+        if (I.b2 == Hd.trip_src) I.b2 = res[nparams];
+        if (I.c2 == Hd.trip_src) I.c2 = res[nparams];
+        for (uint32_t &u : I.args)
+          if (u == Hd.trip_src) u = res[nparams];
+      }
     }
     Hd.trip_phi = res[nparams];
     Hd.phis = true;
