@@ -16,6 +16,7 @@ struct Cli {
   bool emit_c{false}, emit_asm{false}, emit_bc{false}, emit_exe{false};
   bool do_run{false}, no_opt{false}, print_ir{false}, print_bc{false};
   bool no_inline{false};
+  bool no_scctco{false};
   bool no_reassoc{false}, no_lcf{false}, no_divmagic{false};
   int opt_level{-1};  // -O0..-O3 preset (-1: default, i.e. 3)
   unsigned debug{0};  // --debug=N: pass-manager dump volume (0..3)
@@ -101,6 +102,9 @@ static void usage() {
       "  --no-opt           skip the optimizer entirely (same as -O0)\n"
       "  --no-inline        skip interprocedural inlining (call-graph SCC\n"
       "                    analysis still runs; recursive fns never inline)\n"
+      "  --no-scctco        skip SCC tail-call optimization (inner-SCC tail\n"
+      "                    calls collapse to loops; mutual recursion like\n"
+      "                    is_even/is_odd folds to `n & 1`)\n"
       "  --no-reassoc       skip linear-combination reassociation\n"
       "  --no-lcf           skip closed-form loop evaluation (compile-time\n"
       "                    arithmetic/geometric series + simulation, AND the\n"
@@ -167,6 +171,7 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
     else if (a == "--no-regalloc") C.regalloc = false;
     else if (a == "--no-opt") C.no_opt = true;
     else if (a == "--no-inline") C.no_inline = true;
+    else if (a == "--no-scctco") C.no_scctco = true;
     else if (a == "--no-reassoc") C.no_reassoc = true;
     else if (a == "--no-lcf") C.no_lcf = true;
     else if (a == "--no-divmagic") C.no_divmagic = true;
@@ -228,7 +233,8 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
 // later --disable wins over --enable of the same pass).
 static const char *const PASS_NAMES[] = {"fold",  "copyprop", "canon",
     "cse",   "unreach",  "splice", "dce",     "mem2reg", "trapelim",
-    "licm",  "divmagic", "reassoc", "unroll", "lcf",     "inline"};
+    "licm",  "divmagic", "reassoc", "unroll", "lcf",     "inline",
+    "scctco"};
 static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
                            std::string &err) {
   auto eq = [&](const char *s) { return n == s; };
@@ -247,6 +253,7 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
   else if (eq("unroll")) p.p_unroll = on;
   else if (eq("lcf")) p.p_lcf = on;
   else if (eq("constcall")) p.p_constcall = on;
+  else if (eq("scctco")) p.p_scctco = on;
   else if (eq("inline")) p.do_inline = on;
   else {
     err = n;
@@ -263,6 +270,7 @@ static PassCfg pass_cfg_of(const Cli &C) {
   p.regalloc = C.regalloc;
   if (C.no_opt) p.do_opt = false;
   if (C.no_inline) p.do_inline = false;
+  if (C.no_scctco) p.p_scctco = false;
   if (C.no_reassoc) p.p_reassoc = false; // legacy granular flags
   if (C.no_lcf) p.p_lcf = false;
   if (C.no_divmagic) p.p_divmagic = false;
@@ -311,7 +319,7 @@ static RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "canon %u+%u | brs %u | cbr== %u | dead-blk %u | splice %u | "
         "phi-degen %u | dce %u | hoist %u | INLINED %u | UNROLLED %u | "
         "REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | NOTCOMB %u | "
-        "TRAP-KILL %u | MEM2REG %u | DSE %u\n"
+        "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u)\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
         P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i,
@@ -325,7 +333,8 @@ static RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.lcf_sims, (unsigned)os.lcf_gensims, (unsigned)os.lcf_rt,
         (unsigned)os.divmagics, (unsigned)os.notcombs,
         (unsigned)os.traps_killed, (unsigned)os.mem2reg_lifts,
-        (unsigned)os.mem2reg_dses, (unsigned)de_c,
+        (unsigned)os.mem2reg_dses, (unsigned)os.scctco,
+        (unsigned)os.scctco_folds, (unsigned)de_c,
         (unsigned)dz_c, (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
   }
   if (C.print_ir) {

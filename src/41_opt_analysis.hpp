@@ -355,8 +355,16 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
   std::vector<Iv> exit_((size_t)nb * nv, Iv{0, 0, true});
   std::vector<char> touched(nb, 0);
   std::vector<Iv> st(nv), edge(nv);
-  const uint32_t plain = 4 * nb + 16;
-  const uint32_t widened_cap = 4 * nb + 16;
+  // Patience before header-widening kicks in, and after it. Both capped:
+  // phi args read the UNREFINED pred exits, so a loop-carried counter that
+  // creeps +-1 per round (e.g. the scctco frame guard, or any i = i-1
+  // chain not bounded by an entry-side hull) converges only via widening,
+  // and a non-converging (oscillating) CFG runs to the give-up bound --
+  // on a big inlined caller, patience x (4*nb+16) x nb*nv was minutes.
+  // Giving up falls back to sound TOP (no nt proofs), so the caps only
+  // trade precision for time on pathological shapes.
+  const uint32_t plain = (4 * nb + 16) > 64 ? 64 : (4 * nb + 16);
+  const uint32_t widened_cap = (4 * nb + 16) > 64 ? 64 : (4 * nb + 16);
   bool widening = false;
   uint32_t round = 0;
   bool converged = false;

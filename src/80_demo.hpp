@@ -305,7 +305,7 @@ static void run_demos() {
           "splices %u | phi-degen %u | dce %u | hoisted %u | INLINED %u | "
           "UNROLLED %u | REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | "
           "NOTCOMB %u | TRAP-KILL %u | MEM2REG %u | DSE %u | CONSTCALL %u | "
-          "DEADALLOC %u\n"
+          "DEADALLOC %u | SCC-TCO %u(+%u)\n"
           "  destroy: edges split %u | copies %u | self %u | cycles %u | "
           "copy-fused %u\n",
           P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i,
@@ -321,6 +321,7 @@ static void run_demos() {
           (unsigned)os.notcombs, (unsigned)os.traps_killed,
           (unsigned)os.mem2reg_lifts, (unsigned)os.mem2reg_dses,
           (unsigned)os.constcalls, (unsigned)os.deadallocs,
+          (unsigned)os.scctco, (unsigned)os.scctco_folds,
           (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
           (unsigned)dfu);
     }
@@ -376,4 +377,5 @@ struct FuzzStats {
   long fn_progs{}, inlined_total{}, unrolled_total{};
   long brk_progs{}, lifted{}, dead_stores{}, gensims{}, traps_killed{};
   long constcalls{}, deadallocs{};
+  long scctco_total{}, scctco_fold_total{};
 };

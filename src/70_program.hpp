@@ -145,6 +145,8 @@ static OptStats sum_ostats(const Program &P) {
     t.traps_killed += U.ostats.traps_killed;
     t.mem2reg_lifts += U.ostats.mem2reg_lifts;
     t.mem2reg_dses += U.ostats.mem2reg_dses;
+    t.scctco += U.ostats.scctco;
+    t.scctco_folds += U.ostats.scctco_folds;
     if (U.ostats.iters > t.iters) t.iters = U.ostats.iters;
   }
   return t;

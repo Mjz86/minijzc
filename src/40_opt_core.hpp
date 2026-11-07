@@ -271,6 +271,8 @@ struct OptStats {
   uint32_t lcf_gensims{};  // loops folded by the general (any-condition) simulator
   uint32_t constcalls{};  // pure constant-argument calls evaluated at compile time
   uint32_t deadallocs{};  // unused Allocs deleted (arrays read by no one)
+  uint32_t scctco{};      // SCC members whose inner-SCC tail calls collapsed
+  uint32_t scctco_folds{}; // collapsed count-down loops folded to & (c-1)
 };
 
 // --- 9a. constant folding / propagation / branch folding / identities -------

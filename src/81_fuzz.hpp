@@ -312,6 +312,8 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
       F.deadallocs += os.deadallocs;
       F.gensims += os.lcf_gensims;
       F.traps_killed += os.traps_killed;
+      F.scctco_total += os.scctco;
+      F.scctco_fold_total += os.scctco_folds;
     }
     RunOut oracle = run_ast(P.P.ast, P.P.root, 200000, g.ins);
     RunOut plain = run_prog(fns_of(P, 0), 200000, g.ins);
@@ -409,12 +411,14 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
               "unrolled: %ld | arrays lifted: %ld | dead stores: %ld | "
               "const-called: %ld | dead allocs: %ld | "
               "general-sim folds: %ld | traps proven impossible: %ld | "
+              "SCC-TCO collapses: %ld (folds: %ld) | "
               "native-checked (C+asm x -O0/-O2): %ld\n",
               F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
               F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
               F.inlined_total, F.unrolled_total, F.lifted, F.dead_stores,
               F.constcalls, F.deadallocs,
-              F.gensims, F.traps_killed, F.native_checked);
+              F.gensims, F.traps_killed, F.scctco_total, F.scctco_fold_total,
+              F.native_checked);
   CHECK(mismatches == 0, "fuzz must be clean");
 }
 

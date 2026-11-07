@@ -12,6 +12,7 @@
 #include "src/41_opt_analysis.hpp"
 #include "src/42_linform.hpp"
 #include "src/50_callgraph.hpp"
+#include "src/50b_scctco.hpp"
 #include "src/51_optimize.hpp"
 #include "src/52_destr.hpp"
 #include "src/60_vm.hpp"

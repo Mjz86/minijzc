@@ -18,7 +18,10 @@
 //                       const-call evaluation is interprocedural (driven
 //                       from optimize_prog, after the inlining rounds):
 //                       pure constant-argument calls are executed exactly
-//                       at compile time, recursive fns included
+//                       at compile time, recursive fns included.
+//   interprocedural (optimize_prog, before the inliner rounds): scctco
+//                       collapses every SCC whose internal edges are all
+//                       tail calls into loops (see 50b_scctco.hpp)
 // -O levels gate the tiers:
 //   -O0: nothing (SSA + destruction only)
 //   -O1: tier 0
@@ -42,6 +45,7 @@ struct PassCfg {
       p_reassoc{true};
   // tier 2
   bool p_unroll{true}, p_lcf{true}, p_constcall{true};
+  bool p_scctco{true}; // SCC tail-call collapse (inner-SCC tail calls)
   // interprocedural
   bool do_inline{true};
   bool do_opt{true}; // false: skip the optimizer entirely
@@ -57,6 +61,7 @@ struct PassCfg {
     p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce = t0;
     p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = t1;
     p_unroll = p_lcf = p_constcall = t2;
+    p_scctco = t2;
     do_inline = t2;
     do_opt = lv != 0;
   }
@@ -64,6 +69,15 @@ struct PassCfg {
 
 constexpr bool optimize(Fn &fn, OptStats &os, An &final_an,
                         PassCfg cfg = {}); // (defined below)
+
+// 9e1b. SCC tail-call optimization (defined in 50b_scctco.hpp): collapses
+// inner-SCC tail calls into loops before the inliner rounds below -- the
+// collapsed members are no longer recursive, so those rounds can inline
+// them into their callers like any other small function.
+constexpr bool opt_scc_tailcall(std::vector<Fn> &fns,
+                                std::vector<OptStats> &ostats,
+                                const std::vector<std::string_view> &names,
+                                PassCfg cfg);
 
 // --- 9e2. interprocedural: call graph, SCC (mjz_lib), inlining ---------------
 // Nodes are functions (index 0 = the main body); edges are call sites. SCCs
@@ -368,6 +382,9 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
     optimize(fns[f], ostats[f], A, c1);
   }
   if (fns.size() < 2) return;
+  // ---- 9e1b: SCC tail-call collapse (before the inliner rounds) --------
+  if (cfg.p_scctco)
+    (void)opt_scc_tailcall(fns, ostats, names, cfg);
   if (cfg.do_inline) {
     for (int round = 0; round < 4; ++round) {
     CallGraph G = build_callgraph(fns);
@@ -399,7 +416,19 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
               if (g == 0 || g >= fns.size()) continue; // never inline main
               if (G.recursive[g]) continue;            // SCC: recursive
               uint32_t sz = (uint32_t)fns[g].code.size();
-              bool small = sz <= 30;                   // always inline tiny
+              // a body with a back edge (a LOOP) is not "tiny" however few
+              // instrs it has: duplicating loop-carrying code into many call
+              // sites multiplies the caller's analysis cost (and scctco
+              // collapses tail recursion into exactly such loop bodies).
+              // Single-use bodies still inline regardless of loops.
+              bool has_back = false;
+              for (uint32_t q = 0; q < fns[g].nblocks() && !has_back; ++q)
+                for (uint32_t s : {fns[g].succ0(q), fns[g].succ1(q)})
+                  if (s != NONE && s <= q) {
+                    has_back = true;
+                    break;
+                  }
+              bool small = sz <= 30 && !has_back;      // always inline tiny
               bool single_use = callsites[g] == 1 && sz <= 300;
               if (!small && !single_use) continue;
               if (fns[g].nparams != I.args.size()) continue;
