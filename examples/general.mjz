@@ -52,7 +52,7 @@ meh=meh / 2;
 print(hard + easy + meh);
 
 
-
+//  harder to optimize but probably will end up as another and , or maybe use countl_zero/countr_zero from <bit>
 fn fun(n) { 
 if (n == 0) {   return 0; }
 if (n %4==1) {  return fun1(n/4); }
