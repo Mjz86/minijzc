@@ -93,6 +93,14 @@ static RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
         if (live[u] && u != p) edge(p, u);
       live[p] = 0;
     }
+    // ... and PAIRWISE, always: the prologue unconditionally moves every
+    // incoming argument into its home, so even a param whose only uses sit
+    // in unreachable code (not live-in, no edges above) must not share a
+    // home with a live sibling — the entry move would clobber it (fuzz
+    // seed 804: p0 and p1 both colored rbx, `mov %rsi,%rbx` destroyed p0)
+    for (uint32_t a = 0; a < fn.nparams && a < nv; ++a)
+      for (uint32_t b = a + 1; b < fn.nparams && b < nv; ++b)
+        edge(a, b);
   }
   for (uint32_t b = 0; b < nb; ++b) {
     std::vector<char> live = lout[b];
@@ -629,6 +637,14 @@ static std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         break;
       case K::Input:
         s += "  call mjz_input\n";
+        st_rax(I.dst);
+        break;
+      case K::Depth: // frames incl. main = mjz_depth + 1 (1 in main)
+        if (is_main) {
+          s += "  movq $1, %rax\n";
+        } else {
+          s += "  movq mjz_depth(%rip), %rax\n  incq %rax\n";
+        }
         st_rax(I.dst);
         break;
       case K::Call: { // SysV: up to six integer registers

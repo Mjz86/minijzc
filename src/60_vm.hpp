@@ -54,7 +54,8 @@ enum class Bc : uint8_t {
   Lt, Le, Gt, Ge, Eq, Ne, Jmp, Jz, Print,
   ArrNew, ArrLd, ArrSt, ArrLen, In,
   Call, Ret, // Call u32 fnidx u32 nargs; Ret (value via the operand stack)
-  And, Or, Xor, Shl, Lshr, Asr, MulHi // optimizer-lowered bit ops
+  And, Or, Xor, Shl, Lshr, Asr, MulHi, // optimizer-lowered bit ops
+  Depth                                // push the frame count (call depth)
 };
 constexpr const char *bc_name(Bc op) {
   switch (op) {
@@ -90,6 +91,7 @@ constexpr const char *bc_name(Bc op) {
   case Bc::Lshr: return "lshr";
   case Bc::Asr: return "asr";
   case Bc::MulHi: return "mulhi";
+  case Bc::Depth: return "depth";
   }
   return "?";
 }
@@ -147,6 +149,7 @@ constexpr uint32_t bc_instr_size(const Instr &I) {
   case K::Store: return 5 + 5 + 5 + 1;      // Load,Load,Load,ArrSt
   case K::Len: return 5 + 1 + 5;            // Load,ArrLen,Store
   case K::Input: return 1 + 5;              // In,Store
+  case K::Depth: return 1 + 5;              // Depth,Store
   case K::Call:                             // Load*argc,Call,Store
     return 1 + 4 + 4 + 5 * (uint32_t)I.args.size() + 5;
   case K::Ret: return (I.a == NONE ? 9 : 5) + 1; // (Push|Load),Ret
@@ -199,12 +202,15 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
           c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Br:
-          c.push_back((uint8_t)Bc::Jmp); bc_put_u32(c, off[f][I.t]);
+          c.push_back((uint8_t)Bc::Jmp);
+          bc_put_u32(c, I.t == NONE ? off[f][b] : off[f][I.t]);
           break;
         case K::Cbr:
           c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
-          c.push_back((uint8_t)Bc::Jz); bc_put_u32(c, off[f][I.f]);
-          c.push_back((uint8_t)Bc::Jmp); bc_put_u32(c, off[f][I.t]);
+          c.push_back((uint8_t)Bc::Jz);
+          bc_put_u32(c, I.f == NONE ? off[f][b] : off[f][I.f]);
+          c.push_back((uint8_t)Bc::Jmp);
+          bc_put_u32(c, I.t == NONE ? off[f][b] : off[f][I.t]);
           break;
         case K::Print:
           c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
@@ -234,6 +240,10 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
           break;
         case K::Input:
           c.push_back((uint8_t)Bc::In);
+          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          break;
+        case K::Depth:
+          c.push_back((uint8_t)Bc::Depth);
           c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Call:
@@ -308,9 +318,9 @@ constexpr RunOut vm_run(const std::vector<uint8_t> &c,
       if (++steps > step_limit) { R.timeout = true; return R; }
       uint32_t g = bc_rd_u32(c, pc); pc += 4;
       uint32_t na = bc_rd_u32(c, pc); pc += 4;
-      if (g >= nfns || frames.size() >= MJZ_MAX_CALL_DEPTH) {
-        R.trapped = true; // bad callee / recursion depth cap
-        return R;
+      if (g >= nfns || frames.size() > MJZ_MAX_CALL_DEPTH) {
+        R.trapped = true; // bad callee / recursion depth cap (512 CALLEE
+        return R;        // activations; main's frame does not count)
       }
       std::vector<val_t> args(na, 0); // pop na args (a0 pushed first)
       for (uint32_t k = na; k-- > 0;) {
@@ -422,6 +432,9 @@ constexpr RunOut vm_run(const std::vector<uint8_t> &c,
     case Bc::In: // push next stdin value (0 at EOF)
       st.push_back(R.next_input());
       break;
+    case Bc::Depth: // frame count incl. main — same convention as every
+      st.push_back((val_t)frames.size()); // runner (SSA interp: stack.size)
+      break;
     }
   }
 }
@@ -516,7 +529,9 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       continue;
     }
     case K::Call: {
-      if (stack.size() >= MJZ_MAX_CALL_DEPTH) {
+      // depth cap: 512 CALLEE activations (the oracle/native convention;
+      // stack.size() counts main's frame, hence the strict >)
+      if (stack.size() > MJZ_MAX_CALL_DEPTH) {
         R.trapped = true; // recursion depth cap (matches native guards)
         return R;
       }
@@ -613,6 +628,10 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       break;
     case K::Input:
       stack.back().val[I.dst] = R.next_input();
+      stack.back().has[I.dst] = 1;
+      break;
+    case K::Depth: // frame count incl. main (matches VM + native)
+      stack.back().val[I.dst] = (val_t)stack.size();
       stack.back().has[I.dst] = 1;
       break;
     }

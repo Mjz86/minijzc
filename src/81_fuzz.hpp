@@ -129,6 +129,11 @@ void GenCtx::gen_expr(std::string &out, int depth) {
             std::string e;
             gen_pure(e, 2);
             out += e;
+          } else if (use_input && pick(0, 3) == 0) {
+            // occasionally a RUNTIME argument: exercises tailrec -> loop ->
+            // cdfold with a live budget guard against the oracle's real
+            // recursion (and its depth cap)
+            out += "input()";
           } else {
             out += std::to_string(pick(-3, 8));
           }
@@ -529,13 +534,18 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
   for (long seed = from; seed < from + n; ++seed) {
     GenCtx g = gen_program((uint32_t)seed);
     const std::string &src = g.src;
-    if (std::getenv("MJZ_FUZZ_DUMP") && seed >= from + n - 2)
+    if (std::getenv("MJZ_FUZZ_DUMP") && seed >= from + n - 2) {
       std::fprintf(stderr, "=== SEED %ld ===\n%s\n", seed, src.c_str());
+      std::string tape{};
+      for (val_t v : g.ins) tape += std::to_string(v) + " ";
+      std::fprintf(stderr, "=== TAPE %ld: %s===\n", seed, tape.c_str());
+    }
     // rotate the pass configuration: every run exercises a different slice
     // of the pipeline (defaults are level 3 + register allocation)
     PassCfg cfg{};
     cfg.set_level(3);
-    switch (seed % 8) {
+    cfg.fp_limit = 8; // fuzz programs are pathological: cap fixpoint depth
+    switch (seed % 10) {
     case 0: cfg.p_scctco = false; break;   // no SCC tail-call collapse
     case 1: cfg.p_lcf = false; break;      // no closed forms / simulators
     case 2: cfg.p_unroll = false; break;   // no unrolling
@@ -545,7 +555,9 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
     case 6: cfg.set_level(1); break;       // cheap tier only
     case 7: cfg.p_cse = false; cfg.p_licm = false; cfg.p_reassoc = false;
       cfg.p_divmagic = false; break;       // scalar opts off
-    }
+    case 8: cfg.p_tailrec = false; break;  // no tail-call elimination
+    case 9: cfg.p_cdfold = false; cfg.p_ifconv = false; break; // no
+    }                                      // countdown fold / if-conv
     Program P = compile(src, cfg);
     if (!P.ok) {
       std::printf("FUZZ COMPILE ERROR seed %ld: %s at %u\nsource:\n%s\n",
@@ -569,6 +581,9 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
       F.dead_stores += os.mem2reg_dses;
       F.constcalls += os.constcalls;
       F.deadallocs += os.deadallocs;
+      F.tces += os.tces + os.tce_merges;
+      F.cdfolds += os.cdfolds;
+      F.ifconvs += os.ifconvs;
       F.gensims += os.lcf_gensims;
       F.traps_killed += os.traps_killed;
       F.scctco_total += os.scctco;
@@ -668,7 +683,8 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
               "LICM hoists: %ld | programs w/ arrays: %ld | w/ input(): %ld"
               " | w/ fns: %ld | w/ break/continue: %ld\n  inlined: %ld | "
               "unrolled: %ld | arrays lifted: %ld | dead stores: %ld | "
-              "const-called: %ld | dead allocs: %ld | "
+              "const-called: %ld | dead allocs: %ld | tailrec'd: %ld | "
+              "cdfolds: %ld | ifconv'd: %ld | "
               "general-sim folds: %ld | traps proven impossible: %ld | "
               "SCC-TCO collapses: %ld (folds: %ld) | "
               "native-checked (C+asm x -O0/-O2): %ld\n"
@@ -677,7 +693,7 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
               F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
               F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
               F.inlined_total, F.unrolled_total, F.lifted, F.dead_stores,
-              F.constcalls, F.deadallocs,
+              F.constcalls, F.deadallocs, F.tces, F.cdfolds, F.ifconvs,
               F.gensims, F.traps_killed, F.scctco_total, F.scctco_fold_total,
               F.native_checked, F.div_progs, F.mat_progs, F.aparam_progs);
   CHECK(mismatches == 0, "fuzz must be clean");

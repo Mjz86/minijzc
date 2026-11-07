@@ -1889,6 +1889,8 @@ constexpr bool fn_local_pure(const Fn &f) {
     case K::Br:
     case K::Cbr:
     case K::Phi:
+    case K::Depth: // frame count: no observable effect; the VALUE depends
+                   // on the calling context, which opt_constcall controls
     case K::Call:  // nested calls are checked transitively
     case K::Ret:
       break;
@@ -1896,6 +1898,28 @@ constexpr bool fn_local_pure(const Fn &f) {
       return false; // Print/Input/Alloc/Load/Store/Len/Exit: observable
     }
   return true;
+}
+// does the call closure of fi contain a K::Depth (frame-sensitive value)?
+constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
+  const uint32_t n = (uint32_t)fns.size();
+  std::vector<uint8_t> seen(n, 0);
+  std::vector<uint32_t> work{fi};
+  seen[fi] = 1;
+  while (!work.empty()) {
+    uint32_t f = work.back();
+    work.pop_back();
+    for (const Instr &I : fns[f].code) {
+      if (I.k == K::Depth) return true;
+      if (I.k == K::Call) {
+        uint32_t g = (uint32_t)I.c;
+        if (g < n && !seen[g]) {
+          seen[g] = 1;
+          work.push_back(g);
+        }
+      }
+    }
+  }
+  return false;
 }
 // transitive purity over the call graph (cycle-safe DFS)
 constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
@@ -1940,6 +1964,12 @@ constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
     const Instr &I = F.code[pc];
     switch (I.k) {
     case K::Phi: // resolved on the incoming edge, never inline
+      ++pc;
+      continue;
+    case K::Depth: // eval's `depth` = activations-1; frames incl. main =
+      // depth+2 (main=1; the callee called from main sits at frame 2)
+      if (I.dst >= nv) return false;
+      val[I.dst] = (val_t)depth + 2;
       ++pc;
       continue;
     case K::Const:
@@ -2065,7 +2095,20 @@ constexpr bool opt_constcall(std::vector<Fn> &fns,
         if (!allc) continue;
         val_t out{};
         uint64_t steps = 0;
-        if (!eval_pure_fn(fns, g, args, out, 0, steps)) continue;
+        // Frame-exactness rules for the evaluator's recursion cap and its
+        // K::Depth values: a call site IN MAIN is exact (the callee's chain
+        // starts at frame 2, always). A call site in any other fn runs at
+        // an UNKNOWN frame X >= 2: refuse if the callee chain READS the
+        // frame count, and evaluate with an initial depth of CAP-1 so only
+        // non-nesting evaluations (a single activation, which can never
+        // hit the cap) fold — a longer chain's cap point depends on X.
+        bool in_main = (f == 0);
+        uint32_t d0 = 0;
+        if (!in_main) {
+          if (closure_has_depth(fns, g)) continue;
+          d0 = MJZ_MAX_CALL_DEPTH - 1;
+        }
+        if (!eval_pure_fn(fns, g, args, out, d0, steps)) continue;
         // same dst: every user reads the constant directly
         I.k = K::Const;
         I.b = B::Add;

@@ -1,4 +1,5 @@
 #pragma once
+
 struct Optimized {
   Fn fn{};         // SSA after optimization
   OptStats os{};
@@ -25,7 +26,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
     bool ch_any = false;
     for (uint32_t it = 0; it < cap; ++it) {
       bool ch = false, c = false;
-      c = opt_constprop(fn, os); // fold/identities/branch folds
+      c = opt_constprop(fn, os, cfg.is_main); // fold/identities/branch folds
       dbg_pass(cfg.debug, fn, "fold", c);
       ch |= c;
       normalize_phis(fn);
@@ -80,6 +81,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
   };
   any |= tier0();
   // ---- tier 1: middle passes; cheap fixpoint after each round -------------
+  // trapelim runs ONCE per optimize() call: its nt proofs are monotone (a
+  // proof stays valid as the fn shrinks), and its interval analysis is the
+  // most expensive thing in the tier — re-running it every fixpoint round
+  // of every tier re-analysis made pathological inputs ~20x slower for no
+  // additional proofs. Later rounds keep the flags; the tier-2 post-round
+  // re-runs it once more (CFG restructuring can expose new proofs).
+  bool trapelim_ran = false;
   if (cfg.level >= 2) {
     for (uint32_t outer = 0; outer < cap; ++outer) {
       bool ch = false, c = false;
@@ -90,10 +98,11 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         ch |= c;
         normalize_phis(fn);
       }
-      if (cfg.p_trapelim) {
+      if (cfg.p_trapelim && (outer == 0 || !trapelim_ran)) {
         An A = analyze(fn);
         c = opt_trapelim(fn, A, os); // ranges + aliasing -> nt flags
         dbg_pass(cfg.debug, fn, "trapelim", c);
+        trapelim_ran = true;
         ch |= c;
         normalize_phis(fn);
       }
@@ -122,6 +131,12 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         normalize_phis(fn);
       }
 #endif
+      if (cfg.p_ifconv) { // provably-binary cbr selects -> arithmetic
+        c = opt_ifconv(fn, os);
+        dbg_pass(cfg.debug, fn, "ifconv", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
       if (!ch) break;
       any = true;
       tier0();
@@ -129,8 +144,10 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
   }
   // ---- tier 2: expensive CFG restructuring, only after 0/1 fixpoint -------
   if (cfg.level >= 3) {
+    uint32_t t2round = 0;
     for (uint32_t outer = 0; outer < cap; ++outer) {
       bool ch = false;
+      ++t2round;
 #ifndef MJZ_DBG_NO_UNROLL
       if (cfg.p_unroll && cfg.unroll) {
         An A = analyze(fn);
@@ -149,6 +166,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         normalize_phis(fn);
       }
 #endif
+      if (cfg.p_cdfold) { // TCE countdown loops -> exact closed form
+        An A3 = analyze(fn);
+        bool c = opt_cdfold(fn, A3, os);
+        dbg_pass(cfg.debug, fn, "cdfold", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
       if (!ch) break;
       any = true;
       tier0();
@@ -160,7 +184,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
           c2 |= opt_mem2reg(fn, A, os, cfg.lift_ok, cfg.stkarr_ok);
           normalize_phis(fn);
         }
-        if (cfg.p_trapelim) {
+        if (cfg.p_trapelim && t2round < 2) { // restructuring-exposed proofs
           An A = analyze(fn);
           c2 |= opt_trapelim(fn, A, os);
           normalize_phis(fn);
@@ -176,6 +200,15 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         }
         if (cfg.p_reassoc) {
           c2 |= opt_reassoc(fn, os);
+          normalize_phis(fn);
+        }
+        if (cfg.p_cdfold) {
+          An A3 = analyze(fn);
+          c2 |= opt_cdfold(fn, A3, os);
+          normalize_phis(fn);
+        }
+        if (cfg.p_ifconv) {
+          c2 |= opt_ifconv(fn, os);
           normalize_phis(fn);
         }
         (void)c2;

@@ -37,7 +37,10 @@
 //               impossible), LICM, div/mod-by-constant -> mulhi+shift+bitops
 //               (reciprocal from mjz_lib's
 //               get_devide_inverse_and_shift), reassociation (+,-,*c chains
-//               -> canonical linear forms) — fixpoint rounds after each
+//               -> canonical linear forms), IF-CONVERSION (a cbr whose arms
+//               merely materialize constants and whose condition the range
+//               analysis proves in [0,1] becomes select arithmetic
+//               dst = K0 + (K1-K0)*cond) — fixpoint rounds after each
 //             tier 2 “expensive”: full loop unrolling (exact constant trip
 //               counts), closed-form loop evaluation — affine recurrences ->
 //               additive/geometric series exact mod 2^64, non-affine bodies
@@ -257,8 +260,44 @@
 //   guard (closed form only when the wrap-safety proof holds at runtime)
 //   with the original loop as the honest fallback, the header phis
 //   re-keyed to the guard edge so destruction places the entry copies.
+//   COUNTDOWN FOLD (cdfold): the loop shape tail-call elimination emits —
+//   [sel-dispatch; nP/budget header phis; nP==0 base exits; budget==0 TRAP;
+//   latch: nP-1, bH-1, sel toggle] — is replaced by the exact closed form:
+//   N = (u64)n0 (unsigned countdown), guard `(u64)n0 > (u64)budget` -> the
+//   SAME trap the recursion cap would have fired (negative n wraps to a
+//   huge unsigned count and over-budget n both trap), sel_N = (1-2p)*sel0
+//   + p with p = N&1 (the toggle's exact closed form; sel stays in {0,1}
+//   when sel0 is — which is when the final cbr select is sound), additive
+//   accumulators via x_N = x0 + gN + b(N*n0 - N(N-1)/2), and the n%2 ->
+//   n&1 strength reduction happens by emitting the parity bit as
+//   And(n0,1) directly. Binary-search-shaped bodies (args not affine in
+//   the phis) keep their loop.
 //
-// ------------------------------------------------------- 9e2 interprocedural
+// ------------------------------------------------- 9e4 tail-call elimination
+//   Inner-SCC TAIL calls (the result flows straight into the fn's Ret)
+//   need no return address: a self-tail-recursive fn becomes a LOOP in
+//   place (its entry block becomes the loop header with phis for the
+//   parameters; each tail site becomes [budget check -> synthesized trap;
+//   jump back]), and a pure-tail MUTUAL-recursion SCC (is_even/is_odd)
+//   merges into ONE sel-dispatched leaf function Fm(sel, a0..): callers
+//   pass the member index (an invariant tailrec itself creates and records
+//   in Fn::tce_sel), and sibling tail calls become [sel'=sibling; args;
+//   budget check; jump back]. A new K::Depth intrinsic (the frame count,
+//   identical in every runner) materializes the EXACT remaining recursion
+//   budget = 512+1-Depth(), so the transformed loop traps at precisely the
+//   activation where the original call chain would have hit the 512-frame
+//   cap — including the "negative n never reaches the base case" case. The
+//   trap is the existing `t = 1/0` idiom (div-by-constant-zero), which
+//   every backend already emits as TRAP+exit and every optimizer pass
+//   already treats as an observable, unfoldable root. After tailrec the
+//   merged leaf is inlined into its callers, and cdfold (above) sees the
+//   recursion as the countdown loop it always was: print(is_odd(input()))
+//   compiles to [if ((uint64_t)input() > 511) TRAP] + print(input() & 1) —
+//   the guard being semantically REQUIRED (is_odd(600) TRAPs in the source
+//   language, at exactly the point the guard fires). Inlining a
+//   Depth-reading fn adjusts Depth to caller+1 (and in main it
+//   constant-folds to 1), so folded budgets are exact at every call depth.
+//
 //   Call-graph SCC (lib Tarjan): multi-member SCC or self-edge = recursive =
 // never inlined; otherwise inline bottom-up (callees first, constants flow
 // through), re-optimizing each caller, then dead-function elimination.

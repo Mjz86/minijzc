@@ -1,0 +1,2 @@
+fn bs(lo, hi, x) { if (lo > hi) { return -1; } let mid = (lo + hi) / 2; if (mid == x) { return mid; } if (mid < x) { return bs(mid + 1, hi, x); } return bs(lo, mid - 1, x); }
+print(bs(0, 1000000, input()));

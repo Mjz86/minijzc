@@ -5,6 +5,11 @@
 enum class K : uint8_t {
   Const, Copy, Bin, Br, Cbr, Print, Phi, Exit,
   Alloc, Load, Store, Len, Input,  // arrays + stdin (arena handles)
+  Depth,                           // dst = current call depth (frames incl
+                                   // main: 1 in main, k+1 in the k-th
+                                   // callee) — created by tail-call
+                                   // elimination to materialize the exact
+                                   // recursion budget; pure within a fn
   Call, Ret                        // functions: c = callee fn index (args in
                                    // Instr::args); Ret never appears in main
 };
@@ -112,6 +117,13 @@ struct Fn {
     std::vector<uint32_t> vregs{};
   };
   std::vector<StkArr> stk_arrays{};
+
+  // set by tail-call elimination when THIS fn is a merged pure-tail SCC:
+  // the number of merged members. Param 0 (sel) then provably holds a
+  // member index in [0, tce_sel) at every call site (tailrec rewrites them
+  // all itself), which is what lets the countdown fold prove sel in {0,1}
+  // for two members. 0 = not a tailrec product.
+  uint32_t tce_sel{};
 
   // ---- register allocation (C + bytecode backends) ------------------
   // Physical home of each vreg AFTER SSA destruction. Empty = identity

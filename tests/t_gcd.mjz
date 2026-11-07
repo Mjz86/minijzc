@@ -1,0 +1,7 @@
+// gcd: the FIRST tail-call argument is a raw parameter -- the collapsed
+// loop must rotate it (regression: the phi used to feed the original
+// argument back forever, so gcd(48,18) answered 18)
+fn gcd(a, b) { if (b == 0) { return a; } return gcd(b, a % b); }
+print gcd(48, 18);
+print gcd(270, 192);
+print gcd(21, 14);

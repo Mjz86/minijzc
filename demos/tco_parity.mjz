@@ -1,0 +1,3 @@
+fn pe(n) { if (n == 0) { return 1; } return po(n - 1); }
+fn po(n) { if (n == 0) { return 0; } return pe(n - 1); }
+print po(input());

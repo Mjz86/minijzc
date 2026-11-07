@@ -224,6 +224,12 @@ constexpr Iv iv_bin(B b, const Iv &x, const Iv &y) {
   }
   case B::Lt: case B::Le: case B::Gt: case B::Ge: case B::Eq: case B::Ne:
     return {0, 1, false}; // comparisons yield 0/1
+  case B::And:
+    // x & 1 in {0,1} whatever x is (the parity bit of the countdown fold
+    // and of divmagic's %2 lowerings); everything else stays top
+    if (!x.bot && !y.bot && y.lo == y.hi && y.lo == 1)
+      return {0, 1, false};
+    return {INT64_MIN, INT64_MAX, false};
   default:
     return {INT64_MIN, INT64_MAX, false}; // bit ops / shifts / mulhi: top
   }

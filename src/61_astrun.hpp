@@ -240,9 +240,16 @@ constexpr RunOut run_ast(const Ast &a, uint32_t root, uint64_t limit = 200000,
 // register set: colors are unbounded (C has unlimited locals, the VM has
 // unlimited slots), so greedy coloring is always feasible.
 //   * liveness: per-block backward dataflow to a fixpoint (same discipline
-//     as the x86 ra_plan, but on plain instructions — deliberately ignorant
-//     of the emission plan's const-inlining / branch fusion, which only
-//     makes the interference estimate conservative).
+//     as the x86 ra_plan). BRANCH FUSION AWARE: a Cbr whose comparison the
+//     emission plan folds into the branch text reads the comparison's
+//     OPERANDS at the branch, so their live ranges extend past the (now
+//     dead) compare. Treating such operands as dying at the compare was
+//     UNSOUND, not conservative: another vreg could legally share (and
+//     clobber) the operand's slot in between — fuzz seed 33 hit exactly
+//     that (a short-circuit gate compared stale slot values and consumed
+//     an input() the source never evaluates). Const-inlining (kc) and dead
+//     instrs, by contrast, only ever SHORTEN real live ranges, so ignoring
+//     those stays conservative.
 //   * interference: at each def, edges to everything live-after it; params
 //     are "defined at entry", so they conflict with each other and with
 //     everything live into the entry block.
@@ -259,7 +266,60 @@ constexpr void assign_slots(Fn &fn) {
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nb || !nv) return;
-  auto each_use = [&](const Instr &I, auto &&f) {
+  // Branch-fusion awareness (mirrors make_emit_plan's fusion decision
+  // EXACTLY, kept local and allocation-lean: three nv-sized vectors + one
+  // code-sized vector, so the constexpr pipeline's 4 GiB evaluation budget
+  // is not disturbed by the full plan's extra vectors). A Cbr whose
+  // comparison will be folded into the branch text is read by TWO kinds of
+  // backends and both must stay sound:
+  //  * the C backend folds the compare away and reads the comparison's
+  //    OPERANDS at the branch — their live ranges extend past the (dead)
+  //    compare. Missing this let another vreg reuse (clobber) the operand
+  //    slots in between (fuzz seed 33: a short-circuit gate compared stale
+  //    slots and consumed an input() the source never evaluates).
+  //  * the bytecode VM does not fuse: it materializes the compare and
+  //    branches on its RESULT — so I.a stays live to the branch as well.
+  // Marking both (operands + result) is the conservative union; skipping
+  // const-inlined operands would only shave slots, never correctness.
+  std::vector<uint32_t> raw(nv, 0), def_idx(nv, NONE), ndefs(nv, 0);
+  std::vector<uint32_t> fuse(fn.code.size(), NONE);
+  for (uint32_t i = 0; i < fn.code.size(); ++i) {
+    const Instr &I = fn.code[i];
+    if (I.a != NONE && I.a < nv) raw[I.a]++;
+    if (I.b2 != NONE && I.b2 < nv) raw[I.b2]++;
+    if (I.c2 != NONE && I.c2 < nv) raw[I.c2]++;
+    for (uint32_t v : I.args)
+      if (v < nv) raw[v]++;
+    if (I.dst != NONE && I.dst < nv) {
+      ++ndefs[I.dst];
+      def_idx[I.dst] = i;
+    }
+  }
+  for (uint32_t i = 0; i < fn.code.size(); ++i) {
+    const Instr &I = fn.code[i];
+    if (I.k != K::Cbr || I.a == NONE || I.a >= nv) continue;
+    uint32_t d = def_idx[I.a];
+    // single USE is not enough post-destruction (phi slots have one use but
+    // per-edge defs); require a single DEF — same condition as the plan
+    if (d == NONE || raw[I.a] != 1 || ndefs[I.a] != 1) continue;
+    const Instr &D = fn.code[d];
+    bool is_cmp = D.k == K::Bin &&
+                  (D.b == B::Lt || D.b == B::Le || D.b == B::Gt ||
+                   D.b == B::Ge || D.b == B::Eq || D.b == B::Ne);
+    if (is_cmp) fuse[i] = d;
+  }
+  auto each_use = [&](uint32_t i, auto &&f) {
+    const Instr &I = fn.code[i];
+    if (I.k == K::Cbr && i < fuse.size() && fuse[i] != NONE) {
+      const Instr &D = fn.code[fuse[i]];
+      auto one = [&](uint32_t v) {
+        if (v != NONE && v < nv) f(v);
+      };
+      one(D.a);
+      one(D.b2);
+      one(I.a);
+      return;
+    }
     auto one = [&](uint32_t v) {
       if (v != NONE && v < nv) f(v);
     };
@@ -289,7 +349,7 @@ constexpr void assign_slots(Fn &fn) {
         if (I.k == K::Phi) continue; // destroyed input: none (defensive)
         uint32_t d = is_def(I);
         if (d != NONE) live[d] = 0;
-        each_use(I, [&](uint32_t v) { live[v] = 1; });
+        each_use(i, [&](uint32_t v) { live[v] = 1; });
       }
       for (uint32_t v = 0; v < nv; ++v)
         if (live[v] != lin[bb][v]) {
@@ -328,7 +388,7 @@ constexpr void assign_slots(Fn &fn) {
           if (live[u]) edge(d, u); // the write clobbers: no sharing here
         live[d] = 0;
       }
-      each_use(I, [&](uint32_t v) { live[v] = 1; });
+      each_use(i, [&](uint32_t v) { live[v] = 1; });
     }
   }
   // ---- coloring: params pinned, then greedy, highest degree first --------

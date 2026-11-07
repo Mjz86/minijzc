@@ -139,6 +139,10 @@ static OptStats sum_ostats(const Program &P) {
     t.lcf_gensims += U.ostats.lcf_gensims;
     t.constcalls += U.ostats.constcalls;
     t.deadallocs += U.ostats.deadallocs;
+    t.tces += U.ostats.tces;
+    t.tce_merges += U.ostats.tce_merges;
+    t.cdfolds += U.ostats.cdfolds;
+    t.ifconvs += U.ostats.ifconvs;
     t.lcf_rt += U.ostats.lcf_rt;
     t.divmagics += U.ostats.divmagics;
     t.notcombs += U.ostats.notcombs;
@@ -239,6 +243,9 @@ static void print_fn(const Fn &fn, const char *title) {
         break;
       case K::Input:
         std::printf("%s = input()", vname(fn, I.dst).c_str());
+        break;
+      case K::Depth:
+        std::printf("%s = depth()", vname(fn, I.dst).c_str());
         break;
       case K::Call: {
         std::printf("%s = f%u(", vname(fn, I.dst).c_str(), (unsigned)I.c);

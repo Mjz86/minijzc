@@ -1,0 +1,5 @@
+fn fa(n) { if (n == 0) { return 0; } return fb(n - 1); }
+fn fb(n) { if (n == 0) { return 1; } return fc(n - 1); }
+fn fc(n) { if (n == 0) { return 2; } return fd(n - 1); }
+fn fd(n) { if (n == 0) { return 3; } return fa(n - 1); }
+print(fa(input()));

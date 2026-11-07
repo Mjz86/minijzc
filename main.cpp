@@ -1,7 +1,7 @@
 // main.cpp — single translation unit.
-// Mechanical split: the parts below, concatenated in include order,
-// reproduce the former monolithic main.cpp byte-for-byte.
-// See scripts/split_main.py (the generator) for the invariant.
+// Mechanical split: the parts below, concatenated in include order
+// plus the main() tail, reproduce the monolithic compiler
+// byte-for-byte. See scripts/split_main.py (the generator).
 #include "src/00_common.hpp"
 #include "src/10_lexer.hpp"
 #include "src/20_ast.hpp"
@@ -13,6 +13,9 @@
 #include "src/42_linform.hpp"
 #include "src/50_callgraph.hpp"
 #include "src/50b_scctco.hpp"
+#include "src/50c_tco.hpp"
+#include "src/50d_cdfold.hpp"
+#include "src/50e_ifconv.hpp"
 #include "src/51_optimize.hpp"
 #include "src/52_destr.hpp"
 #include "src/60_vm.hpp"
@@ -23,7 +26,6 @@
 #include "src/80_demo.hpp"
 #include "src/81_fuzz.hpp"
 #include "src/90_cli.hpp"
-
 
 int main(int argc, char **argv) {
   Cli C{};

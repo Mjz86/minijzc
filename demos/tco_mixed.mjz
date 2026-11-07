@@ -1,0 +1,5 @@
+fn cnt(n, a) { if (n == 0) { return a; } return cnt(n - 1, a + n); }
+fn ev(n) { if (n == 0) { return 1; } return od(n - 1); }
+fn od(n) { if (n == 0) { return 0; } return ev(n - 1); }
+print cnt(input(), 2) + od(input());
+print cnt(input(), 2) + od(input());

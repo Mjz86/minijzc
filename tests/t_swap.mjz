@@ -1,0 +1,7 @@
+// argument swap across a tail call: BOTH params rotate through the
+// collapsed loop's header phis (regression: the copy fusion used to
+// collapse the swap to identity, so sw kept returning the entry value)
+fn sw(a, b, n) { if (n <= 0) { return a; } return sw(b, a, n - 1); }
+print sw(7, 0, 1);
+print sw(7, 0, 2);
+print sw(7, 0, 3);

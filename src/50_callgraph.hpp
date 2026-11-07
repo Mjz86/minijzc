@@ -1,93 +1,5 @@
 #pragma once
 
-// ============================================================================
-// 9e0. PASS MANAGER
-// ============================================================================
-// PassCfg is the single configuration threaded from the CLI through
-// compile() -> optimize_prog() -> optimize(). Passes live in three cost
-// tiers and the scheduler runs them with a strict discipline:
-//   tier 0 "cheap"    : constprop, copyprop, canon, cse, unreachable,
-//                       splice, dce -- always run to a FIXPOINT first
-//   tier 1 "middle"   : mem2reg (array lifting + dead stores + dead
-//                       allocs), trapelim(+range analysis), licm, divmagic,
-//                       reassoc -- one round each, followed by a tier-0
-//                       fixpoint, repeated until global fixpoint / --fp-limit
-//   tier 2 "expensive": unroll, lcf -- CFG restructuring, run ONLY after
-//                       tiers 0/1 reached their fixpoint; each round is
-//                       followed by full tier-0 (+1) fixpoints again.
-//                       const-call evaluation is interprocedural (driven
-//                       from optimize_prog, after the inlining rounds):
-//                       pure constant-argument calls are executed exactly
-//                       at compile time, recursive fns included.
-//   interprocedural (optimize_prog, before the inliner rounds): scctco
-//                       collapses every SCC whose internal edges are all
-//                       tail calls into loops (see 50b_scctco.hpp)
-// -O levels gate the tiers:
-//   -O0: nothing (SSA + destruction only)
-//   -O1: tier 0
-//   -O2: tiers 0+1
-//   -O3: everything incl. interprocedural inlining (default)
-// Per-pass overrides (--enable/--disable) are applied on top of the preset,
-// so `-O1 --enable=lcf` is legal. --debug=N controls the dump volume:
-//   0 silent; 1 one line per pass invocation; 2 + the IR after each pass
-//   that changed something; 3 reserved for analysis dumps.
-struct PassCfg {
-  uint32_t level{3};   // -O0..-O3 preset
-  uint32_t unroll{16}; // full-unroll constant-trip loops with N <= this
-  uint32_t fp_limit{24}; // fixpoint round cap for every tier loop
-  uint8_t debug{0};    // dump level (0..3)
-  bool regalloc{true}; // C/bytecode register allocation (coloring)
-  // tier 0
-  bool p_fold{true}, p_copyprop{true}, p_canon{true}, p_cse{true},
-      p_unreach{true}, p_splice{true}, p_dce{true};
-  // tier 1
-  bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
-      p_reassoc{true};
-  // tier 2
-  bool p_unroll{true}, p_lcf{true}, p_constcall{true};
-  bool p_scctco{true}; // SCC tail-call collapse (inner-SCC tail calls)
-  // interprocedural
-  bool do_inline{true};
-  bool do_opt{true}; // false: skip the optimizer entirely
-  // program-wide gates (filled in by compile(); see prog_handle_gates)
-  bool lift_ok{true};   // mem2reg array promotion allowed
-  bool stkarr_ok{true}; // C-backend stack arrays allowed
-  // runtime-only debugging context (constexpr path leaves it empty)
-  std::string_view dbg_name{};
-
-  constexpr void set_level(uint32_t lv) {
-    level = lv;
-    bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
-    p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce = t0;
-    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = t1;
-    p_unroll = p_lcf = p_constcall = t2;
-    p_scctco = t2;
-    do_inline = t2;
-    do_opt = lv != 0;
-  }
-};
-
-constexpr bool optimize(Fn &fn, OptStats &os, An &final_an,
-                        PassCfg cfg = {}); // (defined below)
-
-// 9e1b. SCC tail-call optimization (defined in 50b_scctco.hpp): collapses
-// inner-SCC tail calls into loops before the inliner rounds below -- the
-// collapsed members are no longer recursive, so those rounds can inline
-// them into their callers like any other small function.
-constexpr bool opt_scc_tailcall(std::vector<Fn> &fns,
-                                std::vector<OptStats> &ostats,
-                                const std::vector<std::string_view> &names,
-                                PassCfg cfg);
-
-// --- 9e2. interprocedural: call graph, SCC (mjz_lib), inlining ---------------
-// Nodes are functions (index 0 = the main body); edges are call sites. SCCs
-// come from mjz::graph_ns::calculate_strongly_connected_components (Tarjan):
-//   * a function in a multi-member SCC, or with a self-edge, is RECURSIVE
-//     and is never inlined (inlining it would duplicate unbounded work and
-//     break the SSA shape)
-//   * Tarjan finalizes an SCC only after every SCC it can reach, so walking
-//     SCCs in emission order processes callees before callers: inlined
-//     bodies propagate through the rounds
 struct CallGraph {
   std::vector<std::vector<ulen>> adj{}; // caller -> callees (with dups)
   std::vector<uint32_t> scc_of{};       // fn -> scc index
@@ -133,6 +45,108 @@ constexpr CallGraph build_callgraph(const std::vector<Fn> &fns) {
   }
   return G;
 }
+
+// ============================================================================
+// 9e0. PASS MANAGER
+// ============================================================================
+// PassCfg is the single configuration threaded from the CLI through
+// compile() -> optimize_prog() -> optimize(). Passes live in three cost
+// tiers and the scheduler runs them with a strict discipline:
+//   tier 0 "cheap"    : constprop, copyprop, canon, cse, unreachable,
+//                       splice, dce -- always run to a FIXPOINT first
+//   tier 1 "middle"   : mem2reg (array lifting + dead stores + dead
+//                       allocs), trapelim(+range analysis), licm, divmagic,
+//                       reassoc -- one round each, followed by a tier-0
+//                       fixpoint, repeated until global fixpoint / --fp-limit
+//   tier 2 "expensive": unroll, lcf -- CFG restructuring, run ONLY after
+//                       tiers 0/1 reached their fixpoint; each round is
+//                       followed by full tier-0 (+1) fixpoints again.
+//                       const-call evaluation is interprocedural (driven
+//                       from optimize_prog, after the inlining rounds):
+//                       pure constant-argument calls are executed exactly
+//                       at compile time, recursive fns included.
+//   interprocedural (optimize_prog, before the inliner rounds): scctco
+//                       collapses every SCC whose internal edges are all
+//                       tail calls into loops (see 50b_scctco.hpp)
+// -O levels gate the tiers:
+//   -O0: nothing (SSA + destruction only)
+//   -O1: tier 0
+//   -O2: tiers 0+1
+//   -O3: everything incl. interprocedural inlining (default)
+// Per-pass overrides (--enable/--disable) are applied on top of the preset,
+// so `-O1 --enable=lcf` is legal. --debug=N controls the dump volume:
+//   0 silent; 1 one line per pass invocation; 2 + the IR after each pass
+//   that changed something; 3 reserved for analysis dumps.
+struct PassCfg {
+  uint32_t level{3};   // -O0..-O3 preset
+  uint32_t unroll{16}; // full-unroll constant-trip loops with N <= this
+  uint32_t fp_limit{24}; // fixpoint round cap for every tier loop
+  uint8_t debug{0};    // dump level (0..3)
+  bool regalloc{true}; // C/bytecode register allocation (coloring)
+  // tier 0
+  bool p_fold{true}, p_copyprop{true}, p_canon{true}, p_cse{true},
+      p_unreach{true}, p_splice{true}, p_dce{true};
+  // tier 1
+  bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
+      p_reassoc{true};
+  // tier 2
+  bool p_unroll{true}, p_lcf{true}, p_constcall{true}, p_tailrec{true},
+      p_cdfold{true}, p_ifconv{true};
+  bool p_scctco{true}; // SCC tail-call collapse (inner-SCC tail calls)
+  // interprocedural
+  bool do_inline{true};
+  bool do_opt{true}; // false: skip the optimizer entirely
+  // this fn is main (fns[0]): its frame count is provably 1, so a K::Depth
+  // in it constant-folds to 1
+  bool is_main{false};
+  // program-wide gates (filled in by compile(); see prog_handle_gates)
+  bool lift_ok{true};   // mem2reg array promotion allowed
+  bool stkarr_ok{true}; // C-backend stack arrays allowed
+  // runtime-only debugging context (constexpr path leaves it empty)
+  std::string_view dbg_name{};
+
+  constexpr void set_level(uint32_t lv) {
+    level = lv;
+    bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
+    p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce = t0;
+    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = t1;
+    p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv = t2;
+    p_scctco = t2;
+    do_inline = t2;
+    do_opt = lv != 0;
+  }
+};
+
+constexpr bool optimize(Fn &fn, OptStats &os, An &final_an,
+                        PassCfg cfg = {}); // (defined below)
+
+// 9e1b. SCC tail-call optimization (defined in 50b_scctco.hpp): collapses
+// inner-SCC tail calls into loops before the inliner rounds below -- the
+// collapsed members are no longer recursive, so those rounds can inline
+// them into their callers like any other small function.
+constexpr bool opt_scc_tailcall(std::vector<Fn> &fns,
+                                std::vector<OptStats> &ostats,
+                                const std::vector<std::string_view> &names,
+                                PassCfg cfg);
+
+// 9e4. tail-call elimination (defined in 50c_tco.hpp): runs AFTER the
+// inliner rounds and catches the SCCs scctco declined -- self tail
+// recursion becomes a budget-exact loop, pure-tail SCCs merge into one
+// sel-dispatched leaf that cdfold (50d) then folds to closed forms.
+constexpr bool opt_tailrec(std::vector<Fn> &fns,
+                           std::vector<std::string_view> &names,
+                           std::vector<OptStats> &ostats,
+                           std::vector<uint32_t> &src_index);
+
+// --- 9e2. interprocedural: call graph, SCC (mjz_lib), inlining ---------------
+// Nodes are functions (index 0 = the main body); edges are call sites. SCCs
+// come from mjz::graph_ns::calculate_strongly_connected_components (Tarjan):
+//   * a function in a multi-member SCC, or with a self-edge, is RECURSIVE
+//     and is never inlined (inlining it would duplicate unbounded work and
+//     break the SSA shape)
+//   * Tarjan finalizes an SCC only after every SCC it can reach, so walking
+//     SCCs in emission order processes callees before callers: inlined
+//     bodies propagate through the rounds
 
 // Inline ONE call site `dst = G(args)` in F at instr index ci. Both sides are
 // in SSA. The callee's blocks are copied with fresh vreg/block ids; params
@@ -206,6 +220,25 @@ constexpr bool opt_inline_one(Fn &F, const Fn &G, uint32_t ci) {
     }
   }
   // 2) G's blocks, copied; Ret -> Br into the merge chain
+  // K::Depth adjustment: the callee's Depth() is its OWN frame count; the
+  // inlined copy runs in F's frame, where the same value is F's Depth()+1.
+  // dm = Depth(); one = 1; dadj = dm + one is emitted at the inline point;
+  // every copied Depth becomes a Copy of dadj (constprop folds the chain
+  // when F is main, where Depth provably = 1).
+  uint32_t dmV = NONE, dadjV = NONE;
+  bool G_has_depth = false;
+  std::vector<Instr> depth_pre{};
+  for (const Instr &I : G.code)
+    if (I.k == K::Depth) G_has_depth = true;
+  if (G_has_depth) {
+    dmV = new_anon_vreg(F, 0);
+    dadjV = new_anon_vreg(F, 0);
+    uint32_t oneV = new_anon_vreg(F, 0);
+    depth_pre.push_back(Instr{.k = K::Depth, .dst = dmV});
+    depth_pre.push_back(Instr{.k = K::Const, .dst = oneV, .c = 1});
+    depth_pre.push_back(
+        Instr{.k = K::Bin, .b = B::Add, .dst = dadjV, .a = dmV, .b2 = oneV});
+  }
   auto ret_target = [&](uint32_t j) -> uint32_t {
     if (R == 1) return M;
     return (j == 0) ? (nbF + nbG) : (nbF + nbG + j - 1);
@@ -215,6 +248,9 @@ constexpr bool opt_inline_one(Fn &F, const Fn &G, uint32_t ci) {
     uint32_t ridx = NONE;
     for (uint32_t j = 0; j < R; ++j)
       if (rets[j].first == g) ridx = j;
+    if (g == 0 && !depth_pre.empty()) { // the Depth adjustment prefix lives
+      for (const Instr &dp : depth_pre) nc.push_back(dp); // INSIDE this block
+    }
     for (uint32_t i = G.blocks[g].begin; i < G.blocks[g].end; ++i) {
       const Instr &I = G.code[i];
       if (i + 1 == G.blocks[g].end && I.k == K::Ret) {
@@ -222,6 +258,11 @@ constexpr bool opt_inline_one(Fn &F, const Fn &G, uint32_t ci) {
         continue;
       }
       Instr c = I;
+      if (c.k == K::Depth) { // callee frame -> caller frame + 1
+        c.k = K::Copy;
+        c.a = dadjV;
+        c.b2 = NONE;
+      }
       if (c.dst != NONE) c.dst = mapv(c.dst);
       c.a = mapv(c.a);
       c.b2 = mapv(c.b2);
@@ -375,18 +416,23 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
                              std::vector<std::string_view> &names,
                              std::vector<OptStats> &ostats, PassCfg cfg,
                              std::vector<uint32_t> &src_index) {
+  auto main_aware = [&](PassCfg c, uint32_t f) {
+    c.is_main = (f == 0); // main = fns[0] (dead-fn elim never removes it)
+    if (f < names.size()) c.dbg_name = names[f];
+    return c;
+  };
   for (uint32_t f = 0; f < fns.size(); ++f) {
     An A{};
-    PassCfg c1 = cfg;
-    if (f < names.size()) c1.dbg_name = names[f];
-    optimize(fns[f], ostats[f], A, c1);
+    optimize(fns[f], ostats[f], A, main_aware(cfg, f));
   }
   if (fns.size() < 2) return;
   // ---- 9e1b: SCC tail-call collapse (before the inliner rounds) --------
   if (cfg.p_scctco)
     (void)opt_scc_tailcall(fns, ostats, names, cfg);
-  if (cfg.do_inline) {
-    for (int round = 0; round < 4; ++round) {
+  // ---- interprocedural inlining rounds (SCC-aware; recursive never) -------
+  auto inline_rounds = [&](int rounds) {
+    if (!cfg.do_inline) return;
+    for (int round = 0; round < rounds; ++round) {
     CallGraph G = build_callgraph(fns);
     auto recount = [&]() {
       std::vector<uint32_t> cs(fns.size(), 0);
@@ -442,16 +488,72 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
           ostats[f].inlines++;
           inlined_any = true;
           callsites = recount();
-          { // re-fold this caller; unroll/lcf wait for the final pass
+          { // re-fold this caller with TIER 0 ONLY and a tiny fixpoint
+            // budget: this only needs to propagate the inlined body's
+            // constants; the final full optimize below runs every tier
+            // to ITS fixpoint once the shape settled. Level 2 here (with
+            // its mem2reg/trapelim/licm analyses per round) made programs
+            // with many call sites quadratic — fuzz seed 21 (26 sites)
+            // spent 80+ s in these re-folds alone
             An A2{};
             PassCfg c2 = cfg;
+            c2.level = 1;
+            c2.fp_limit = 3;
             c2.p_unroll = false;
-            optimize(fns[f], ostats[f], A2, c2);
+            c2.p_lcf = false;
+            c2.p_cdfold = false;
+            c2.p_ifconv = false;
+            c2.p_constcall = false;
+            c2.do_inline = false;
+            optimize(fns[f], ostats[f], A2, main_aware(c2, f));
           }
         }
       }
     }
     if (!inlined_any) break;
+    }
+  };
+  inline_rounds(4);
+  // ---- 9e4: tail-call elimination of inner-SCC tail calls ------------------
+  // After inlining (non-SCC helpers are gone, so what remains as calls is
+  // genuine recursion — and anything scctco above declined): self
+  // tail-recursion becomes a loop, pure-tail SCCs merge into one
+  // sel-dispatched leaf function. Both keep the recursion depth cap EXACT
+  // via the budget = CAP+1 - Depth() counter. The merged functions are
+  // small leaves now, so a second wave of inlining can pull them (and
+  // their countdown loops) into their callers.
+  if (cfg.p_tailrec) {
+    if (opt_tailrec(fns, names, ostats, src_index)) {
+      const uint32_t nf_after = (uint32_t)fns.size();
+      for (uint32_t f = 0; f < nf_after; ++f) {
+        An A{};
+        PassCfg c4 = cfg;
+        // every fn tailrec TRANSFORMED gets the FULL cfg now, so cdfold can
+        // fold its recursion-budget loop into a closed form while it is
+        // still in its own frame. A cheap re-fold here (the old behavior,
+        // which only favored the appended merge leaf) left self-recursive
+        // loops like cnt(n-1, a+n) UNFOLDED — inline_rounds(2) then pulled
+        // the raw loops into every caller, and the callers' final optimize
+        // had to fold N TCE loops at once (slow, and a multi-fold hazard).
+        // Transformed fns are exactly the ones carrying the budget init:
+        // K::Depth is emitted by tce_emit_budget_init alone — user code
+        // never produces it, and nothing is inlined between tailrec and
+        // here, so the marker is exact. (Callers whose sites were rewritten
+        // only need the cheap re-fold below; their full optimize comes last.)
+        bool tced = f != 0; // main is never a TCE product
+        for (const Instr &I : fns[f].code)
+          if (I.k == K::Depth) { tced = true; break; }
+        if (tced) { // TCE'd (self loop or merged leaf): FULL cfg
+          optimize(fns[f], ostats[f], A, main_aware(c4, f));
+        } else { // everyone else: tier-0 re-fold (call sites were rewritten
+          c4.level = 1; // to sel-const form; the consts just need folding)
+          c4.fp_limit = 3;
+          c4.p_constcall = false;
+          c4.do_inline = false;
+          optimize(fns[f], ostats[f], A, main_aware(c4, f));
+        }
+      }
+      inline_rounds(2); // merged leaves are tiny: inline them into callers
     }
   }
   // ---- 9e3: const-call evaluation ---------------------------------------
@@ -468,22 +570,19 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
       for (uint32_t f = 0; f < fns.size(); ++f) {
         An A{};
         PassCfg c5 = cfg;
-        c5.level = 2;
+        c5.level = 1; // tier 0: propagate the new constants, nothing more
         c5.p_unroll = false;
         c5.p_lcf = false;
         c5.p_constcall = false;
         c5.do_inline = false;
-        if (f < names.size()) c5.dbg_name = names[f];
-        optimize(fns[f], ostats[f], A, c5);
+        optimize(fns[f], ostats[f], A, main_aware(c5, f));
       }
     }
   }
   eliminate_dead_fns(fns, names, ostats, src_index);
   for (uint32_t f = 0; f < fns.size(); ++f) {
     An A{};
-    PassCfg c3 = cfg;
-    if (f < names.size()) c3.dbg_name = names[f];
-    optimize(fns[f], ostats[f], A, c3);
+    optimize(fns[f], ostats[f], A, main_aware(cfg, f));
   }
 }
 

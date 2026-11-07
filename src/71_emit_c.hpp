@@ -186,6 +186,7 @@ static EmitPlan make_emit_plan(const Fn &fn) {
   return P;
 }
 
+
 // ---- 13.5a. C backend --------------------------------------------------------
 // Emits C valid as both C and C++. One function per FnUnit: helpers get
 // `static int64_t mjz_fN(...)` signatures (params are vregs v0..vP-1), a
@@ -197,6 +198,48 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                             bool multi_fn) {
   EmitPlan P = make_emit_plan(fn);
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
+  // def index (for the unsigned-compare pretty-printer below)
+  std::vector<uint32_t> cdefi(nv, NONE);
+  std::vector<uint32_t> nuse(nv, 0);
+  for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
+    for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0)
+      if (fn.code[i0].dst != NONE && fn.code[i0].dst < nv)
+        cdefi[fn.code[i0].dst] = i0;
+  for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
+    for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0) {
+      for (uint32_t o : {fn.code[i0].a, fn.code[i0].b2, fn.code[i0].c2})
+        if (o != NONE && o < nv) ++nuse[o];
+      for (uint32_t o : fn.code[i0].args)
+        if (o != NONE && o < nv) ++nuse[o];
+    }
+  std::vector<char> elide(fn.code.size(), 0); // xor elided by the pretty form
+  { // pre-pass: every fused Cbr whose compare matches the (v^MIN vs const)
+    // unsigned pattern and whose xor operand has this compare as its ONLY
+    // use -> the xor assignment is elided (the if reads v directly)
+    auto xorbase = [&](uint32_t o) -> uint32_t {
+      if (o == NONE || o >= nv || cdefi[o] == NONE) return NONE;
+      const Instr &X = fn.code[cdefi[o]];
+      if (X.k != K::Bin || X.b != B::Xor) return NONE;
+      if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
+        return NONE;
+      if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN) return X.a;
+      if (P.kc[X.a] && P.kv[X.a] == INT64_MIN) return X.b2;
+      return NONE;
+    };
+    for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
+      for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0) {
+        const Instr &C = fn.code[i0];
+        if (C.k != K::Cbr || P.fuse[i0] == NONE) continue;
+        const Instr &D = fn.code[P.fuse[i0]];
+        uint32_t xv = xorbase(D.a), yv = xorbase(D.b2);
+        bool left = xv != NONE && yv == NONE && D.b2 < nv && P.kc[D.b2];
+        bool right = yv != NONE && xv == NONE && D.a < nv && P.kc[D.a];
+        if (!left && !right) continue;
+        uint32_t xo = left ? D.a : D.b2;
+        if (xo < nv && nuse[xo] == 1 && cdefi[xo] != NONE)
+          elide[cdefi[xo]] = 1;
+      }
+  }
   std::string s{};
   char buf[192];
   // home naming: r%u (allocated slot) when register allocation ran,
@@ -326,7 +369,7 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
     }
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (P.dead[i]) continue;
+      if (P.dead[i] || elide[i]) continue;
       switch (I.k) {
       case K::Phi:
         break; // destroyed input has none
@@ -437,10 +480,53 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
           // when the TRUE arm is the fallthrough, the NOT of the compare is
           // folded INTO the compare: `if (!(a<b)) goto L;` -> `if (a>=b) goto L;`
           const Instr &D = fn.code[P.fuse[i]];
-          std::string pos =
-              "(" + V(D.a) + " " + cmp_txt(D.b) + " " + V(D.b2) + ")";
-          std::string neg =
-              "(" + V(D.a) + " " + neg_txt(D.b) + " " + V(D.b2) + ")";
+          std::string pos, neg;
+          { // unsigned-compare pretty-printer: (v ^ INT64_MIN) < (K ^ MIN)
+            // as SIGNED compare on the xor'd values is exactly the UNSIGNED
+            // compare v < K — emit it in that readable form
+            auto xorbase = [&](uint32_t o) -> uint32_t {
+              if (o == NONE || o >= nv || cdefi[o] == NONE) return NONE;
+              const Instr &X = fn.code[cdefi[o]];
+              if (X.k != K::Bin || X.b != B::Xor) return NONE;
+              if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
+                return NONE;
+              if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN) return X.a;
+              if (P.kc[X.a] && P.kv[X.a] == INT64_MIN) return X.b2;
+              return NONE;
+            };
+            auto flip = [](B o) -> B {
+              switch (o) {
+              case B::Lt: return B::Gt;
+              case B::Le: return B::Ge;
+              case B::Gt: return B::Lt;
+              case B::Ge: return B::Le;
+              default: return o;
+              }
+            };
+            uint32_t xv = xorbase(D.a), yv = xorbase(D.b2);
+            bool left = xv != NONE && yv == NONE && D.b2 < nv && P.kc[D.b2];
+            bool right = yv != NONE && xv == NONE && D.a < nv && P.kc[D.a];
+            if (left || right) {
+              uint32_t v = left ? xv : yv;
+              val_t bound = (val_t)((uint64_t)(left ? P.kv[D.b2] : P.kv[D.a]) ^
+                                    (uint64_t)INT64_MIN);
+              B op = left ? D.b : flip(D.b); // normalize: v on the left
+              char btxt[40];
+              if (bound >= 0 && bound <= 3037000499ll)
+                std::snprintf(btxt, sizeof btxt, "(uint64_t)%lld",
+                              (long long)bound);
+              else
+                std::snprintf(btxt, sizeof btxt, "UINT64_C(0x%016llx)",
+                              (unsigned long long)(uint64_t)bound);
+              pos = "((uint64_t)" + V(v) + " " + cmp_txt(op) + " " + btxt +
+                    ")";
+              neg = "((uint64_t)" + V(v) + " " + neg_txt(op) + " " + btxt +
+                    ")";
+            } else {
+              pos = "(" + V(D.a) + " " + cmp_txt(D.b) + " " + V(D.b2) + ")";
+              neg = "(" + V(D.a) + " " + neg_txt(D.b) + " " + V(D.b2) + ")";
+            }
+          }
           if (I.f == P.next[b]) { // false arm falls through
             std::snprintf(buf, sizeof buf, "  if %s goto L%u;\n", pos.c_str(),
                           (unsigned)I.t);
@@ -567,6 +653,16 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                       D(I.dst).c_str());
         s += buf;
         break;
+      case K::Depth: // frames incl. main: mjz_depth counts CALLEES (main=0),
+        // so +1; in main it is provably 1 (nothing below the entry frame)
+        if (is_main) {
+          std::snprintf(buf, sizeof buf, "  %s = 1;\n", D(I.dst).c_str());
+        } else {
+          std::snprintf(buf, sizeof buf, "  %s = mjz_depth + 1;\n",
+                        D(I.dst).c_str());
+        }
+        s += buf;
+        break;
       case K::Call: {
         std::string as{};
         for (size_t k = 0; k < I.args.size(); ++k)
@@ -636,7 +732,8 @@ static std::string emit_c(const std::vector<Fn> &fns,
   const bool multi = fns.size() > 1;
   s += "/* generated by minijz */\n";
   s += "#include <stdio.h>\n#include <stdint.h>\n";
-  if (use_arr || multi || use_stk) s += "#include <stdlib.h>\n"; // exit()
+  s += "#include <stdlib.h>\n"; // exit(): div/mod traps can fire anywhere,
+  //                              including single-fn programs without arrays
   if (use_stk) s += "#include <string.h>\n";                    // memset()
   if (use_arr) {
     // bump arena, bit-identical to the interpreters/VM/asm backends:

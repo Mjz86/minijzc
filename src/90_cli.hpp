@@ -82,16 +82,24 @@ static void usage() {
       "                    destruction only); -O1: cheap tier to fixpoint\n"
       "                    (fold/copyprop/canon/cse/unreach/splice/dce);\n"
       "                    -O2: + mem2reg, trapelim (range+alias), licm,\n"
-      "                    divmagic, reassoc; -O3: + unroll, lcf, constcall,\n"
-      "                    inline (expensive CFG restructuring runs only\n"
-      "                    after the cheaper tiers reach their fixpoint;\n"
-      "                    constcall evaluates pure constant-argument calls\n"
-      "                    — recursive ones included — at compile time)\n"
+      "                    divmagic, reassoc, ifconv; -O3: + unroll, lcf,\n"
+      "                    constcall, tailrec, cdfold, inline (expensive CFG\n"
+      "                    restructuring runs only after the cheaper tiers\n"
+      "                    reach their fixpoint; constcall evaluates pure\n"
+      "                    constant-argument calls — recursive ones included\n"
+      "                    — at compile time; tailrec eliminates inner-SCC\n"
+      "                    tail calls — mutual recursion like is_even/is_odd\n"
+      "                    merges into one sel-dispatched function with an\n"
+      "                    exact recursion-budget loop; cdfold then replaces\n"
+      "                    such countdown loops by closed forms, so\n"
+      "                    print(is_odd(input())) becomes\n"
+      "                    [depth guard] + print(input() & 1))\n"
       "  --enable=P,P2      force passes on (folds, copyprop, canon, cse,\n"
       "  --disable=P,P2     force passes off  unreach, splice, dce, mem2reg,\n"
-      "                    trapelim, licm, divmagic, reassoc, unroll, lcf,\n"
-      "                    constcall, inline) — applied on top of the -O\n"
-      "                    preset, so e.g. `-O1 --enable=lcf` is legal\n"
+      "                    trapelim, licm, divmagic, reassoc, ifconv, unroll,\n"
+      "                    lcf, constcall, scctco, tailrec, cdfold, inline) —\n"
+      "                    applied on top of the -O preset, so e.g. `-O1\n"
+      "                    --enable=lcf` is legal\n"
       "  --unroll=N         full-unroll loops with constant trip count <= N\n"
       "                    (default 16; 0 disables unrolling)\n"
       "  --fp-limit=N       fixpoint round cap per tier (default 24)\n"
@@ -260,6 +268,9 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
   else if (eq("lcf")) p.p_lcf = on;
   else if (eq("constcall")) p.p_constcall = on;
   else if (eq("scctco")) p.p_scctco = on;
+  else if (eq("tailrec")) p.p_tailrec = on;
+  else if (eq("cdfold")) p.p_cdfold = on;
+  else if (eq("ifconv")) p.p_ifconv = on;
   else if (eq("inline")) p.do_inline = on;
   else {
     err = n;

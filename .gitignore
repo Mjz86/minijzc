@@ -33,3 +33,16 @@
 /mjz_lib
 *.pdb
 /build
+
+# emitted backend artifacts (--run/--emit)
+*.mbc
+*.mbc.lst
+*.out.tmp
+*.in.tmp
+/examples/showcase.c
+/examples/showcase.s
+/demos/*.c
+/tests/*.c
+/demos/*.s
+/tests/*.s
+*.exe

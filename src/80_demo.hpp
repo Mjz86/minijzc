@@ -17,6 +17,7 @@ static const val_t DEMO_INS_STATS[] = {5, 3, 8, 1, 9, 9, 2, 0, 7, 6};
 static const val_t DEMO_INS_DIVMAGIC[] = {1234567890123456789, -987654321098765432};
 static const val_t DEMO_INS_LCFRT[] = {1000000};
 static const val_t DEMO_INS_CCALL[] = {5};
+static const val_t DEMO_INS_COUNT[] = {100};
 
 static const Demo demos[] = {
   {"sum_1_to_10",
@@ -117,11 +118,35 @@ static const Demo demos[] = {
    "fn fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\n"
    "print fact(6);\nprint fib(12);\n",
    true},
-  {"fn_mutual_recursion", // a 2-member call-graph SCC: never inlined
+  {"fn_mutual_recursion", // a 2-member call-graph SCC: never inlined, but
+   // TAIL-CALLED: scctco (default) collapses each member into a loop and
+   // the count-down folds to `n & 1`; with --disable=scctco the tailrec
+   // path merges the SCC into one sel-dispatched leaf instead, cdfold
+   // replaces its countdown by the closed form + TRAP guard and ifconv
+   // folds the member select — both routes end at print(n & 1)
    "fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }\n"
    "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
    "print is_even(10);\nprint is_odd(7);\nprint is_even(7);\n",
    true},
+  {"tailrec_mutual_fold",
+   // the full pipeline: is_odd(input()) -> the guard (the 512-activation
+   // recursion cap is a language semantic, so is_odd(600) TRAPs) +
+   // input() & 1. Default route: scctco's collapse + fold; run with
+   // --disable=scctco to watch tailrec -> cdfold -> ifconv build the
+   // same result from the sel-dispatched leaf
+   "fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }\n"
+   "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
+   "print is_odd(input());\n",
+   true, DEMO_INS_CCALL, 1},
+  {"tailrec_self", // single-member: a self tail call becomes a loop, then
+   // the ADDITIVE-accumulator countdown closed form: count(100,0) = 5050
+   // via x_N = x0 + N*n0 - N(N-1)/2 — no loop, no call, exact budget
+   // guard (scctco + LCF by default; tailrec + cdfold under
+   // --disable=scctco)
+   "fn count(n, acc) { if (n == 0) { return acc; } "
+   "return count(n - 1, acc + n); }\n"
+   "print count(input(), 0);\n",
+   true, DEMO_INS_COUNT, 1},
   {"const_call_eval",
    // recursion + mutual recursion + a never-read array + a runtime trip
    // count, all at once: the calls fold via the interprocedural const-call
@@ -305,7 +330,8 @@ static void run_demos() {
           "splices %u | phi-degen %u | dce %u | hoisted %u | INLINED %u | "
           "UNROLLED %u | REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | "
           "NOTCOMB %u | TRAP-KILL %u | MEM2REG %u | DSE %u | CONSTCALL %u | "
-          "DEADALLOC %u | SCC-TCO %u(+%u)\n"
+          "DEADALLOC %u | SCC-TCO %u(+%u) | TAILREC %u(+%u) | CDFOLD %u | "
+          "IFCONV %u\n"
           "  destroy: edges split %u | copies %u | self %u | cycles %u | "
           "copy-fused %u\n",
           P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i,
@@ -322,6 +348,8 @@ static void run_demos() {
           (unsigned)os.mem2reg_lifts, (unsigned)os.mem2reg_dses,
           (unsigned)os.constcalls, (unsigned)os.deadallocs,
           (unsigned)os.scctco, (unsigned)os.scctco_folds,
+          (unsigned)os.tces, (unsigned)os.tce_merges, (unsigned)os.cdfolds,
+          (unsigned)os.ifconvs,
           (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
           (unsigned)dfu);
     }
@@ -387,7 +415,7 @@ struct FuzzStats {
   long arr_progs{}, in_progs{}, native_checked{};
   long fn_progs{}, inlined_total{}, unrolled_total{};
   long brk_progs{}, lifted{}, dead_stores{}, gensims{}, traps_killed{};
-  long constcalls{}, deadallocs{};
+  long constcalls{}, deadallocs{}, tces{}, cdfolds{}, ifconvs{};
   long scctco_total{}, scctco_fold_total{};
   long div_progs{}, mat_progs{}, aparam_progs{};
 };

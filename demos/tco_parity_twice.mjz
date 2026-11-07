@@ -1,0 +1,4 @@
+fn ev(n) { if (n == 0) { return 1; } return od(n - 1); }
+fn od(n) { if (n == 0) { return 0; } return ev(n - 1); }
+print od(input());
+print od(input());

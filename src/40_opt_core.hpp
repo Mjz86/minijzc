@@ -273,11 +273,15 @@ struct OptStats {
   uint32_t deadallocs{};  // unused Allocs deleted (arrays read by no one)
   uint32_t scctco{};      // SCC members whose inner-SCC tail calls collapsed
   uint32_t scctco_folds{}; // collapsed count-down loops folded to & (c-1)
+  uint32_t tces{};        // tail-recursion eliminated (recursion -> loops)
+  uint32_t tce_merges{};  // pure-tail SCCs merged into one sel-dispatched fn
+  uint32_t cdfolds{};     // countdown loops replaced by exact closed forms
+  uint32_t ifconvs{};     // cbrs with provably-binary conds if-converted
 };
 
 // --- 9a. constant folding / propagation / branch folding / identities -------
 // known: vreg -> const value. iterates to fixpoint.
-constexpr bool opt_constprop(Fn &fn, OptStats &os) {
+constexpr bool opt_constprop(Fn &fn, OptStats &os, bool is_main = false) {
   bool changed_any = false;
   for (int round = 0; round < 12; ++round) {
     bool changed = false;
@@ -409,6 +413,15 @@ constexpr bool opt_constprop(Fn &fn, OptStats &os) {
             if (is_known(x, xv) && is_known(y, yv) && xv == yv) {
               I.k = K::Const; I.c = xv; os.folds++; changed = true; break;
             }
+          }
+          break;
+        }
+        case K::Depth: { // main's frame count is provably 1 everywhere
+          if (is_main) {
+            I.k = K::Const;
+            I.c = 1;
+            os.folds++;
+            changed = true;
           }
           break;
         }
