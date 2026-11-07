@@ -365,8 +365,15 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
           val_t av = ac ? P.kv[I.a] : 0;
           bool always =
               bc && (bv == 0 || (bv == -1 && ac && av == INT64_MIN));
+          // a trap must abort the WHOLE program. `return 1` only does that
+          // from main; inside a callee it would hand control back to the
+          // caller, which would keep running past the trap (the arena and
+          // stack-array guards below already use exit(1) -- these three
+          // div/mod sites must too)
+          const std::string trap_stmt =
+              is_main ? "return 1" : "exit(1)";
           if (always) {
-            s += "  printf(\"TRAP\\n\"); return 1;\n";
+            s += "  printf(\"TRAP\\n\"); " + trap_stmt + ";\n";
             break;
           }
           if (I.nt) {
@@ -374,12 +381,12 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
             // this is the `h != 0` loop-divisor case, where the guard is
             // dead weight the analysis has already discharged
           } else if (bc && bv == -1)
-            s += "  if (" + V(I.a) +
-                 " == INT64_MIN) { printf(\"TRAP\\n\"); return 1; }\n";
+            s += "  if (" + V(I.a) + " == INT64_MIN) { printf(\"TRAP\\n\"); " +
+                 trap_stmt + "; }\n";
           else if (!bc)
             s += "  if (" + V(I.b2) + " == 0 || (" + V(I.a) +
                  " == INT64_MIN && " + V(I.b2) +
-                 " == -1)) { printf(\"TRAP\\n\"); return 1; }\n";
+                 " == -1)) { printf(\"TRAP\\n\"); " + trap_stmt + "; }\n";
           std::snprintf(buf, sizeof buf, "  %s = %s %s %s;\n",
                         D(I.dst).c_str(), V(I.a).c_str(), op, V(I.b2).c_str());
           s += buf;
