@@ -222,8 +222,16 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
     }
     nbl.push_back({base, (uint32_t)nc.size()});
   }
-  // latch merge chain M_{k-1} .. M_1 (M_j: phis + br M_{j-1} / H)
-  for (uint32_t j = k - 1; j >= 1; --j) {
+  // latch merge chain M_1 .. M_{k-1} (M_j: phis + br M_{j-1} / H).
+  // BUGFIX (bug #1, multi-site self tail-rec): the chain used to be
+  // appended in DESCENDING order (M_{k-1} first) while every block id
+  // reference uses Mb[j] = nb + j, which assumes ASCENDING placement.
+  // With k >= 3 tail sites every M-block id was wrong: the CFG came out
+  // scrambled (an infinite 2-cycle that lost the argument update and the
+  // budget check) -- e.g. a 4-site self-recursive fn looped forever.
+  // Fix: emit M_1 first (j ascending) so physical position nb+j holds
+  // M_j exactly as Mb[j] = nb + j promises.
+  for (uint32_t j = 1; j <= k - 1; ++j) {
     uint32_t base = (uint32_t)nc.size();
     uint32_t pa = sites[j - 1].b + 1; // site j (1-based) edge
     uint32_t pb = (j == k - 1) ? (sites[j].b + 1) : Mb[j + 1];
