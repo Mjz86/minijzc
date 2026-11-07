@@ -1,14 +1,51 @@
-
-fn isn_even(n) { if (n == 0) {  return 0; } return is_odd(n - 1); }
-fn isn_odd(n)  { if (n == 0) {  return 1; } return is_even(n - 1); }
+// should be AS EASY as the is_odd 
+fn isn_even(n) { if (n == 0) {  return 0; } return isn_odd(n - 1); }
+fn isn_odd(n)  { if (n == 0) {  return 1; } return isn_even(n - 1); }
 
 
 print isn_odd(input());
 
 
-
+// should be AS EASY as the is_odd 
 fn is_even(n) { if (n == 0) {  return 0; } return is_odd(n - 1); }
 fn is_odd(n)  { if (n == 0) {  return 10; } return is_even(n - 1); }
 
 
 print is_odd(input());
+
+
+
+// should be like the is_odd 
+fn is_even_p(n) { if (n == 0) { print(0);  return 0; } return is_odd_p(n - 1); }
+fn is_odd_p(n)  { if (n == 0) { print(1); return 1; } return is_even_p(n - 1); }
+
+
+
+print is_odd_p(input());
+
+// should be able to do partial closed form eval
+fn is_even_q(n) { print(0); if (n == 0) {  return 0; } return is_odd_q(n - 1); }
+fn is_odd_q(n)  { print(1); if (n == 0) {  return 1; } return is_even_q(n - 1); }
+
+
+
+print is_odd_q(input());
+
+
+// should be able to do partial closed form eval
+// and partial unrolling 
+let n=input();
+let i=0;
+let hard=0;
+let easy=0;
+let meh=1000000;
+while(i<n){
+print(i);
+i=i+1;
+hard=hard*2+1;
+easy=easy+1;
+meh=meh / 2;
+}
+
+
+print(hard + easy + meh);
