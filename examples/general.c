@@ -17,7 +17,7 @@ int main(void) {
   r3 = 511;
 L2:;
   if (r2 != 0) goto L5;
-  r0 = 0;
+  r0 = 1;
 L16:;
 L17:;
   printf("%lld\n", (long long)r0);
@@ -27,7 +27,7 @@ L5:;
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L9;
   if (r2 != 0) goto L12;
-  r0 = 10;
+  r0 = 0;
   goto L17;
 L12:;
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
