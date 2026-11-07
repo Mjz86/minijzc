@@ -367,9 +367,20 @@ static void run_demos() {
 
 // ============================================================================
 // 15. differential fuzzer: random programs, five-way agreement
-//     (oracle vs SSA vs optimized vs destroyed vs bytecode VM), now with
-//     arrays (in-scope bounds known; occasional deliberate OOB traps) and
-//     input() reads from a fixed per-seed tape.
+//     (oracle vs SSA vs optimized vs destroyed vs bytecode VM).
+//     Vocabulary: lets (scalar / flat array / 2-D array), runtime-index
+//     loads & stores (counter-mod and normalized double-mod), len() of
+//     arrays and scalars, input() from a fixed per-seed tape, fn calls
+//     (constant, expression, and array-handle arguments), division and
+//     modulo by positive AND negative constants, short-circuit && / ||
+//     division guards (guarded and deliberately inverted), unary !, all
+//     six comparisons, if with and without else, up- and down-counting
+//     whiles with compound conditions, guarded break/continue, self / mutual
+//     / tail-recursive / 3-member-SCC functions, and array params that cross
+//     frames. Whole programs opt in to the coverage modes that disable
+//     program-wide gates (2-D arrays, array params, runtime indices) and to
+//     deliberate trap bait (OOB accesses, /0, inverted guards), so the rest
+//     keep full lifting / dead-array / const-call coverage.
 // ============================================================================
 struct FuzzStats {
   long cases{}, timeouts{}, traps{}, licm_hoists{}, dce_instrs{}, phis{};
@@ -378,4 +389,5 @@ struct FuzzStats {
   long brk_progs{}, lifted{}, dead_stores{}, gensims{}, traps_killed{};
   long constcalls{}, deadallocs{};
   long scctco_total{}, scctco_fold_total{};
+  long div_progs{}, mat_progs{}, aparam_progs{};
 };

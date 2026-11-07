@@ -82,7 +82,8 @@ int main(int argc, char **argv) {
   }
   if (C.fuzz > 0 || C.selftest) {
     if (C.selftest && C.fuzz_native <= 0) C.fuzz_native = 6; // native gate
-    run_fuzz(C.selftest ? 200 : C.fuzz, C.cc, C.fuzz_native, C.out_dir);
+    run_fuzz(C.selftest ? 200 : C.fuzz, C.cc, C.fuzz_native, C.out_dir,
+             C.fuzz_from);
   }
   if (have_action) {
     std::printf("\ntotal failures: %d (of %d checks)\n", g_fails, g_checks);

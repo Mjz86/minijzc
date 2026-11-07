@@ -27,7 +27,7 @@ struct Cli {
   bool no_exec{false}, quiet{false}, check_all{false}, debug_plan{false};
   unsigned repeats{3};
   uint64_t steps{200000000ull};
-  long fuzz{0}, fuzz_native{0};
+  long fuzz{0}, fuzz_native{0}, fuzz_from{1};
   bool demo{false}, selftest{false}, help{false};
 };
 
@@ -45,6 +45,8 @@ static void usage() {
       "  --demo            curated demo suite\n"
       "  --fuzz[=N]        differential fuzz of N random programs (default "
       "1000)\n"
+      "  --fuzz-from=S     first fuzz seed (default 1; lets long sweeps run "
+      "in shards)\n"
       "  --fuzz-native[=K] additionally build & run C+asm at -O0/-O2 for the\n"
       "                    first K fuzz programs (slow; proves the emitted\n"
       "                    code byte-for-byte against the oracle)\n"
@@ -144,6 +146,10 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
     else if (a == "--selftest") C.selftest = true;
     else if (a == "--fuzz") C.fuzz = 1000;
     else if (const char *v = val("--fuzz=")) C.fuzz = atol(v);
+    else if (const char *v = val("--fuzz-from=")) {
+      C.fuzz_from = atol(v);
+      if (C.fuzz_from < 1) C.fuzz_from = 1;
+    }
     else if (a == "--fuzz-native") C.fuzz_native = 20;
     else if (const char *v = val("--fuzz-native=")) C.fuzz_native = atol(v);
     else if (a == "--run") C.do_run = true;
