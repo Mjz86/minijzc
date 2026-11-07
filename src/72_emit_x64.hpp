@@ -152,9 +152,16 @@ static std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   auto rname = [&](uint32_t v) -> const char * {
     return RREGS[RP.color[v]];
   };
+  // number of callee-saved registers this function pushes (computed here so
+  // the spill offsets below can skip them)
+  const uint32_t npush = (uint32_t)__builtin_popcount(RP.usedmask);
   auto slot = [&](uint32_t v) -> std::string { // spill home of v
+    // MUST live BELOW the pushed callee-saved registers: the pushes occupy
+    // -8..-8*npush(%rbp), so spill k goes to -8*(npush+k+1)(%rbp). (The old
+    // -8*(k+1)(%rbp) addressing overlapped the saved rbx/r12 and a spilled
+    // value silently corrupted the caller's registers.)
     std::snprintf(buf, sizeof buf, "-%u(%%rbp)",
-                  (unsigned)(8 * (RP.spill[v] + 1)));
+                  (unsigned)(8 * (npush + RP.spill[v] + 1)));
     return std::string(buf);
   };
   auto loc = [&](uint32_t v) -> std::string { // operand text: %reg or slot
@@ -234,9 +241,9 @@ static std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   };
   // frame: spill bytes, 16-aligned, padded so calls stay aligned given the
   // (possibly odd) number of pushed callee-saved registers
-  const uint32_t npush = (uint32_t)__builtin_popcount(RP.usedmask);
   uint64_t frame = ((uint64_t)RP.nspill * 8 + 15) / 16 * 16;
   if (npush & 1) frame += 8;
+  if (frame < (uint64_t)RP.nspill * 8) frame = RP.nspill * 8;
   // block labels are file-scope in asm: prefix per function
   auto lbl = [&](uint32_t b) -> std::string {
     char l[48];
@@ -262,8 +269,23 @@ static std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
     s += "  incq mjz_depth(%rip)\n";
     s += "  cmpq $512, mjz_depth(%rip)\n  jg mjz_trap\n";
     static const char *argregs[6] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
-    for (uint32_t p = 0; p < fn.nparams && p < 6; ++p)
-      s += std::string("  movq %") + argregs[p] + ", " + loc(p) + "\n";
+    { // a NEVER-USED parameter gets NO incoming mov: the RA is free to
+      // give its home to a live value (dead params have no interference
+      // edges), and the mov would clobber that live value on entry
+      std::vector<uint32_t> pu(nv, 0);
+      for (const Instr &I : fn.code) {
+        auto bump = [&](uint32_t v) {
+          if (v != NONE && v < nv) ++pu[v];
+        };
+        bump(I.a);
+        bump(I.b2);
+        bump(I.c2);
+        for (uint32_t v : I.args) bump(v);
+      }
+      for (uint32_t p = 0; p < fn.nparams && p < 6; ++p)
+        if (pu[p] != 0)
+          s += std::string("  movq %") + argregs[p] + ", " + loc(p) + "\n";
+    }
   }
   // NOTE: no slot zero-init — SSA dominance guarantees every read of a slot
   // is preceded (on its path) by the write of its def; undef phi args were
@@ -439,6 +461,15 @@ static std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
           bool always = bc && (bv == 0 || (bv == -1 && ac && av == INT64_MIN));
           if (always) {
             s += "  jmp mjz_trap\n";
+            break;
+          }
+          if (I.nt) {
+            // PROVEN trap-free (range analysis): no guard, plain divide
+            src_into("rax", x);
+            ld("rcx", y);
+            s += "  cqto\n  idivq %rcx\n";
+            if (I.b == B::Mod) s += "  movq %rdx, %rax\n";
+            st_rax(I.dst);
             break;
           }
           if (bc && bv == -1) { // x / -1 == -x (trap only on INT64_MIN)

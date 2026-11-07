@@ -123,6 +123,8 @@ struct AstRun {
       ++depth;
       bool was = returned;
       returned = false;
+      retval = 0; // falling off the end returns 0 -- NOT the previous
+                  // frame's leftover return value (empty fn bodies!)
       exec(fd.body);
       --depth;
       val_t rv = retval;

@@ -369,7 +369,11 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
             s += "  printf(\"TRAP\\n\"); return 1;\n";
             break;
           }
-          if (bc && bv == -1)
+          if (I.nt) {
+            // PROVEN trap-free (range/alias analysis): no guard at all --
+            // this is the `h != 0` loop-divisor case, where the guard is
+            // dead weight the analysis has already discharged
+          } else if (bc && bv == -1)
             s += "  if (" + V(I.a) +
                  " == INT64_MIN) { printf(\"TRAP\\n\"); return 1; }\n";
           else if (!bc)
@@ -494,35 +498,45 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                         D(I.dst).c_str(), V(I.a).c_str());
           s += buf;
         }
-        break;
-      case K::Load:
+        break;      case K::Load:
         if (I.a < nv && arr_of[I.a] >= 0) { // local array: direct + bounds check
-          std::snprintf(buf, sizeof buf,
-                        "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
-                        "exit(1); }\n",
-                        V(I.b2).c_str(), V(I.b2).c_str(),
-                        (long long)fn.stk_arrays[arr_of[I.a]].len);
-          s += buf;
+          if (!I.nt) { // nt: index PROVEN in range (alias analysis)
+            std::snprintf(buf, sizeof buf,
+                          "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
+                          "exit(1); }\n",
+                          V(I.b2).c_str(), V(I.b2).c_str(),
+                          (long long)fn.stk_arrays[arr_of[I.a]].len);
+            s += buf;
+          }
           std::snprintf(buf, sizeof buf, "  %s = %s[%s];\n", D(I.dst).c_str(),
                         arr_name(arr_of[I.a]).c_str(), V(I.b2).c_str());
+          s += buf;
+        } else if (I.nt) { // arena, PROVEN in bounds: direct access
+          std::snprintf(buf, sizeof buf, "  %s = mjz_arena[%s + %s];\n",
+                        D(I.dst).c_str(), V(I.a).c_str(), V(I.b2).c_str());
           s += buf;
         } else {
           std::snprintf(buf, sizeof buf, "  %s = mjz_load(%s, %s);\n",
                         D(I.dst).c_str(), V(I.a).c_str(), V(I.b2).c_str());
           s += buf;
         }
-        break;
-      case K::Store:
+        break;      case K::Store:
         if (I.a < nv && arr_of[I.a] >= 0) { // local array: direct + bounds check
-          std::snprintf(buf, sizeof buf,
-                        "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
-                        "exit(1); }\n",
-                        V(I.b2).c_str(), V(I.b2).c_str(),
-                        (long long)fn.stk_arrays[arr_of[I.a]].len);
-          s += buf;
+          if (!I.nt) { // nt: index PROVEN in range (alias analysis)
+            std::snprintf(buf, sizeof buf,
+                          "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
+                          "exit(1); }\n",
+                          V(I.b2).c_str(), V(I.b2).c_str(),
+                          (long long)fn.stk_arrays[arr_of[I.a]].len);
+            s += buf;
+          }
           std::snprintf(buf, sizeof buf, "  %s[%s] = %s;\n",
                         arr_name(arr_of[I.a]).c_str(), V(I.b2).c_str(),
                         V(I.c2).c_str());
+          s += buf;
+        } else if (I.nt) { // arena, PROVEN in bounds: direct access
+          std::snprintf(buf, sizeof buf, "  mjz_arena[%s + %s] = %s;\n",
+                        V(I.a).c_str(), V(I.b2).c_str(), V(I.c2).c_str());
           s += buf;
         } else {
           std::snprintf(buf, sizeof buf, "  mjz_store(%s, %s, %s);\n",

@@ -866,10 +866,20 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
   // (SSA guarantees every access of a lifted array is dominated by the
   // allocation's block -- the handle's def dominates its uses -- so the
   // init version is always on the stack when an access is rewritten.)
+  // init_vreg -> slot lookup. NOTE: the init vregs were created by the
+  // rebuild (new_anon_vreg), so their ids are >= nv; the map is sized to
+  // cover them. The init is pushed onto the version stack WHEN THE WALK
+  // REACHES IT (at the allocation site), NOT at function entry -- an array
+  // allocated inside a loop is re-zeroed every iteration, and reads before
+  // the allocation never happen (the dominance pre-check guarantees it).
+  // (Entry-pushing instead lets a loop-carried slot phi SHADOW the init and
+  // leak the previous iteration's values -- the stale-loop-array bug.)
+  std::vector<uint32_t> init_slot_of(nv + total_slots, NONE);
+  for (uint32_t s = 0; s < total_slots; ++s)
+    if (init_vreg[s] != NONE && init_vreg[s] < nv + total_slots)
+      init_slot_of[init_vreg[s]] = s;
   {
     std::vector<std::vector<uint32_t>> stacks(total_slots);
-    for (uint32_t s = 0; s < total_slots; ++s)
-      if (init_vreg[s] != NONE) stacks[s].push_back(init_vreg[s]);
     struct Frame {
       uint32_t block, child_idx;
       std::vector<uint32_t> pushed; // slots this block pushed (pop on exit)
@@ -887,6 +897,14 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
             pushed.push_back(s);
           }
           continue; // variable phis: args are plain vreg references
+        }
+        if (I.k == K::Const && I.dst != NONE &&
+            I.dst < init_slot_of.size() && init_slot_of[I.dst] != NONE) {
+          // the promotion's zero-init
+          uint32_t s2 = init_slot_of[I.dst];
+          stacks[s2].push_back(I.dst);
+          pushed.push_back(s2);
+          continue;
         }
         uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
         if (I.k == K::Load && h != NONE && cls[h].lift) {
