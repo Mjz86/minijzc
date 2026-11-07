@@ -1,3 +1,5 @@
+# DEPRECATED (2026-11): the mechanical monolith split was superseded by the
+# src/minijz/ tree (see git log a46e361). Kept for history; do not run.
 #!/usr/bin/env python3
 """Mechanically split the monolithic compiler into ordered .hpp parts.
 
