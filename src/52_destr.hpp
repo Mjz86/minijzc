@@ -183,6 +183,17 @@ constexpr void post_destruct_peephole(Fn &fn, DestrStats &ds) {
         if (I.a >= nv || uses[I.a] != 1) continue; // src read only here
         uint32_t d = def_idx[I.a];
         if (d == NONE || d == i || drop[d]) continue;
+        if (d > i)
+          continue; // def BELOW the copy. Post-destruction vregs are plain
+        // slots, so a later write to the same slot can sit below this copy
+        // -- the classic case is a cycle-broken parallel-copy block: the
+        // temp's copy `T = x` comes BEFORE the aliased copy `x = y`. Both
+        // fusion forms below assume def-precedes-copy; with d > i the
+        // between-writes / between-reads scans iterate an empty range and
+        // pass vacuously, and the rewiring would drop a write the
+        // parallel-copy semantics still need (the swap collapses to
+        // identity and a rotation slot keeps its entry value forever).
+        // Reject outright.
         Instr &D = fn.code[d];
         if (D.dst != I.a) continue;
         bool same_block =
