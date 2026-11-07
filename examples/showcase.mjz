@@ -8,8 +8,8 @@
 //   d  -> d/7, d%7: strength-reduced to multiply-shift "divmagic"
 //   x  -> bfind: binary search over an array, tail calls + array param
 
-fn is_even(n) { if (n == 0) { n=0; return 1; } return is_odd(n - 1); }
-fn is_odd(n)  { if (n == 0) { n=0; return 0; } return is_even(n - 1); }
+fn is_even(n) { if (n == 0) {  return 1; } return is_odd(n - 1); }
+fn is_odd(n)  { if (n == 0) {  return 0; } return is_even(n - 1); }
 
 fn gcd(a, b) { if (b == 0) { return a; } return gcd(b, a % b); }
 
