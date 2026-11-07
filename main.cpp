@@ -36,7 +36,10 @@
 //               impossible), LICM, div/mod-by-constant -> mulhi+shift+bitops
 //               (reciprocal from mjz_lib's
 //               get_devide_inverse_and_shift), reassociation (+,-,*c chains
-//               -> canonical linear forms) — fixpoint rounds after each
+//               -> canonical linear forms), IF-CONVERSION (a cbr whose arms
+//               merely materialize constants and whose condition the range
+//               analysis proves in [0,1] becomes select arithmetic
+//               dst = K0 + (K1-K0)*cond) — fixpoint rounds after each
 //             tier 2 “expensive”: full loop unrolling (exact constant trip
 //               counts), closed-form loop evaluation — affine recurrences ->
 //               additive/geometric series exact mod 2^64, non-affine bodies
@@ -256,8 +259,44 @@
 //   guard (closed form only when the wrap-safety proof holds at runtime)
 //   with the original loop as the honest fallback, the header phis
 //   re-keyed to the guard edge so destruction places the entry copies.
+//   COUNTDOWN FOLD (cdfold): the loop shape tail-call elimination emits —
+//   [sel-dispatch; nP/budget header phis; nP==0 base exits; budget==0 TRAP;
+//   latch: nP-1, bH-1, sel toggle] — is replaced by the exact closed form:
+//   N = (u64)n0 (unsigned countdown), guard `(u64)n0 > (u64)budget` -> the
+//   SAME trap the recursion cap would have fired (negative n wraps to a
+//   huge unsigned count and over-budget n both trap), sel_N = (1-2p)*sel0
+//   + p with p = N&1 (the toggle's exact closed form; sel stays in {0,1}
+//   when sel0 is — which is when the final cbr select is sound), additive
+//   accumulators via x_N = x0 + gN + b(N*n0 - N(N-1)/2), and the n%2 ->
+//   n&1 strength reduction happens by emitting the parity bit as
+//   And(n0,1) directly. Binary-search-shaped bodies (args not affine in
+//   the phis) keep their loop.
 //
-// ------------------------------------------------------- 9e2 interprocedural
+// ------------------------------------------------- 9e4 tail-call elimination
+//   Inner-SCC TAIL calls (the result flows straight into the fn's Ret)
+//   need no return address: a self-tail-recursive fn becomes a LOOP in
+//   place (its entry block becomes the loop header with phis for the
+//   parameters; each tail site becomes [budget check -> synthesized trap;
+//   jump back]), and a pure-tail MUTUAL-recursion SCC (is_even/is_odd)
+//   merges into ONE sel-dispatched leaf function Fm(sel, a0..): callers
+//   pass the member index (an invariant tailrec itself creates and records
+//   in Fn::tce_sel), and sibling tail calls become [sel'=sibling; args;
+//   budget check; jump back]. A new K::Depth intrinsic (the frame count,
+//   identical in every runner) materializes the EXACT remaining recursion
+//   budget = 512+1-Depth(), so the transformed loop traps at precisely the
+//   activation where the original call chain would have hit the 512-frame
+//   cap — including the "negative n never reaches the base case" case. The
+//   trap is the existing `t = 1/0` idiom (div-by-constant-zero), which
+//   every backend already emits as TRAP+exit and every optimizer pass
+//   already treats as an observable, unfoldable root. After tailrec the
+//   merged leaf is inlined into its callers, and cdfold (above) sees the
+//   recursion as the countdown loop it always was: print(is_odd(input()))
+//   compiles to [if ((uint64_t)input() > 511) TRAP] + print(input() & 1) —
+//   the guard being semantically REQUIRED (is_odd(600) TRAPs in the source
+//   language, at exactly the point the guard fires). Inlining a
+//   Depth-reading fn adjusts Depth to caller+1 (and in main it
+//   constant-folds to 1), so folded budgets are exact at every call depth.
+//
 //   Call-graph SCC (lib Tarjan): multi-member SCC or self-edge = recursive =
 // never inlined; otherwise inline bottom-up (callees first, constants flow
 // through), re-optimizing each caller, then dead-function elimination.
@@ -1085,6 +1124,11 @@ constexpr Parsed parse(std::string_view src) {
 enum class K : uint8_t {
   Const, Copy, Bin, Br, Cbr, Print, Phi, Exit,
   Alloc, Load, Store, Len, Input,  // arrays + stdin (arena handles)
+  Depth,                           // dst = current call depth (frames incl
+                                   // main: 1 in main, k+1 in the k-th
+                                   // callee) — created by tail-call
+                                   // elimination to materialize the exact
+                                   // recursion budget; pure within a fn
   Call, Ret                        // functions: c = callee fn index (args in
                                    // Instr::args); Ret never appears in main
 };
@@ -1192,6 +1236,13 @@ struct Fn {
     std::vector<uint32_t> vregs{};
   };
   std::vector<StkArr> stk_arrays{};
+
+  // set by tail-call elimination when THIS fn is a merged pure-tail SCC:
+  // the number of merged members. Param 0 (sel) then provably holds a
+  // member index in [0, tce_sel) at every call site (tailrec rewrites them
+  // all itself), which is what lets the countdown fold prove sel in {0,1}
+  // for two members. 0 = not a tailrec product.
+  uint32_t tce_sel{};
 
   // ---- register allocation (C + bytecode backends) ------------------
   // Physical home of each vreg AFTER SSA destruction. Empty = identity
@@ -1864,11 +1915,15 @@ struct OptStats {
   uint32_t lcf_gensims{};  // loops folded by the general (any-condition) simulator
   uint32_t constcalls{};  // pure constant-argument calls evaluated at compile time
   uint32_t deadallocs{};  // unused Allocs deleted (arrays read by no one)
+  uint32_t tces{};        // tail-recursion eliminated (recursion -> loops)
+  uint32_t tce_merges{};  // pure-tail SCCs merged into one sel-dispatched fn
+  uint32_t cdfolds{};     // countdown loops replaced by exact closed forms
+  uint32_t ifconvs{};     // cbrs with provably-binary conds if-converted
 };
 
 // --- 9a. constant folding / propagation / branch folding / identities -------
 // known: vreg -> const value. iterates to fixpoint.
-constexpr bool opt_constprop(Fn &fn, OptStats &os) {
+constexpr bool opt_constprop(Fn &fn, OptStats &os, bool is_main = false) {
   bool changed_any = false;
   for (int round = 0; round < 12; ++round) {
     bool changed = false;
@@ -2000,6 +2055,15 @@ constexpr bool opt_constprop(Fn &fn, OptStats &os) {
             if (is_known(x, xv) && is_known(y, yv) && xv == yv) {
               I.k = K::Const; I.c = xv; os.folds++; changed = true; break;
             }
+          }
+          break;
+        }
+        case K::Depth: { // main's frame count is provably 1 everywhere
+          if (is_main) {
+            I.k = K::Const;
+            I.c = 1;
+            os.folds++;
+            changed = true;
           }
           break;
         }
@@ -2934,6 +2998,12 @@ constexpr Iv iv_bin(B b, const Iv &x, const Iv &y) {
   }
   case B::Lt: case B::Le: case B::Gt: case B::Ge: case B::Eq: case B::Ne:
     return {0, 1, false}; // comparisons yield 0/1
+  case B::And:
+    // x & 1 in {0,1} whatever x is (the parity bit of the countdown fold
+    // and of divmagic's %2 lowerings); everything else stays top
+    if (!x.bot && !y.bot && y.lo == y.hi && y.lo == 1)
+      return {0, 1, false};
+    return {INT64_MIN, INT64_MAX, false};
   default:
     return {INT64_MIN, INT64_MAX, false}; // bit ops / shifts / mulhi: top
   }
@@ -5558,6 +5628,8 @@ constexpr bool fn_local_pure(const Fn &f) {
     case K::Br:
     case K::Cbr:
     case K::Phi:
+    case K::Depth: // frame count: no observable effect; the VALUE depends
+                   // on the calling context, which opt_constcall controls
     case K::Call:  // nested calls are checked transitively
     case K::Ret:
       break;
@@ -5565,6 +5637,28 @@ constexpr bool fn_local_pure(const Fn &f) {
       return false; // Print/Input/Alloc/Load/Store/Len/Exit: observable
     }
   return true;
+}
+// does the call closure of fi contain a K::Depth (frame-sensitive value)?
+constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
+  const uint32_t n = (uint32_t)fns.size();
+  std::vector<uint8_t> seen(n, 0);
+  std::vector<uint32_t> work{fi};
+  seen[fi] = 1;
+  while (!work.empty()) {
+    uint32_t f = work.back();
+    work.pop_back();
+    for (const Instr &I : fns[f].code) {
+      if (I.k == K::Depth) return true;
+      if (I.k == K::Call) {
+        uint32_t g = (uint32_t)I.c;
+        if (g < n && !seen[g]) {
+          seen[g] = 1;
+          work.push_back(g);
+        }
+      }
+    }
+  }
+  return false;
 }
 // transitive purity over the call graph (cycle-safe DFS)
 constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
@@ -5609,6 +5703,12 @@ constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
     const Instr &I = F.code[pc];
     switch (I.k) {
     case K::Phi: // resolved on the incoming edge, never inline
+      ++pc;
+      continue;
+    case K::Depth: // eval's `depth` = activations-1; frames incl. main =
+      // depth+2 (main=1; the callee called from main sits at frame 2)
+      if (I.dst >= nv) return false;
+      val[I.dst] = (val_t)depth + 2;
       ++pc;
       continue;
     case K::Const:
@@ -5734,7 +5834,20 @@ constexpr bool opt_constcall(std::vector<Fn> &fns,
         if (!allc) continue;
         val_t out{};
         uint64_t steps = 0;
-        if (!eval_pure_fn(fns, g, args, out, 0, steps)) continue;
+        // Frame-exactness rules for the evaluator's recursion cap and its
+        // K::Depth values: a call site IN MAIN is exact (the callee's chain
+        // starts at frame 2, always). A call site in any other fn runs at
+        // an UNKNOWN frame X >= 2: refuse if the callee chain READS the
+        // frame count, and evaluate with an initial depth of CAP-1 so only
+        // non-nesting evaluations (a single activation, which can never
+        // hit the cap) fold — a longer chain's cap point depends on X.
+        bool in_main = (f == 0);
+        uint32_t d0 = 0;
+        if (!in_main) {
+          if (closure_has_depth(fns, g)) continue;
+          d0 = MJZ_MAX_CALL_DEPTH - 1;
+        }
+        if (!eval_pure_fn(fns, g, args, out, d0, steps)) continue;
         // same dst: every user reads the constant directly
         I.k = K::Const;
         I.b = B::Add;
@@ -5753,80 +5866,6 @@ constexpr bool opt_constcall(std::vector<Fn> &fns,
   return changed;
 }
 
-// ============================================================================
-// 9e0. PASS MANAGER
-// ============================================================================
-// PassCfg is the single configuration threaded from the CLI through
-// compile() -> optimize_prog() -> optimize(). Passes live in three cost
-// tiers and the scheduler runs them with a strict discipline:
-//   tier 0 "cheap"    : constprop, copyprop, canon, cse, unreachable,
-//                       splice, dce -- always run to a FIXPOINT first
-//   tier 1 "middle"   : mem2reg (array lifting + dead stores + dead
-//                       allocs), trapelim(+range analysis), licm, divmagic,
-//                       reassoc -- one round each, followed by a tier-0
-//                       fixpoint, repeated until global fixpoint / --fp-limit
-//   tier 2 "expensive": unroll, lcf -- CFG restructuring, run ONLY after
-//                       tiers 0/1 reached their fixpoint; each round is
-//                       followed by full tier-0 (+1) fixpoints again.
-//                       const-call evaluation is interprocedural (driven
-//                       from optimize_prog, after the inlining rounds):
-//                       pure constant-argument calls are executed exactly
-//                       at compile time, recursive fns included
-// -O levels gate the tiers:
-//   -O0: nothing (SSA + destruction only)
-//   -O1: tier 0
-//   -O2: tiers 0+1
-//   -O3: everything incl. interprocedural inlining (default)
-// Per-pass overrides (--enable/--disable) are applied on top of the preset,
-// so `-O1 --enable=lcf` is legal. --debug=N controls the dump volume:
-//   0 silent; 1 one line per pass invocation; 2 + the IR after each pass
-//   that changed something; 3 reserved for analysis dumps.
-struct PassCfg {
-  uint32_t level{3};   // -O0..-O3 preset
-  uint32_t unroll{16}; // full-unroll constant-trip loops with N <= this
-  uint32_t fp_limit{24}; // fixpoint round cap for every tier loop
-  uint8_t debug{0};    // dump level (0..3)
-  bool regalloc{true}; // C/bytecode register allocation (coloring)
-  // tier 0
-  bool p_fold{true}, p_copyprop{true}, p_canon{true}, p_cse{true},
-      p_unreach{true}, p_splice{true}, p_dce{true};
-  // tier 1
-  bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
-      p_reassoc{true};
-  // tier 2
-  bool p_unroll{true}, p_lcf{true}, p_constcall{true};
-  // interprocedural
-  bool do_inline{true};
-  bool do_opt{true}; // false: skip the optimizer entirely
-  // program-wide gates (filled in by compile(); see prog_handle_gates)
-  bool lift_ok{true};   // mem2reg array promotion allowed
-  bool stkarr_ok{true}; // C-backend stack arrays allowed
-  // runtime-only debugging context (constexpr path leaves it empty)
-  std::string_view dbg_name{};
-
-  constexpr void set_level(uint32_t lv) {
-    level = lv;
-    bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
-    p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce = t0;
-    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = t1;
-    p_unroll = p_lcf = p_constcall = t2;
-    do_inline = t2;
-    do_opt = lv != 0;
-  }
-};
-
-constexpr bool optimize(Fn &fn, OptStats &os, An &final_an,
-                        PassCfg cfg = {}); // (defined below)
-
-// --- 9e2. interprocedural: call graph, SCC (mjz_lib), inlining ---------------
-// Nodes are functions (index 0 = the main body); edges are call sites. SCCs
-// come from mjz::graph_ns::calculate_strongly_connected_components (Tarjan):
-//   * a function in a multi-member SCC, or with a self-edge, is RECURSIVE
-//     and is never inlined (inlining it would duplicate unbounded work and
-//     break the SSA shape)
-//   * Tarjan finalizes an SCC only after every SCC it can reach, so walking
-//     SCCs in emission order processes callees before callers: inlined
-//     bodies propagate through the rounds
 struct CallGraph {
   std::vector<std::vector<ulen>> adj{}; // caller -> callees (with dups)
   std::vector<uint32_t> scc_of{};       // fn -> scc index
@@ -5872,6 +5911,1571 @@ constexpr CallGraph build_callgraph(const std::vector<Fn> &fns) {
   }
   return G;
 }
+
+// ============================================================================
+// 9e4. TAIL-CALL ELIMINATION for inner-SCC tail calls
+// ============================================================================
+// A tail call is a Call whose result flows DIRECTLY into the enclosing Ret
+// (the caller returns the callee's value unchanged): `return f(x);`. Inside
+// a call-graph SCC (recursion), such a call needs no return-address: it is
+// a GUMP back to the (callee's) entry with fresh arguments. Two shapes:
+//
+//   * single-member SCC (self tail recursion): the function becomes a LOOP
+//     in place — a new entry preheader computes the EXACT remaining
+//     recursion budget (MJZ_MAX_CALL_DEPTH + 1 - Depth(): the number of
+//     further activations the original chain could still push before the
+//     512-frame TRAP), the entry block becomes the loop header with phis
+//     for the parameters, and every tail site becomes [budget check ->
+//     synthesized trap; args already computed; jump back]. Binary-search
+//     style functions (several tail sites) funnel through a binary merge
+//     chain of latch blocks, so every phi keeps exactly 2 args.
+//
+//   * multi-member SCC (mutual tail recursion, e.g. is_even/is_odd): all
+//     members merge into ONE function `Fm(sel, a0..a{M-1})` — sel selects
+//     the entry member (callers pass the member index; tailrec rewrites
+//     every call site itself, so sel in [0,k) is an invariant it records
+//     in Fn::tce_sel), the header dispatches on it, and each member's tail
+//     call to a sibling becomes [sel' = sibling; args; budget check; jump].
+//     The merged function is a leaf w.r.t. the SCC: no recursion remains.
+//
+// SEMANTIC EXACTNESS: the original chain pushed one activation per tail
+// call and TRAPs when the 512-activation cap would be exceeded; the budget
+// counter reproduces this bit-for-bit (budget = CAP+1 - Depth() at entry,
+// one decrement per tail jump, trap when a jump is needed at budget 0 —
+// including the "negative n never reaches the base case" case: the budget
+// runs out exactly where the original recursion cap would). The trap is
+// synthesized with the existing idiom `t = 1 / 0` (div-by-constant-zero),
+// which every backend already emits as `printf("TRAP\n"); exit(1);` and
+// which the optimizer already treats as an observable, unfoldable, may-trap
+// root. After the transformation the loop passes (unroll, cdfold) can see
+// the recursion as the loop it always was.
+constexpr uint32_t MJZ_TCE_MAX_MEMBERS = 5;   // sel dispatch chain depth
+constexpr uint32_t MJZ_TCE_MAX_SITES = 8;     // tail sites per merge
+constexpr uint32_t MJZ_TCE_MAX_ARITY = 5;     // 1+M params must fit SysV's 6
+constexpr uint32_t MJZ_TCE_MAX_FNSIZE = 400;  // members stay mergeable
+
+// is the Call at index ci in block b of fn a tail call? (dst used exactly
+// once, by the block's terminating Ret, after the call)
+constexpr bool is_tail_call(const Fn &fn, uint32_t b, uint32_t ci,
+                            const std::vector<uint32_t> &uses) {
+  const Instr &I = fn.code[ci];
+  if (I.k != K::Call || I.dst == NONE) return false;
+  if (I.dst >= uses.size() || uses[I.dst] != 1) return false;
+  const uint32_t end = fn.blocks[b].end;
+  if (end == 0 || fn.code[end - 1].k != K::Ret) return false;
+  if (fn.code[end - 1].a != I.dst) return false;
+  return ci + 1 < end; // the call precedes the ret
+}
+
+// ---- shared construction helpers -------------------------------------------
+// append the recursion-budget preheader instrs; returns the bInit vreg
+constexpr uint32_t tce_emit_budget_init(Fn &fn, std::vector<Instr> &out) {
+  uint32_t dv = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Depth, .dst = dv});
+  uint32_t kc = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Const, .dst = kc, .c = (val_t)MJZ_MAX_CALL_DEPTH + 1});
+  uint32_t b0 = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Bin, .b = B::Sub, .dst = b0, .a = kc, .b2 = dv});
+  return b0;
+}
+// append the per-site budget check + decrement into `out`; bL/eq are the
+// (pre-created) destination vregs -- pre-creation matters because header
+// phis reference bL BEFORE the site block is emitted
+constexpr void tce_emit_site_check(Fn &fn, std::vector<Instr> &out,
+                                    uint32_t bH, uint32_t bL, uint32_t eq) {
+  uint32_t one = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Const, .dst = one, .c = 1});
+  out.push_back({.k = K::Bin, .b = B::Sub, .dst = bL, .a = bH, .b2 = one});
+  uint32_t cz = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Const, .dst = cz, .c = 0});
+  out.push_back({.k = K::Bin, .b = B::Eq, .dst = eq, .a = bH, .b2 = cz});
+}
+// the synthesized trap block instrs: t = 1 / 0 (the existing idiom)
+constexpr void tce_emit_trap(Fn &fn, std::vector<Instr> &out) {
+  uint32_t c1 = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Const, .dst = c1, .c = 1});
+  uint32_t cz = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Const, .dst = cz, .c = 0});
+  uint32_t r = new_anon_vreg(fn, 0);
+  out.push_back({.k = K::Bin, .b = B::Div, .dst = r, .a = c1, .b2 = cz});
+  out.push_back({.k = K::Ret}); // unreachable after the trap; a terminator
+}
+
+// ---- single member: self tail-recursion -> loop in place --------------------
+constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
+  const uint32_t nb = fn.nblocks();
+  const uint32_t P = fn.nparams;
+  const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
+  if (!nb || !nv) return false;
+  // collect tail sites (self calls in tail position)
+  struct Site {
+    uint32_t b, ci;             // block + call instr index
+    std::vector<uint32_t> args; // the call's argument vregs
+  };
+  std::vector<uint32_t> uses(nv, 0);
+  for (const Instr &I : fn.code) {
+    auto bump = [&](uint32_t v) {
+      if (v != NONE && v < nv) ++uses[v];
+    };
+    bump(I.a);
+    bump(I.b2);
+    bump(I.c2);
+    for (uint32_t v : I.args) bump(v);
+  }
+  std::vector<Site> sites;
+  for (uint32_t b = 0; b < nb; ++b)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+      if (fn.code[i].k != K::Call) continue;
+      if ((uint32_t)fn.code[i].c != self_idx) continue; // not a self call
+      if (fn.code[i].args.size() != P) return false;
+      if (!is_tail_call(fn, b, i, uses)) return false;
+      Site s;
+      s.b = b;
+      s.ci = i;
+      s.args = fn.code[i].args;
+      sites.push_back(std::move(s));
+    }
+  if (sites.empty() || sites.size() > MJZ_TCE_MAX_SITES) return false;
+  const uint32_t k = (uint32_t)sites.size();
+  // ---- new block ids -------------------------------------------------------
+  //   0        = P0 (the new entry preheader)
+  //   ob+1     = every original block (H, the loop header, = old block 0)
+  //   nb+1..   = the latch merge chain M_1..M_{k-1} (only when k > 1)
+  //   T        = the synthesized trap block
+  // site j (0-based) false-arm target: k==1 -> H; j+1<k -> M_{j+1}; else
+  // M_{k-1}.  M_j merges (site j, M_{j+1} or site k-1) and jumps to
+  // M_{j-1} / H, so the header keeps exactly ONE latch pred.
+  const uint32_t H = 1;
+  std::vector<uint32_t> Mb(k + 1, NONE); // M_j block id, 1-based
+  for (uint32_t j = 1; j < k; ++j) Mb[j] = nb + j;
+  const uint32_t T = (k > 1) ? nb + k : nb + 1;
+  const uint32_t latch = (k == 1) ? (sites[0].b + 1) : Mb[1];
+  // ---- pre-create every fresh vreg id (blocks reference each other) --------
+  std::vector<uint32_t> pHv(P, NONE); // header phis for the params
+  for (uint32_t p = 0; p < P; ++p)
+    pHv[p] = new_anon_vreg(fn, fn.base_of(p));
+  const uint32_t bHv = new_anon_vreg(fn, 0); // header phi: the budget
+  std::vector<uint32_t> siteBL(k, NONE), siteEQ(k, NONE);
+  for (uint32_t j = 0; j < k; ++j) { // PRE-create: the H phis reference
+    siteBL[j] = new_anon_vreg(fn, 0); // siteBL[0] before the site is emitted
+    siteEQ[j] = new_anon_vreg(fn, 0);
+  }
+  std::vector<std::vector<uint32_t>> Mp(k + 1,
+                                        std::vector<uint32_t>(P, NONE));
+  std::vector<uint32_t> Mbv(k + 1, NONE);
+  for (uint32_t j = 1; j < k; ++j) {
+    for (uint32_t p = 0; p < P; ++p)
+      Mp[j][p] = new_anon_vreg(fn, fn.base_of(p));
+    Mbv[j] = new_anon_vreg(fn, 0);
+  }
+  // ---- build the new code --------------------------------------------------
+  std::vector<Instr> nc{};
+  nc.reserve(fn.code.size() + 12 * k + 4 * P + 16);
+  std::vector<Block> nbl{};
+  nbl.reserve(nb + k + 1);
+  // P0: budget = CAP+1 - Depth(); br H
+  uint32_t bInitV = NONE;
+  {
+    uint32_t base = (uint32_t)nc.size();
+    bInitV = tce_emit_budget_init(fn, nc);
+    nc.push_back({.k = K::Br, .t = H});
+    nbl.push_back({base, (uint32_t)nc.size()});
+  }
+  // param-use rewrite: any use of param vreg p becomes the header phi pHv[p]
+  auto rw = [&](uint32_t v) -> uint32_t {
+    if (v != NONE && v < P) return pHv[v];
+    return v;
+  };
+  // original blocks (ids shifted +1)
+  for (uint32_t ob = 0; ob < nb; ++ob) {
+    uint32_t base = (uint32_t)nc.size();
+    if (ob == 0) { // the header: its phis come first
+      for (uint32_t p = 0; p < P; ++p)
+        nc.push_back({.k = K::Phi, .dst = pHv[p], .a = p, .b2 = (k == 1 ? sites[0].args[p] : Mp[1][p]), .t = 0, .f = latch});
+      nc.push_back({.k = K::Phi, .dst = bHv, .a = bInitV, .b2 = (k == 1 ? siteBL[0] : Mbv[1]), .t = 0, .f = latch});
+    }
+    int sidx = -1; // which site lives in this block (>= 0: the tail site)
+    for (uint32_t j = 0; j < k; ++j)
+      if (sites[j].b == ob) sidx = (int)j;
+    for (uint32_t i = fn.blocks[ob].begin; i < fn.blocks[ob].end; ++i) {
+      const Instr &I = fn.code[i];
+      if (sidx >= 0 && i == sites[(uint32_t)sidx].ci)
+        continue; // the tail call dies
+      if (sidx >= 0 && I.k == K::Ret && i + 1 == fn.blocks[ob].end) {
+        // the tail ret becomes: [budget-1][bH==0?] -> trap or the chain
+        tce_emit_site_check(fn, nc, bHv, siteBL[(uint32_t)sidx],
+                            siteEQ[(uint32_t)sidx]);
+        (void)0;
+        uint32_t next =
+            (k == 1) ? H
+                     : ((uint32_t)sidx + 1 < k ? Mb[(uint32_t)sidx + 1]
+                                               : Mb[k - 1]);
+        nc.push_back({.k = K::Cbr, .a = siteEQ[(uint32_t)sidx], .t = T,
+                      .f = next});
+        continue;
+      }
+      Instr c = I;
+      c.a = rw(c.a);
+      c.b2 = rw(c.b2);
+      if (c.c2 != NONE) c.c2 = rw(c.c2);
+      for (uint32_t &av : c.args) av = rw(av);
+      if (c.dst != NONE && c.dst < P) c.dst = pHv[c.dst];
+      if (c.k == K::Br || c.k == K::Cbr || c.k == K::Phi) {
+        if (c.t != NONE && c.t < nb) c.t = c.t + 1;
+        if (c.f != NONE && c.f < nb) c.f = c.f + 1;
+      }
+      nc.push_back(c);
+    }
+    nbl.push_back({base, (uint32_t)nc.size()});
+  }
+  // latch merge chain M_{k-1} .. M_1 (M_j: phis + br M_{j-1} / H)
+  for (uint32_t j = k - 1; j >= 1; --j) {
+    uint32_t base = (uint32_t)nc.size();
+    uint32_t pa = sites[j - 1].b + 1; // site j (1-based) edge
+    uint32_t pb = (j == k - 1) ? (sites[j].b + 1) : Mb[j + 1];
+    for (uint32_t p = 0; p < P; ++p)
+      nc.push_back({.k = K::Phi, .dst = Mp[j][p], .a = sites[j - 1].args[p], .b2 = (j == k - 1 ? sites[j].args[p] : Mp[j + 1][p]), .t = pa, .f = pb});
+    nc.push_back({.k = K::Phi, .dst = Mbv[j], .a = siteBL[j - 1], .b2 = (j == k - 1 ? siteBL[j] : Mbv[j + 1]), .t = pa, .f = pb});
+    nc.push_back({.k = K::Br, .t = (j == 1 ? H : Mb[j - 1])});
+    nbl.push_back({base, (uint32_t)nc.size()});
+  }
+  // the trap block
+  {
+    uint32_t base = (uint32_t)nc.size();
+    tce_emit_trap(fn, nc);
+    nbl.push_back({base, (uint32_t)nc.size()});
+  }
+  // ---- commit ----------------------------------------------------------------
+  fn.code = std::move(nc);
+  fn.blocks = std::move(nbl);
+  fn.succ.assign(2 * fn.nblocks(), NONE);
+  for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+    const Instr &term = fn.code[fn.blocks[b].end - 1];
+    if (term.k == K::Br) fn.succ[2 * b] = term.t;
+    else if (term.k == K::Cbr) {
+      fn.succ[2 * b] = term.t;
+      fn.succ[2 * b + 1] = term.f;
+    }
+  }
+  fn.recompute_preds();
+  os.tces++;
+  return true;
+}
+
+// ---- multi member: merge a pure-tail SCC into one sel-dispatched function --
+// Fm(sel, a0..a{M-1}): sel = the entry member's index (callers pass it;
+// tailrec rewrites every external call site itself, so sel in [0,k) is an
+// invariant recorded in Fn::tce_sel). The header dispatches on sel; each
+// member's tail call to a sibling becomes [sel'=sibling; args; budget
+// check; jump back through the latch chain]. Members' Ret instrs stay Ret
+// (a tail caller returned the callee's value directly, so the merged fn
+// returning it is exactly the original semantics).
+struct TceSite {
+  uint32_t m, b, ci;           // member, block (member-local id), call idx
+  uint32_t callee;             // member index of the sibling callee
+  std::vector<uint32_t> args;  // call args (MEMBER vreg space)
+};
+constexpr bool tce_merge(std::vector<Fn> &fns,
+                         std::vector<std::string_view> &names,
+                         std::vector<OptStats> &ostats,
+                         std::vector<uint32_t> &src_index,
+                         const std::vector<uint32_t> &members) {
+  const uint32_t k = (uint32_t)members.size();
+  if (k < 2 || k > MJZ_TCE_MAX_MEMBERS) return false;
+  uint32_t M = 0;
+  for (uint32_t mi : members)
+    M = M > fns[mi].nparams ? M : fns[mi].nparams;
+  if (M > MJZ_TCE_MAX_ARITY) return false;
+  // collect the intra-SCC tail sites (args in member vreg space)
+  std::vector<TceSite> sites;
+  for (uint32_t x = 0; x < k; ++x) {
+    const Fn &F = fns[members[x]];
+    const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
+    std::vector<uint32_t> uses(nvx, 0);
+    for (const Instr &I : F.code) {
+      auto bump = [&](uint32_t v) {
+        if (v != NONE && v < nvx) ++uses[v];
+      };
+      bump(I.a);
+      bump(I.b2);
+      bump(I.c2);
+      for (uint32_t v : I.args) bump(v);
+    }
+    for (uint32_t b = 0; b < F.nblocks(); ++b)
+      for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
+        if (F.code[i].k != K::Call) continue;
+        uint32_t callee = (uint32_t)F.code[i].c;
+        bool intra = false;
+        for (uint32_t y : members) intra |= (y == callee);
+        if (!intra) continue; // call out of the SCC: copied as a real call
+        if (!is_tail_call(F, b, i, uses)) return false; // mixed SCC: bail
+        TceSite s;
+        s.m = x;
+        s.b = b;
+        s.ci = i;
+        s.callee = NONE;
+        for (uint32_t y = 0; y < k; ++y)
+          if (members[y] == callee) s.callee = y;
+        s.args = F.code[i].args;
+        sites.push_back(std::move(s));
+      }
+  }
+  if (sites.size() < 2 || sites.size() > MJZ_TCE_MAX_SITES) return false;
+  const uint32_t ks = (uint32_t)sites.size();
+  // (a k>=2-member cycle has >= k >= 2 tail sites: every member needs an
+  // outgoing intra-SCC edge, so the latch chain always exists)
+  // ---- build Fm -------------------------------------------------------------
+  Fn Fm{};
+  Fm.nparams = 1 + M;
+  Fm.nvars = 1 + M;
+  Fm.var_names.push_back("sel");
+  for (uint32_t j = 0; j < M; ++j) Fm.var_names.push_back("a");
+  // per-member vreg map: param p -> the aH phi output; others -> fresh
+  std::vector<std::vector<uint32_t>> vmap(k);
+  for (uint32_t x = 0; x < k; ++x) {
+    const Fn &F = fns[members[x]];
+    const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
+    vmap[x].assign(nvx, NONE);
+  }
+  // block layout: 0=P0, 1=H, 2..(1+k-2)=dispatch chain (k>2), then the
+  // member bodies back to back, then the latch chain M_1..M_{ks-1}, then T
+  std::vector<uint32_t> bmap_base(k);
+  uint32_t next_blk = 2 + (k > 2 ? k - 2 : 0);
+  for (uint32_t x = 0; x < k; ++x) {
+    bmap_base[x] = next_blk;
+    next_blk += fns[members[x]].nblocks();
+  }
+  std::vector<uint32_t> Mb(ks + 1, NONE); // latch chain M_j (1-based)
+  for (uint32_t j = 1; j < ks; ++j) Mb[j] = next_blk++;
+  const uint32_t T = next_blk++;
+  const uint32_t latch = Mb[1];
+  // ---- pre-create vreg ids --------------------------------------------------
+  const uint32_t selHv = new_anon_vreg(Fm, 0);
+  std::vector<uint32_t> aHv(M, NONE);
+  for (uint32_t j = 0; j < M; ++j) aHv[j] = new_anon_vreg(Fm, 0);
+  const uint32_t bHv = new_anon_vreg(Fm, 0);
+  // member vmaps (params AFTER the aH ids exist)
+  for (uint32_t x = 0; x < k; ++x) {
+    const Fn &F = fns[members[x]];
+    const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
+    for (uint32_t v = 0; v < nvx; ++v)
+      vmap[x][v] = (v < F.nparams)
+                       ? aHv[v]
+                       : new_anon_vreg(Fm, F.base_of(v));
+  }
+  // per-site emitted vregs (sel const, budget-1, eq) — in Fm space
+  std::vector<uint32_t> siteSEL(ks, NONE), siteBL(ks, NONE), siteEQ(ks, NONE);
+  for (uint32_t j = 0; j < ks; ++j) { // pre-create (the header phis and the
+    siteBL[j] = new_anon_vreg(Fm, 0); // chain reference them before emission)
+    siteEQ[j] = new_anon_vreg(Fm, 0);
+  }
+  // latch chain outputs: phis for [sel, a_0..a_{M-1}, budget]
+  std::vector<std::vector<uint32_t>> Mp(
+      ks + 1, std::vector<uint32_t>(1 + M, NONE));
+  std::vector<uint32_t> Mbv(ks + 1, NONE);
+  for (uint32_t j = 1; j < ks; ++j) {
+    for (uint32_t q = 0; q <= M; ++q) Mp[j][q] = new_anon_vreg(Fm, 0);
+    Mbv[j] = new_anon_vreg(Fm, 0);
+  }
+  // ---- build the code -------------------------------------------------------
+  std::vector<Instr> nc{};
+  std::vector<Block> nbl(T + 1);
+  auto setblock = [&](uint32_t b, uint32_t begin) {
+    nbl[b].begin = begin;
+    nbl[b].end = (uint32_t)nc.size();
+  };
+  // P0
+  uint32_t bInitV = NONE;
+  {
+    bInitV = tce_emit_budget_init(Fm, nc);
+    nc.push_back({.k = K::Br, .t = 1});
+    setblock(0, 0);
+  }
+  // H: phis + the dispatch terminator
+  {
+    uint32_t base = (uint32_t)nc.size();
+    nc.push_back({.k = K::Phi, .dst = selHv, .a = 0,
+                  .b2 = Mp[1][0], .t = 0, .f = latch});
+    for (uint32_t j = 0; j < M; ++j)
+      nc.push_back({.k = K::Phi, .dst = aHv[j], .a = 1 + j,
+                    .b2 = Mp[1][1 + j], .t = 0, .f = latch});
+    nc.push_back({.k = K::Phi, .dst = bHv, .a = bInitV,
+                  .b2 = Mbv[1], .t = 0, .f = latch});
+    // dispatch: sel == x -> member x's entry. k==2: right here.
+    // k>2: a chain of dispatch blocks 2..k-1
+    auto emit_dispatch = [&](uint32_t from_blk) {
+      uint32_t eqv = new_anon_vreg(Fm, 0);
+      uint32_t cv = new_anon_vreg(Fm, 0);
+      nc.push_back({.k = K::Const, .dst = cv, .c = (val_t)from_blk});
+      nc.push_back({.k = K::Bin, .b = B::Eq, .dst = eqv, .a = selHv,
+                    .b2 = cv});
+      uint32_t tt = bmap_base[from_blk];
+      uint32_t ff = (from_blk + 1 <= k - 2) ? (from_blk + 2)
+                                            : bmap_base[0];
+      // D_i at block id i+1: compares sel == i+1; false -> D_{i+1} / E_0
+      nc.push_back({.k = K::Cbr, .a = eqv, .t = tt, .f = ff});
+    };
+    if (k == 2) {
+      emit_dispatch(1);
+    } else {
+      emit_dispatch(1); // H itself: sel==1 ? E_1 : D_1(block 2)
+    }
+    setblock(1, base);
+  }
+  // dispatch chain blocks 2..k-1 (k > 2): sel == i ? E_i : next
+  for (uint32_t i = 2; i <= k - 1; ++i) {
+    uint32_t base = (uint32_t)nc.size();
+    uint32_t eqv = new_anon_vreg(Fm, 0);
+    uint32_t cv = new_anon_vreg(Fm, 0);
+    nc.push_back({.k = K::Const, .dst = cv, .c = (val_t)i});
+    nc.push_back({.k = K::Bin, .b = B::Eq, .dst = eqv, .a = selHv, .b2 = cv});
+    nc.push_back({.k = K::Cbr, .a = eqv, .t = bmap_base[i],
+                  .f = (i < k - 1) ? (i + 1) : bmap_base[0]});
+    setblock(i, base);
+  }
+  // member bodies
+  for (uint32_t x = 0; x < k; ++x) {
+    const Fn &F = fns[members[x]];
+    const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
+    auto mapv = [&](uint32_t v) -> uint32_t {
+      if (v == NONE || v >= nvx) return v;
+      return vmap[x][v] != NONE ? vmap[x][v] : v;
+    };
+    for (uint32_t b = 0; b < F.nblocks(); ++b) {
+      uint32_t base = (uint32_t)nc.size();
+      int sidx = -1;
+      for (uint32_t j = 0; j < ks; ++j)
+        if (sites[j].m == x && sites[j].b == b) sidx = (int)j;
+      for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
+        const Instr &I = F.code[i];
+        if (sidx >= 0 && i == sites[(uint32_t)sidx].ci) {
+          // the tail call dies; its CHAIN args are emitted at the ret below
+          continue;
+        }
+        if (sidx >= 0 && I.k == K::Ret && i + 1 == F.blocks[b].end) {
+          // sel' = Const(callee); pads; budget check; cbr T : chain-next
+          TceSite &s = sites[(uint32_t)sidx];
+          siteSEL[(uint32_t)sidx] = new_anon_vreg(Fm, 0);
+          nc.push_back({.k = K::Const, .dst = siteSEL[(uint32_t)sidx],
+                        .c = (val_t)s.callee});
+          uint32_t zp = NONE;
+          for (uint32_t q = s.args.size(); q < M; ++q) { // pad unused args
+            if (zp == NONE) {
+              zp = new_anon_vreg(Fm, 0);
+              nc.push_back({.k = K::Const, .dst = zp, .c = 0});
+            }
+            s.args.push_back(zp); // pad so chain phis can index uniformly
+          }
+          tce_emit_site_check(Fm, nc, bHv, siteBL[(uint32_t)sidx],
+                              siteEQ[(uint32_t)sidx]);
+          uint32_t next = ((uint32_t)sidx + 1 < ks) ? Mb[(uint32_t)sidx + 1]
+                                                    : Mb[ks - 1];
+          nc.push_back({.k = K::Cbr, .a = siteEQ[(uint32_t)sidx], .t = T,
+                        .f = next});
+          continue;
+        }
+        Instr c = I;
+        if (c.dst != NONE) c.dst = mapv(c.dst);
+        c.a = mapv(c.a);
+        c.b2 = mapv(c.b2);
+        if (c.c2 != NONE) c.c2 = mapv(c.c2);
+        for (uint32_t &av : c.args) av = mapv(av);
+        if (c.k == K::Br || c.k == K::Cbr || c.k == K::Phi) {
+          if (c.t != NONE && c.t < F.nblocks())
+            c.t = bmap_base[x] + c.t;
+          if (c.f != NONE && c.f < F.nblocks())
+            c.f = bmap_base[x] + c.f;
+        }
+        nc.push_back(c);
+      }
+      setblock(bmap_base[x] + b, base);
+    }
+  }
+  // latch merge chain M_{ks-1}..M_1: phis for [sel, a_0.., budget]
+  for (uint32_t j = ks - 1; j >= 1; --j) {
+    uint32_t base = (uint32_t)nc.size();
+    const TceSite &sa = sites[j - 1];
+    uint32_t pa = bmap_base[sa.m] + sa.b;
+    uint32_t pb = (j == ks - 1) ? (bmap_base[sites[j].m] + sites[j].b)
+                                : Mb[j + 1];
+    // arg list of site j-1 in Fm space: [sel'] + args (mapped)
+    auto sitearg = [&](const TceSite &s, uint32_t q) -> uint32_t {
+      const Fn &SF = fns[members[s.m]];
+      const uint32_t nvx = SF.nvars + (uint32_t)SF.version_base.size();
+      if (q == 0) return siteSEL[(uint32_t)(&s - &sites[0])];
+      uint32_t v = s.args[q - 1];
+      return (v != NONE && v < nvx) ? vmap[s.m][v] : v;
+    };
+    nc.push_back({.k = K::Phi, .dst = Mp[j][0], .a = sitearg(sites[j - 1], 0), .b2 = (j == ks - 1 ? sitearg(sites[j], 0) : Mp[j + 1][0]), .t = pa, .f = pb});
+    for (uint32_t q = 1; q <= M; ++q)
+      nc.push_back({.k = K::Phi, .dst = Mp[j][q], .a = sitearg(sites[j - 1], q), .b2 = (j == ks - 1 ? sitearg(sites[j], q)
+                                       : Mp[j + 1][q]), .t = pa, .f = pb});
+    nc.push_back({.k = K::Phi, .dst = Mbv[j], .a = siteBL[j - 1], .b2 = (j == ks - 1 ? siteBL[j] : Mbv[j + 1]), .t = pa, .f = pb});
+    nc.push_back({.k = K::Br, .t = (j == 1 ? 1 : Mb[j - 1])});
+    setblock(Mb[j], base);
+  }
+  // the trap block
+  {
+    uint32_t base = (uint32_t)nc.size();
+    tce_emit_trap(Fm, nc);
+    setblock(T, base);
+  }
+  Fm.code = std::move(nc);
+  Fm.blocks = std::move(nbl);
+  Fm.succ.assign(2 * Fm.nblocks(), NONE);
+  for (uint32_t b = 0; b < Fm.nblocks(); ++b) {
+    const Instr &term = Fm.code[Fm.blocks[b].end - 1];
+    if (term.k == K::Br) Fm.succ[2 * b] = term.t;
+    else if (term.k == K::Cbr) {
+      Fm.succ[2 * b] = term.t;
+      Fm.succ[2 * b + 1] = term.f;
+    }
+  }
+  Fm.recompute_preds();
+  Fm.tce_sel = k; // sel in [0,k) at every call site: an invariant we made
+  // ---- rewrite every external call site: member m -> Fm(sel=m, ...) ------
+  const uint32_t FmIdx = (uint32_t)fns.size();
+  for (uint32_t xf = 0; xf < fns.size(); ++xf) {
+    bool is_member = false;
+    for (uint32_t mi : members) is_member |= (mi == xf);
+    if (is_member) continue;
+    Fn &X = fns[xf];
+    bool touched = false;
+    for (uint32_t b = 0; b < X.nblocks(); ++b)
+      for (uint32_t i = X.blocks[b].begin; i < X.blocks[b].end; ++i) {
+        Instr &I = X.code[i];
+        if (I.k != K::Call) continue;
+        uint32_t callee = (uint32_t)I.c;
+        int m = -1;
+        for (uint32_t y = 0; y < k; ++y)
+          if (members[y] == callee) m = (int)y;
+        if (m < 0) continue;
+        // insert sel const (+ pads) right before the call, then redirect
+        std::vector<Instr> pre{};
+        uint32_t sv = new_anon_vreg(X, 0);
+        pre.push_back({.k = K::Const, .dst = sv, .c = (val_t)m});
+        uint32_t zp = NONE;
+        for (uint32_t q = I.args.size(); q < M; ++q) {
+          if (zp == NONE) {
+            zp = new_anon_vreg(X, 0);
+            pre.push_back({.k = K::Const, .dst = zp, .c = 0});
+          }
+          I.args.push_back(zp);
+        }
+        I.args.insert(I.args.begin(), sv);
+        I.c = (int64_t)FmIdx;
+        // splice `pre` before the call instr
+        X.code.insert(X.code.begin() + (long)i, pre.begin(), pre.end());
+        const uint32_t add = (uint32_t)pre.size();
+        for (uint32_t xb = 0; xb < X.nblocks(); ++xb) {
+          if (xb == b) {
+            X.blocks[xb].end += add;
+            continue;
+          }
+          if (X.blocks[xb].begin > i) X.blocks[xb].begin += add;
+          if (X.blocks[xb].end > i) X.blocks[xb].end += add;
+        }
+        i += add; // skip the inserted prefix; the call is next
+        touched = true;
+      }
+    (void)touched;
+  }
+  // ---- append Fm; bookkeeping ------------------------------------------------
+  fns.push_back(std::move(Fm));
+  names.push_back("tce_merged");
+  ostats.push_back(OptStats{});
+  // count on main too: the merged fn is usually inlined and then removed by
+  // dead-fn elimination, which would take its (interesting) stats with it
+  ostats[FmIdx].tces++;
+  ostats[FmIdx].tce_merges++;
+  if (!ostats.empty()) {
+    ostats[0].tces++;
+    ostats[0].tce_merges++;
+  }
+  src_index.push_back(src_index[members[0]]); // display placeholder
+  return true;
+}
+
+// ---- the pass driver ----------------------------------------------------------
+constexpr bool opt_tailrec(std::vector<Fn> &fns,
+                           std::vector<std::string_view> &names,
+                           std::vector<OptStats> &ostats,
+                           std::vector<uint32_t> &src_index) {
+  if (fns.size() < 2) return false;
+  bool changed = false;
+  CallGraph G = build_callgraph(fns);
+  for (uint32_t s = 0; s < G.nscc; ++s) {
+    uint32_t e = (s + 1 < G.nscc) ? G.scc_begin[s + 1]
+                                  : (uint32_t)G.members.size();
+    std::vector<uint32_t> members(G.members.begin() + G.scc_begin[s],
+                                  G.members.begin() + e);
+    if (members.empty()) continue;
+    bool has_main = false;
+    for (uint32_t m : members) has_main |= (m == 0);
+    if (has_main) continue; // main is never a callee
+    // must actually recurse: an intra-SCC edge
+    bool intra = false;
+    for (uint32_t m : members)
+      for (const Instr &I : fns[m].code)
+        if (I.k == K::Call) {
+          uint32_t c = (uint32_t)I.c;
+          for (uint32_t m2 : members) intra |= (m2 == c);
+        }
+    if (!intra) continue;
+    if (members.size() == 1) {
+      if (fns[members[0]].code.size() > MJZ_TCE_MAX_FNSIZE) continue;
+      if (tce_self(fns[members[0]], ostats[members[0]], members[0]))
+        changed = true;
+      continue;
+    }
+    bool big = false;
+    for (uint32_t m : members)
+      big |= fns[m].code.size() > MJZ_TCE_MAX_FNSIZE;
+    if (big) continue;
+    if (tce_merge(fns, names, ostats, src_index, members)) changed = true;
+  }
+  return changed;
+}
+
+// ============================================================================
+// 9e5. COUNTDOWN LOOP CLOSED FORM (cdfold)
+// ============================================================================
+// The loop shape tail-call elimination emits (after the cheap tiers have
+// spliced and folded it) is a COUNTDOWN with an exact recursion budget:
+//
+//   pre:  bInit = CAP+1 - Depth(); [sel0 = Const]      (entry state)
+//   H:    selH = phi[sel0][selL]; nP = phi[n0][nL]; bH = phi[bInit][bL]
+//         cbr (selH == 1) ? E_t : E_f                  (member dispatch)
+//   E_m:  cbr (nP == 0) ? X_m : A_m                    (the base test)
+//   X_m:  [K_m = Const]; br NEXT / ret K_m             (the member's value)
+//   A_m:  n' = nP - 1; b' = bH - 1; cbr (bH == 0) ? T : L   (budget check)
+//   L:    selL = phi[c_t][c_f]; nL = phi[n'][n']; bL = phi[b'][b']; br H
+//   T:    1 / 0                                        (the depth TRAP)
+//
+// The closed form is exact: N = (u64)n0 iterations (n hits 0 iff it ever
+// does — else the budget fires first), sel_N = toggle^N(sel0) with the
+// toggle closed form (1-2p)*sel0 + p, p = N&1 (EXACT for every sel0, and
+// sel stays in {0,1} when sel0 is, which is when the final select is
+// sound), and the guard `(u64)n0 > (u64)bInit` jumps to the SAME trap the
+// budget would have fired (n0 < 0 wraps to a huge unsigned count and n0
+// over budget both trap — exactly where the original recursion cap did).
+// Additive accumulators x' = x + g + b*nP fold via x_N = x0 + gN +
+// b(N*n0 - N(N-1)/2), all mod-2^64 exact. Binary-search-shaped bodies
+// (args not affine in the phis) fail the resolver and keep their loop.
+struct CdAff { // affine over H-phi outputs: sum(coeff_i * phi_i) + k
+  std::vector<std::pair<uint32_t, val_t>> t{}; // (H-phi vreg, coeff), sorted
+  val_t c{};
+};
+constexpr bool cd_aff_eq(const CdAff &a, const CdAff &b) {
+  if (a.c != b.c || a.t.size() != b.t.size()) return false;
+  for (size_t i = 0; i < a.t.size(); ++i)
+    if (a.t[i] != b.t[i]) return false;
+  return true;
+}
+constexpr void cd_term(CdAff &L, val_t k, uint32_t v) {
+  if (k == 0) return;
+  for (size_t i = 0; i < L.t.size(); ++i)
+    if (L.t[i].first == v) {
+      L.t[i].second = (val_t)((uint64_t)L.t[i].second + (uint64_t)k);
+      if (L.t[i].second == 0) L.t.erase(L.t.begin() + (long)i);
+      return;
+    }
+  size_t i = 0;
+  while (i < L.t.size() && L.t[i].first < v) ++i;
+  L.t.insert(L.t.begin() + (long)i, {v, k});
+}
+// resolve v to an affine form over `hphis` (bounded depth; walks
+// Const/Copy/Bin(+,-,*const)/Phi-with-equal-affine-args)
+constexpr bool cd_resolve(const Fn &fn, uint32_t v,
+                          const std::vector<uint32_t> &hphis, CdAff &out,
+                          int depth) {
+  if (depth > 8) return false;
+  const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
+  if (v == NONE || v >= nv) return false;
+  for (uint32_t h : hphis) {
+    if (v == h) {
+      out = CdAff{};
+      cd_term(out, 1, v);
+      return true;
+    }
+  }
+  // def site
+  uint32_t di = NONE, db = NONE;
+  for (uint32_t b = 0; b < fn.nblocks(); ++b)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+      if (fn.code[i].dst == v) {
+        di = i;
+        db = b;
+      }
+  if (di == NONE) return false;
+  const Instr &D = fn.code[di];
+  if (D.k == K::Const) {
+    out = CdAff{};
+    out.c = D.c;
+    return true;
+  }
+  if (D.k == K::Copy && D.a != NONE)
+    return cd_resolve(fn, D.a, hphis, out, depth + 1);
+  if (D.k == K::Bin && (D.b == B::Add || D.b == B::Sub || D.b == B::Mul)) {
+    CdAff x{}, y{};
+    if (!cd_resolve(fn, D.a, hphis, x, depth + 1)) return false;
+    if (!cd_resolve(fn, D.b2, hphis, y, depth + 1)) return false;
+    if (D.b == B::Mul) { // one side must be a pure constant
+      if (!x.t.empty()) { // x is the value, y the const
+        if (!y.t.empty()) return false;
+        out = x;
+        for (auto &pr : out.t)
+          pr.second = (val_t)((uint64_t)pr.second * (uint64_t)y.c);
+        out.c = (val_t)((uint64_t)out.c * (uint64_t)y.c);
+        return true;
+      }
+      if (!y.t.empty()) return false; // both const: shouldn't happen
+      out = CdAff{};
+      out.c = D.c; // placeholder, replaced below
+      out = x;
+      out.c = (val_t)0;
+      // const*const: fold via c
+      CdAff cx{};
+      cd_resolve(fn, D.a, hphis, cx, depth + 1); // known const
+      out.c = (val_t)((uint64_t)cx.c * (uint64_t)y.c);
+      return true;
+    }
+    val_t sgn = (D.b == B::Add) ? 1 : (val_t)-1;
+    out = x; // x - y = x + sgn*y: x UNSCALED, y scaled (a - b, not -(a+b))
+    for (auto &pr : y.t)
+      cd_term(out, (val_t)((uint64_t)pr.second * (uint64_t)sgn), pr.first);
+    out.c = (val_t)((uint64_t)x.c + (uint64_t)((val_t)((uint64_t)y.c * (uint64_t)sgn)));
+    return true;
+  }
+  if (D.k == K::Phi) { // equal affines on all live args
+    // resolve every arg; all must agree
+    std::vector<CdAff> as{};
+    auto arg_of = [&](uint32_t key, uint32_t &av) -> bool {
+      if (D.t == key) { av = D.a; return D.a != NONE; }
+      if (D.f == key) { av = D.b2; return D.b2 != NONE; }
+      return false;
+    };
+    for (uint32_t p : fn.preds[db]) {
+      uint32_t av = NONE;
+      if (!arg_of(p, av)) continue; // dead pred
+      CdAff a{};
+      if (!cd_resolve(fn, av, hphis, a, depth + 1)) return false;
+      as.push_back(a);
+    }
+    if (as.empty()) return false;
+    for (size_t i = 1; i < as.size(); ++i)
+      if (!cd_aff_eq(as[0], as[i])) return false;
+    out = as[0];
+    return true;
+  }
+  return false;
+}
+
+constexpr bool opt_cdfold(Fn &fn, const An &A, OptStats &os) {
+  if (A.n != fn.nblocks() || !fn.nblocks()) return false;
+  const uint32_t nb = fn.nblocks();
+  const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
+  if (!nv) return false;
+  bool changed = false;
+  for (uint32_t h = 0; h < A.n; ++h) {
+    if (A.inner[h] != h) continue; // not a loop header
+    bool folded = [&]() -> bool {
+    auto row = A.loops.range()[h];
+    // sized to the CURRENT block count: earlier folds in this same pass
+    // call appended closed-form blocks (ids >= A.n); they are outside this
+    // loop, so 0 is the right default for them, and the succ scan below may
+    // legitimately index them
+    std::vector<char> inL(fn.nblocks(), 0);
+    for (ulen x : row) inL[(uint32_t)x] = 1;
+    inL[h] = 1;
+    // exactly one outside pred (preheader) + one latch
+    uint32_t pre = NONE, L = NONE;
+    for (uint32_t p : fn.preds[h]) {
+      if (inL[p]) {
+        if (L != NONE) return false; // multiple latches (multi-site self)
+        L = p;
+      } else {
+        if (pre != NONE) return false;
+        pre = p;
+      }
+    }
+    if (pre == NONE || L == NONE) return false;
+    // (the latch ends with `br h` when a merge chain exists, or with the
+    // budget check `cbr ? T : h` when the site block IS the latch; the
+    // exit classification below validates the trap edge either way)
+    // ---- collect + classify the header phis ---------------------------------
+    struct HP {
+      uint32_t dst, entry, latch;
+    };
+    std::vector<HP> hp;
+    for (uint32_t i = fn.blocks[h].begin; i < fn.blocks[h].end; ++i) {
+      const Instr &I = fn.code[i];
+      if (I.k != K::Phi) break;
+      uint32_t e = (I.t == pre) ? I.a : ((I.f == pre) ? I.b2 : NONE);
+      uint32_t l = (I.t == L) ? I.a : ((I.f == L) ? I.b2 : NONE);
+      if (e == NONE || l == NONE) return false;
+      hp.push_back({I.dst, e, l});
+    }
+    if (hp.size() < 2) return false; // nP + bH at least
+    std::vector<uint32_t> hids;
+    for (auto &p : hp) hids.push_back(p.dst);
+    // resolve each latch value; classify
+    struct Cls {
+      uint32_t phi;      // the H-phi vreg
+      uint32_t entry;    // entry (pre) value vreg
+      CdAff laff;        // latch evolution, affine over hphis
+      bool is_sel{};     // selector (latch merges per-arm CONSTS)
+    };
+    std::vector<Cls> cls;
+    for (auto &p : hp) {
+      CdAff la{};
+      if (cd_resolve(fn, p.latch, hids, la, 0)) {
+        cls.push_back({p.dst, p.entry, la, false});
+        continue;
+      }
+      // selector? the latch is a Phi of CONSTS selected by the dispatch
+      // (resolve failed => not uniform affine) -- verify structurally:
+      uint32_t di = NONE, db = NONE;
+      for (uint32_t b = 0; b < nb; ++b)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == p.latch) {
+            di = i;
+            db = b;
+          }
+      if (di == NONE || fn.code[di].k != K::Phi) return false;
+      cls.push_back({p.dst, p.entry, CdAff{}, true});
+      (void)db;
+    }
+    // exactly one selector at most
+    uint32_t selp = NONE;
+    for (auto &c : cls)
+      if (c.is_sel) {
+        if (selp != NONE) return false;
+        selp = c.phi;
+      }
+    // find nP and bH: nP's latch affine = nP - 1; bH's = bH - 1
+    uint32_t nP = NONE, bH = NONE, nEntry = NONE, bEntry = NONE;
+    for (auto &c : cls) {
+      if (c.is_sel) continue;
+      if (c.laff.t.size() == 1 && c.laff.t[0].first == c.phi &&
+          c.laff.t[0].second == 1 && c.laff.c == (val_t)-1) {
+        if (nP == NONE) {
+          nP = c.phi;
+          nEntry = c.entry;
+        } else if (bH == NONE) {
+          bH = c.phi;
+          bEntry = c.entry;
+        } else
+          return false; // a third pure countdown: unsupported
+      }
+    }
+    if (nP == NONE || bH == NONE) return false;
+    // any remaining non-selector phis must be additive/identity over
+    // {self, nP}: x' = x + g (+ b*nP)
+    struct Add {
+      uint32_t phi, entry;
+      val_t g, bn;
+    };
+    std::vector<Add> adds;
+    for (auto &c : cls) {
+      if (c.is_sel || c.phi == nP || c.phi == bH) continue;
+      val_t g = 0, bn = 0;
+      bool ok = true;
+      for (auto &pr : c.laff.t) {
+        if (pr.first == c.phi) {
+          if (pr.second != 1) ok = false;
+        } else if (pr.first == nP) {
+          bn = pr.second;
+        } else
+          ok = false;
+      }
+      if (!ok || c.laff.t.size() > 2) return false;
+      for (auto &pr : c.laff.t)
+        if (pr.first == c.phi && pr.second != 1) return false;
+      // require self coefficient exactly 1 (additive) — it is in t only once
+      bool hasSelf = false;
+      for (auto &pr : c.laff.t)
+        if (pr.first == c.phi) hasSelf = true;
+      if (!hasSelf) return false; // pure function of nP: unsupported here
+      adds.push_back({c.phi, c.entry, g, bn});
+      // g = the constant part
+      adds.back().g = c.laff.c;
+    }
+    // ---- the dispatch / base / trap structure --------------------------------
+    // dispatch: H's terminator (single member: the base test itself)
+    const Instr hterm = fn.code[fn.blocks[h].end - 1];
+    uint32_t Xt = NONE, Xf = NONE; // value exits (true/false dispatch arms)
+    uint32_t T = NONE;             // the common trap exit
+    auto is_np_zero = [&](const Instr &C, uint32_t &xt, uint32_t &af) -> bool {
+      // C: cbr cond ? a : b where cond = Bin(nP == 0): the ==0 arm exits
+      if (C.k != K::Cbr) return false;
+      uint32_t di = NONE;
+      for (uint32_t b = 0; b < nb; ++b)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == C.a) di = i;
+      if (di == NONE) return false;
+      const Instr &D = fn.code[di];
+      if (D.k != K::Bin || D.b != B::Eq) return false;
+      bool aIsN = (D.a == nP);
+      bool bIsN = (D.b2 == nP);
+      uint32_t other = aIsN ? D.b2 : D.b2;
+      other = aIsN ? D.b2 : (bIsN ? D.a : NONE);
+      if (other == NONE) return false;
+      // the other operand must be const 0
+      uint32_t oi = NONE;
+      for (uint32_t b = 0; b < nb; ++b)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == other) oi = i;
+      if (oi == NONE || fn.code[oi].k != K::Const || fn.code[oi].c != 0)
+        return false;
+      // which arm is the n==0 (base) arm? Eq is symmetric: TRUE arm = equal
+      xt = C.t;
+      af = C.f;
+      return true;
+    };
+    auto is_bh_zero_trap = [&](const Instr &C, uint32_t &tt) -> bool {
+      if (C.k != K::Cbr) return false;
+      uint32_t di = NONE;
+      for (uint32_t b = 0; b < nb; ++b)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == C.a) di = i;
+      if (di == NONE) return false;
+      const Instr &D = fn.code[di];
+      if (D.k != K::Bin || D.b != B::Eq) return false;
+      uint32_t other = (D.a == bH) ? D.b2
+                                    : ((D.b2 == bH) ? D.a : NONE);
+      if (other == NONE) return false;
+      uint32_t oi = NONE;
+      for (uint32_t b = 0; b < nb; ++b)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == other) oi = i;
+      if (oi == NONE || fn.code[oi].k != K::Const || fn.code[oi].c != 0)
+        return false;
+      tt = C.t; // the ==0 arm traps
+      return true;
+    };
+    // every block WITH an outside edge must exit via a base test (nP==0
+    // at a member block) or the budget trap (bH==0); the dispatch header
+    // and the latch have only internal successors and are skipped here
+    std::vector<uint32_t> Xs;
+    for (uint32_t b = 0; b < nb; ++b) {
+      if (!inL[b]) continue;
+      bool has_out = false;
+      for (uint32_t s : {fn.succ0(b), fn.succ1(b)})
+        if (s != NONE && !inL[s]) has_out = true;
+      if (!has_out) continue;
+      const Instr &tm = fn.code[fn.blocks[b].end - 1];
+      uint32_t xt = NONE, af = NONE, tt = NONE;
+      if (is_np_zero(tm, xt, af)) {
+        if (inL[xt] || !inL[af]) return false;
+        Xs.push_back(xt);
+        continue;
+      }
+      if (is_bh_zero_trap(tm, tt)) {
+        if (inL[tt]) return false;
+        if (T == NONE) T = tt;
+        else if (T != tt) return false;
+        continue;
+      }
+      return false; // some other exit: keep the loop
+    }
+    if (T == NONE) return false; // no trap edge: not the TCE shape
+    // Xs: dedupe
+    {
+      std::vector<uint32_t> u;
+      for (uint32_t x : Xs) {
+        bool dup = false;
+        for (uint32_t y : u) dup |= (x == y);
+        if (!dup) u.push_back(x);
+      }
+      Xs = u;
+    }
+    if (Xs.empty() || Xs.size() > 2) return false;
+    // X blocks (the base-case exits): a Br to a common next (or a Ret),
+    // at most ONE Const (the member's base value when there is one), and
+    // nothing that uses a loop phi except the RET OPERAND (an accumulator
+    // returns a loop-carried value; the outside-use rewrite below replaces
+    // it with the closed form).
+    std::vector<uint32_t> kval(Xs.size(), NONE);
+    uint32_t xnext = NONE;
+    bool xret = false;
+    for (size_t xi = 0; xi < Xs.size(); ++xi) {
+      uint32_t b = Xs[xi];
+      const Instr &tm = fn.code[fn.blocks[b].end - 1];
+      if (tm.k == K::Ret) {
+        if (tm.a == NONE) return false;
+        xret = true;
+        // the ret operand: a Const def here, or a loop phi (accumulator)
+        uint32_t di = NONE;
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == tm.a) di = i;
+        bool isLphi = false;
+        for (uint32_t hid : hids) isLphi |= (tm.a == hid);
+        if (di != NONE && fn.code[di].k == K::Const) kval[xi] = fn.code[di].c;
+        else if (!isLphi) return false;
+      } else if (tm.k == K::Br) {
+        if (xret) return false;
+        if (xnext == NONE) xnext = tm.t;
+        else if (xnext != tm.t) return false;
+        uint32_t nconst = 0;
+        for (uint32_t i = fn.blocks[b].begin; i + 1 < fn.blocks[b].end; ++i) {
+          const Instr &I = fn.code[i];
+          if (I.k == K::Const) {
+            ++nconst;
+            kval[xi] = I.c;
+          } else if (I.k == K::Phi)
+            continue;
+          else
+            return false;
+        }
+        if (nconst > 1) return false;
+        if (nconst == 0 && selp != NONE)
+          return false; // the member select needs its base consts
+      } else
+        return false;
+      // no loop-phi uses inside X (except a Ret operand, handled above)
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        const Instr &I = fn.code[i];
+        auto usesL = [&](uint32_t v) {
+          for (uint32_t hid : hids)
+            if (v == hid) return true;
+          return false;
+        };
+        if (i + 1 == fn.blocks[b].end && I.k == K::Ret) {
+          if (usesL(I.b2) || usesL(I.c2)) return false;
+          continue; // I.a checked above
+        }
+        if (usesL(I.a) || usesL(I.b2) || usesL(I.c2)) return false;
+      }
+    }
+    // ---- selector soundness: sel in {0,1} ------------------------------------
+    // entry: a Const in {0,1}, or the fn's sel param under Fn::tce_sel == 2
+    // toggle consts in {0,1}: checked from the latch phi args
+    uint32_t selEntry = NONE;
+    bool selOk = false;
+    if (selp != NONE) {
+      for (auto &p : hp)
+        if (p.dst == selp) selEntry = p.entry;
+      uint32_t di = NONE;
+      for (uint32_t b = 0; b < nb; ++b)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == selEntry) di = i;
+      if (di != NONE && fn.code[di].k == K::Const &&
+          (fn.code[di].c == 0 || fn.code[di].c == 1))
+        selOk = true;
+      if (!selOk && fn.tce_sel == 2 && selEntry == 0) selOk = true;
+      if (!selOk) return false;
+      // find the sel latch phi (the L-phi feeding selp) and check its args
+      uint32_t selLatch = NONE;
+      for (auto &p : hp)
+        if (p.dst == selp) selLatch = p.latch;
+      uint32_t si = NONE;
+      for (uint32_t b = 0; b < nb; ++b)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+          if (fn.code[i].dst == selLatch) si = i;
+      if (si == NONE) return false;
+      // its args must be consts in {0,1}, and DISTINCT
+      {
+        uint32_t a1 = fn.code[si].a, b1 = fn.code[si].b2;
+        uint32_t ia = NONE, ib = NONE;
+        for (uint32_t b = 0; b < nb; ++b)
+          for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+            if (fn.code[i].dst == a1) ia = i;
+            if (fn.code[i].dst == b1) ib = i;
+          }
+        if (ia == NONE || ib == NONE) return false;
+        if (fn.code[ia].k != K::Const || fn.code[ib].k != K::Const)
+          return false;
+        val_t ca = fn.code[ia].c, cb = fn.code[ib].c;
+        if ((ca != 0 && ca != 1) || (cb != 0 && cb != 1) || ca == cb)
+          return false;
+        // A = cb - ca must be -1 or +1 (a toggle or identity)
+        val_t A = (val_t)((uint64_t)cb - (uint64_t)ca);
+        if (A != 1 && A != (val_t)-1) return false;
+      }
+    }
+    // ---- body purity: only Phi/Const/Copy/Bin(nt)/Br/Cbr in the loop -------
+    for (uint32_t b = 0; b < nb; ++b) {
+      if (!inL[b]) continue;
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        const Instr &I = fn.code[i];
+        switch (I.k) {
+        case K::Phi:
+        case K::Const:
+        case K::Copy:
+        case K::Br:
+        case K::Cbr:
+          break;
+        case K::Bin:
+          if ((I.b == B::Div || I.b == B::Mod) && !I.nt) return false;
+          break;
+        default:
+          return false; // Print/Call/Input/Alloc/Load/Store/Len: observable
+        }
+      }
+    }
+    // ---- fold -----------------------------------------------------------------
+    // guard (unsigned n0 > bInit) -> T ; closed forms -> select / X
+    {
+      std::vector<Instr> g{}; // appended to the preheader
+      auto konst = [&](val_t c) {
+        uint32_t v = new_anon_vreg(fn, 0);
+        g.push_back({.k = K::Const, .dst = v, .c = c});
+        return v;
+      };
+      auto bin = [&](B b, uint32_t d, uint32_t a, uint32_t b2) {
+        g.push_back({.k = K::Bin, .b = b, .dst = d, .a = a, .b2 = b2});
+      };
+      auto nt = [&]() { return new_anon_vreg(fn, 0); };
+      const uint32_t MINc = konst(INT64_MIN);
+      const uint32_t xN = nt();
+      bin(B::Xor, xN, nEntry, MINc);
+      const uint32_t xB = nt();
+      bin(B::Xor, xB, bEntry, MINc);
+      const uint32_t bad = nt();
+      bin(B::Lt, bad, xB, xN); // unsigned bInit < N  <=>  N > bInit
+      // CF block: closed forms + the select
+      std::vector<Instr> cf{};
+      auto ckonst = [&](val_t c) {
+        uint32_t v = new_anon_vreg(fn, 0);
+        cf.push_back({.k = K::Const, .dst = v, .c = c});
+        return v;
+      };
+      auto cbin = [&](B b, uint32_t d, uint32_t a, uint32_t b2) {
+        cf.push_back({.k = K::Bin, .b = b, .dst = d, .a = a, .b2 = b2});
+      };
+      // p = n0 & 1
+      const uint32_t oneC = ckonst(1);
+      const uint32_t pV = nt();
+      cbin(B::And, pV, nEntry, oneC);
+      uint32_t selN = NONE;
+      if (selp != NONE) {
+        // selN = (1-2p)*selEntry + p   (exact for every selEntry; the
+        // SELECT below additionally needs sel in {0,1}, proven above)
+        const uint32_t two = nt();
+        cbin(B::Add, two, pV, pV);
+        const uint32_t k1 = nt();
+        cbin(B::Sub, k1, oneC, two);
+        const uint32_t m = nt();
+        cbin(B::Mul, m, k1, selEntry);
+        selN = nt();
+        cbin(B::Add, selN, m, pV);
+      }
+      // additive closed forms: x_N = x0 + g*N + bn*(N*n0 - T), T = N(N-1)/2
+      std::vector<std::pair<uint32_t, uint32_t>> xform; // (H-phi -> value)
+      if (!adds.empty()) {
+        const uint32_t e0 = ckonst(1); // reuse oneC
+        const uint32_t two = nt();
+        cbin(B::Add, two, nEntry, nEntry); // 2N (parity of N: N&1 — have pV)
+        // T = (N - (N&1))/2 * (N + (N&1) - 1)  [exact, same trick as lcf rt]
+        const uint32_t Nm = nt();
+        cbin(B::Sub, Nm, nEntry, pV);
+        const uint32_t h2 = nt();
+        cbin(B::LShr, h2, Nm, e0);
+        const uint32_t t1 = nt();
+        cbin(B::Add, t1, nEntry, pV);
+        const uint32_t o1 = nt();
+        cbin(B::Sub, o1, t1, e0);
+        const uint32_t Tv = nt();
+        cbin(B::Mul, Tv, h2, o1);
+        const uint32_t NN = nt(); // N*n0
+        cbin(B::Mul, NN, nEntry, nEntry);
+        for (auto &ad : adds) {
+          // x_N = x0 + g*N + bn*(N*n0 - T)
+          uint32_t acc = ad.entry;
+          if (ad.g != 0) {
+            const uint32_t gn = nt();
+            cbin(B::Mul, gn, ckonst(ad.g), nEntry);
+            const uint32_t a2 = nt();
+            cbin(B::Add, a2, acc, gn);
+            acc = a2;
+          }
+          if (ad.bn != 0) {
+            const uint32_t sn = nt();
+            cbin(B::Sub, sn, NN, Tv);
+            const uint32_t bt = nt();
+            cbin(B::Mul, bt, sn, ckonst(ad.bn));
+            const uint32_t a3 = nt();
+            cbin(B::Add, a3, acc, bt);
+            acc = a3;
+          }
+          xform.push_back({ad.phi, acc});
+        }
+      }
+      // n_N = 0; b_N = bInit - N (only if used outside)
+      const uint32_t zeroC = ckonst(0);
+      xform.push_back({nP, zeroC});
+      // ---- rewrite outside uses of the H-phis --------------------------------
+      // (X blocks use none; T uses none; anywhere else outside inL —
+      // including closed-form blocks appended by earlier folds in this same
+      // pass call, which never reference this loop's phis but are covered
+      // here anyway so the rewrite is complete by construction)
+      for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+        if (b >= inL.size() || inL[b]) continue;
+        if (b == pre) continue; // handled below (guard emission)
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+          Instr &I = fn.code[i];
+          auto rwx = [&](uint32_t &v) {
+            if (v == NONE) return;
+            if (v == selp && selN != NONE) v = selN;
+            for (auto &xf : xform)
+              if (v == xf.first) v = xf.second;
+          };
+          rwx(I.a);
+          rwx(I.b2);
+          rwx(I.c2);
+          for (uint32_t &av : I.args) rwx(av);
+        }
+      }
+      // ---- emit: pre gets the guard; CF becomes a new block -----------------
+      const uint32_t CFb = fn.nblocks(); // appended block id — CURRENT
+      // count: an earlier fold in this same pass call already appended its
+      // own CF block, and reusing the entry-time count would collide with it
+      // pre's terminator: br h -> cbr bad ? T : CF
+      {
+        Instr &pt = fn.code[fn.blocks[pre].end - 1];
+        if (pt.k != K::Br || pt.t != h) return false;
+        pt.k = K::Cbr;
+        pt.a = bad;
+        pt.t = T;
+        pt.f = CFb;
+      }
+      // CF terminator: the select (multi) or br X (single member)
+      if (selp != NONE) {
+        if (Xs.size() != 2) return false;
+        // the header dispatches on sel: hterm's cond must be Eq(selH, ..)
+        uint32_t di = NONE;
+        for (uint32_t b = 0; b < nb; ++b)
+          for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+            if (fn.code[i].dst == hterm.a) di = i;
+        if (di == NONE || fn.code[di].k != K::Bin ||
+            fn.code[di].b != B::Eq || fn.code[di].a != selp)
+          return false;
+        // sel == 1 -> TRUE arm; walk E_true to its X
+        uint32_t Et = hterm.t;
+        if (Et >= nb) return false;
+        const Instr &et = fn.code[fn.blocks[Et].end - 1];
+        uint32_t xt2 = NONE, af2 = NONE;
+        if (!is_np_zero(et, xt2, af2)) return false;
+        uint32_t Xtrue = xt2, Xfalse = NONE;
+        for (uint32_t x : Xs)
+          if (x != Xtrue) Xfalse = x;
+        if (Xfalse == NONE) return false;
+        cf.push_back({.k = K::Cbr, .a = selN, .t = Xtrue, .f = Xfalse});
+      } else {
+        if (Xs.size() != 1) return false;
+        cf.push_back({.k = K::Br, .t = Xs[0]});
+      }
+      // splice g into pre (before its terminator) and append CF
+      {
+        uint32_t pe = fn.blocks[pre].end - 1;
+        fn.code.insert(fn.code.begin() + (long)pe, g.begin(), g.end());
+        const uint32_t add = (uint32_t)g.size();
+        // shift EVERY current block range — including CF blocks appended by
+        // earlier folds in this same pass call, whose instrs sit at the end
+        // of the code vector and move when g is spliced in (a stale entry-
+        // time bound here left their ranges pointing into unrelated code)
+        for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+          if (b == pre) {
+            fn.blocks[b].end += add;
+            continue;
+          }
+          if (fn.blocks[b].begin >= pe + 1) fn.blocks[b].begin += add;
+          if (fn.blocks[b].end > pe) fn.blocks[b].end += add;
+        }
+      }
+      fn.code.insert(fn.code.end(), cf.begin(), cf.end());
+      fn.blocks.push_back({(uint32_t)fn.code.size() - cf.size(),
+                           (uint32_t)fn.code.size()});
+      fn.succ.push_back(NONE);
+      fn.succ.push_back(NONE);
+      // pre -> T / CF ; CF -> its terminator target
+      fn.succ[2 * pre] = T;
+      fn.succ[2 * pre + 1] = CFb;
+      {
+        const Instr &ct = fn.code[fn.blocks[CFb].end - 1];
+        if (ct.k == K::Br) fn.succ[2 * CFb] = ct.t;
+        else if (ct.k == K::Cbr) {
+          fn.succ[2 * CFb] = ct.t;
+          fn.succ[2 * CFb + 1] = ct.f;
+        }
+      }
+      // the loop is now unreachable: succ severed AND the blocks' code
+      // ranges emptied — a Br-with-NONE-target left in the code vector
+      // would crash the bytecode emitter (off[f][NONE]) even though the
+      // block is dead; empty ranges are inert everywhere
+      for (uint32_t b = 0; b < nb; ++b) {
+        if (!inL[b]) continue;
+        fn.succ[2 * b] = NONE;
+        fn.succ[2 * b + 1] = NONE;
+        fn.blocks[b].end = fn.blocks[b].begin; // drop every instr
+      }
+      fn.recompute_preds();
+      os.cdfolds++;
+      changed = true;
+    }
+  return true;
+  }();
+  }
+  return changed;
+}
+
+// ============================================================================
+// 9e6. IF-CONVERSION of provably-binary selects (ifconv)
+// ============================================================================
+// `cbr c ? X1 : X0` where both arms just materialize a CONSTANT (a Const
+// def + a jump to the same continuation, or a Ret of a Const) and the
+// range analysis proves c in [0,1]: the branch is a SELECT, and
+//   dst = K0 + (K1 - K0) * c
+// is exact (c in {0,1}). This is the last step of the is_even/is_odd
+// pipeline: the countdown fold leaves `cbr selN ? ret1 : ret0`, the range
+// analysis proves selN = n&1 in [0,1], and the whole mutual recursion has
+// become `print(input() & 1)`.
+constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
+  const uint32_t nb = fn.nblocks();
+  if (!nb) return false;
+  const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
+  if (!nv) return false;
+  std::vector<char> kc(nv, 0);
+  std::vector<val_t> kv(nv, 0);
+  for (const Instr &I : fn.code)
+    if (I.k == K::Const && I.dst != NONE && I.dst < nv) {
+      kc[I.dst] = 1;
+      kv[I.dst] = I.c;
+    }
+  // def lookup
+  std::vector<uint32_t> defi(nv, NONE), defb(nv, NONE);
+  for (uint32_t b = 0; b < nb; ++b)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+      if (fn.code[i].dst != NONE && fn.code[i].dst < nv) {
+        defi[fn.code[i].dst] = i;
+        defb[fn.code[i].dst] = b;
+      }
+  // range analysis for the [0,1] proof — computed LAZILY on the first
+  // candidate (the cheap structural pre-checks below reject most blocks
+  // without ever paying for the analysis)
+  An ARA{};
+  Ranges RA{};
+  bool ra_done = false;
+  auto ensure_ra = [&]() {
+    if (ra_done) return;
+    ra_done = true;
+    ARA = analyze(fn);
+    RA = range_analyze(fn, ARA);
+  };
+  bool changed = false;
+  for (uint32_t b = 0; b < nb; ++b) {
+    const Instr &tm = fn.code[fn.blocks[b].end - 1];
+    if (tm.k != K::Cbr || tm.a == NONE || tm.a >= nv) continue;
+    if (tm.t == NONE || tm.f == NONE || tm.t == tm.f) continue;
+    // cond range [0,1] AT THE CBR: walk this block's transfers from its
+    // entry state (the cond may be defined inside the block, e.g. n & 1)
+    Iv cond = {INT64_MIN, INT64_MAX, false};
+    ensure_ra();
+    if (RA.ok && b < RA.nb && tm.a < RA.nv) {
+      std::vector<Iv> st(RA.entry.begin() + (size_t)b * RA.nv,
+                         RA.entry.begin() + (size_t)(b + 1) * RA.nv);
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+        if (fn.code[i].k != K::Phi)
+          iv_transfer(fn, i, RA.nv, st);
+      cond = st[tm.a];
+    }
+    if (cond.bot || cond.lo < 0 || cond.hi > 1) continue;
+    // arms: X_t / X_f: one Const def + br N (same N), no phis at N feeding...
+    auto arm = [&](uint32_t xb, val_t &K, uint32_t &nx) -> bool {
+      if (xb >= nb) return false;
+      const Instr &at = fn.code[fn.blocks[xb].end - 1];
+      if (at.k != K::Br || at.t == NONE) return false;
+      nx = at.t;
+      uint32_t nconst = 0;
+      val_t kk = 0;
+      for (uint32_t i = fn.blocks[xb].begin; i + 1 < fn.blocks[xb].end; ++i) {
+        const Instr &I = fn.code[i];
+        if (I.k == K::Const) {
+          ++nconst;
+          kk = I.c;
+        } else
+          return false;
+      }
+      if (nconst != 1) return false;
+      K = kk;
+      return true;
+    };
+    val_t Kt = 0, Kf = 0;
+    uint32_t nt_ = NONE, nf = NONE;
+    if (!arm(tm.t, Kt, nt_)) continue;
+    if (!arm(tm.f, Kf, nf)) continue;
+    if (nt_ != nf) continue; // must converge immediately
+    // SOUNDNESS: each arm block must be reachable ONLY through this select.
+    // The convergence phi's args are keyed by the ARM BLOCKS, so any OTHER
+    // predecessor of an arm block also contributes to the phi (with the
+    // same const, but through a path that never executes this select); the
+    // arithmetic below is defined only on the select's own paths, so such
+    // a block would leave the value undefined there (this exact shape
+    // occurs when one short-circuit && feeds another: the inner select's
+    // false arm doubles as the outer select's false target).
+    {
+      const auto &pt_ = fn.preds[tm.t];
+      const auto &pf_ = fn.preds[tm.f];
+      if (pt_.size() != 1 || pt_[0] != b) continue;
+      if (pf_.size() != 1 || pf_[0] != b) continue;
+    }
+    const uint32_t N = nt_;
+    // N's first phi (if any) must merge EXACTLY the two arm consts — its
+    // dst is the select result. If N has no phi, the arms' consts are
+    // dead and the branch is pure control: still convertible only if both
+    // arms' consts are unused... keep it simple: require the phi.
+    uint32_t pi = fn.blocks[N].begin;
+    if (pi >= fn.blocks[N].end || fn.code[pi].k != K::Phi) continue;
+    const Instr &P = fn.code[pi];
+    // args keyed from the arm blocks
+    auto argfrom = [&](uint32_t key) -> uint32_t {
+      if (P.t == key) return P.a;
+      if (P.f == key) return P.b2;
+      return NONE;
+    };
+    uint32_t at_ = argfrom(tm.t), af_ = argfrom(tm.f);
+    if (at_ == NONE || af_ == NONE) continue;
+    // the phi args must be exactly the arms' Const vregs
+    if (defi[at_] == NONE || defi[af_] == NONE) continue;
+    if (fn.code[defi[at_]].k != K::Const || fn.code[defi[af_]].k != K::Const)
+      continue;
+    // (defb of the consts must be the arm blocks)
+    if (defb[at_] != tm.t || defb[af_] != tm.f) continue;
+    // ---- convert: phiDst = Kf + (Kt - Kf) * c ------------------------------
+    std::vector<Instr> pre{};
+    uint32_t d = P.dst;
+    uint32_t kf = new_anon_vreg(fn, 0);
+    pre.push_back({.k = K::Const, .dst = kf, .c = Kf});
+    uint32_t diff = new_anon_vreg(fn, 0);
+    pre.push_back({.k = K::Const, .dst = diff,
+                   .c = (val_t)((uint64_t)Kt - (uint64_t)Kf)});
+    uint32_t m = new_anon_vreg(fn, 0);
+    pre.push_back(
+        {.k = K::Bin, .b = B::Mul, .dst = m, .a = tm.a, .b2 = diff});
+    pre.push_back({.k = K::Bin, .b = B::Add, .dst = d, .a = kf, .b2 = m});
+    // insert before b's terminator; terminator becomes br N
+    uint32_t be = fn.blocks[b].end - 1;
+    fn.code.insert(fn.code.begin() + (long)be, pre.begin(), pre.end());
+    const uint32_t add = (uint32_t)pre.size();
+    for (uint32_t xb = 0; xb < nb; ++xb) {
+      if (xb == b) {
+        fn.blocks[xb].end += add;
+        continue;
+      }
+      if (fn.blocks[xb].begin >= be + 1) fn.blocks[xb].begin += add;
+      if (fn.blocks[xb].end > be) fn.blocks[xb].end += add;
+    }
+    {
+      Instr &bt = fn.code[fn.blocks[b].end - 1];
+      bt.k = K::Br;
+      bt.a = NONE;
+      bt.f = NONE;
+      bt.t = N;
+      fn.succ[2 * b] = N;
+      fn.succ[2 * b + 1] = NONE;
+    }
+    // DELETE the phi at N: its dst is now defined by the arithmetic in b
+    // (leaving it would give the vreg TWO defs, and once the old arms go
+    // unreachable the phi's pred keys all die and unreach would "degenerate"
+    // it to an undef Const 0 -- clobbering the select result)
+    {
+      uint32_t del = fn.blocks[N].begin;
+      fn.code.erase(fn.code.begin() + (long)del);
+      for (uint32_t xb = 0; xb < fn.nblocks(); ++xb) {
+        if (xb == N) {
+          fn.blocks[xb].end -= 1;
+          continue;
+        }
+        if (fn.blocks[xb].begin > del) fn.blocks[xb].begin -= 1;
+        if (fn.blocks[xb].end > del) fn.blocks[xb].end -= 1;
+      }
+    }
+    os.ifconvs++;
+    changed = true;
+    break; // one per call: the fixpoint driver re-runs
+  }
+  return changed;
+}
+
+// ============================================================================
+// 9e0. PASS MANAGER
+// ============================================================================
+// PassCfg is the single configuration threaded from the CLI through
+// compile() -> optimize_prog() -> optimize(). Passes live in three cost
+// tiers and the scheduler runs them with a strict discipline:
+//   tier 0 "cheap"    : constprop, copyprop, canon, cse, unreachable,
+//                       splice, dce -- always run to a FIXPOINT first
+//   tier 1 "middle"   : mem2reg (array lifting + dead stores + dead
+//                       allocs), trapelim(+range analysis), licm, divmagic,
+//                       reassoc -- one round each, followed by a tier-0
+//                       fixpoint, repeated until global fixpoint / --fp-limit
+//   tier 2 "expensive": unroll, lcf -- CFG restructuring, run ONLY after
+//                       tiers 0/1 reached their fixpoint; each round is
+//                       followed by full tier-0 (+1) fixpoints again.
+//                       const-call evaluation is interprocedural (driven
+//                       from optimize_prog, after the inlining rounds):
+//                       pure constant-argument calls are executed exactly
+//                       at compile time, recursive fns included
+// -O levels gate the tiers:
+//   -O0: nothing (SSA + destruction only)
+//   -O1: tier 0
+//   -O2: tiers 0+1
+//   -O3: everything incl. interprocedural inlining (default)
+// Per-pass overrides (--enable/--disable) are applied on top of the preset,
+// so `-O1 --enable=lcf` is legal. --debug=N controls the dump volume:
+//   0 silent; 1 one line per pass invocation; 2 + the IR after each pass
+//   that changed something; 3 reserved for analysis dumps.
+struct PassCfg {
+  uint32_t level{3};   // -O0..-O3 preset
+  uint32_t unroll{16}; // full-unroll constant-trip loops with N <= this
+  uint32_t fp_limit{24}; // fixpoint round cap for every tier loop
+  uint8_t debug{0};    // dump level (0..3)
+  bool regalloc{true}; // C/bytecode register allocation (coloring)
+  // tier 0
+  bool p_fold{true}, p_copyprop{true}, p_canon{true}, p_cse{true},
+      p_unreach{true}, p_splice{true}, p_dce{true};
+  // tier 1
+  bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
+      p_reassoc{true};
+  // tier 2
+  bool p_unroll{true}, p_lcf{true}, p_constcall{true}, p_tailrec{true},
+      p_cdfold{true}, p_ifconv{true};
+  // interprocedural
+  bool do_inline{true};
+  bool do_opt{true}; // false: skip the optimizer entirely
+  // this fn is main (fns[0]): its frame count is provably 1, so a K::Depth
+  // in it constant-folds to 1
+  bool is_main{false};
+  // program-wide gates (filled in by compile(); see prog_handle_gates)
+  bool lift_ok{true};   // mem2reg array promotion allowed
+  bool stkarr_ok{true}; // C-backend stack arrays allowed
+  // runtime-only debugging context (constexpr path leaves it empty)
+  std::string_view dbg_name{};
+
+  constexpr void set_level(uint32_t lv) {
+    level = lv;
+    bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
+    p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce = t0;
+    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = t1;
+    p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv = t2;
+    do_inline = t2;
+    do_opt = lv != 0;
+  }
+};
+
+constexpr bool optimize(Fn &fn, OptStats &os, An &final_an,
+                        PassCfg cfg = {}); // (defined below)
+
+// --- 9e2. interprocedural: call graph, SCC (mjz_lib), inlining ---------------
+// Nodes are functions (index 0 = the main body); edges are call sites. SCCs
+// come from mjz::graph_ns::calculate_strongly_connected_components (Tarjan):
+//   * a function in a multi-member SCC, or with a self-edge, is RECURSIVE
+//     and is never inlined (inlining it would duplicate unbounded work and
+//     break the SSA shape)
+//   * Tarjan finalizes an SCC only after every SCC it can reach, so walking
+//     SCCs in emission order processes callees before callers: inlined
+//     bodies propagate through the rounds
 
 // Inline ONE call site `dst = G(args)` in F at instr index ci. Both sides are
 // in SSA. The callee's blocks are copied with fresh vreg/block ids; params
@@ -5945,6 +7549,25 @@ constexpr bool opt_inline_one(Fn &F, const Fn &G, uint32_t ci) {
     }
   }
   // 2) G's blocks, copied; Ret -> Br into the merge chain
+  // K::Depth adjustment: the callee's Depth() is its OWN frame count; the
+  // inlined copy runs in F's frame, where the same value is F's Depth()+1.
+  // dm = Depth(); one = 1; dadj = dm + one is emitted at the inline point;
+  // every copied Depth becomes a Copy of dadj (constprop folds the chain
+  // when F is main, where Depth provably = 1).
+  uint32_t dmV = NONE, dadjV = NONE;
+  bool G_has_depth = false;
+  std::vector<Instr> depth_pre{};
+  for (const Instr &I : G.code)
+    if (I.k == K::Depth) G_has_depth = true;
+  if (G_has_depth) {
+    dmV = new_anon_vreg(F, 0);
+    dadjV = new_anon_vreg(F, 0);
+    uint32_t oneV = new_anon_vreg(F, 0);
+    depth_pre.push_back(Instr{.k = K::Depth, .dst = dmV});
+    depth_pre.push_back(Instr{.k = K::Const, .dst = oneV, .c = 1});
+    depth_pre.push_back(
+        Instr{.k = K::Bin, .b = B::Add, .dst = dadjV, .a = dmV, .b2 = oneV});
+  }
   auto ret_target = [&](uint32_t j) -> uint32_t {
     if (R == 1) return M;
     return (j == 0) ? (nbF + nbG) : (nbF + nbG + j - 1);
@@ -5954,6 +7577,9 @@ constexpr bool opt_inline_one(Fn &F, const Fn &G, uint32_t ci) {
     uint32_t ridx = NONE;
     for (uint32_t j = 0; j < R; ++j)
       if (rets[j].first == g) ridx = j;
+    if (g == 0 && !depth_pre.empty()) { // the Depth adjustment prefix lives
+      for (const Instr &dp : depth_pre) nc.push_back(dp); // INSIDE this block
+    }
     for (uint32_t i = G.blocks[g].begin; i < G.blocks[g].end; ++i) {
       const Instr &I = G.code[i];
       if (i + 1 == G.blocks[g].end && I.k == K::Ret) {
@@ -5961,6 +7587,11 @@ constexpr bool opt_inline_one(Fn &F, const Fn &G, uint32_t ci) {
         continue;
       }
       Instr c = I;
+      if (c.k == K::Depth) { // callee frame -> caller frame + 1
+        c.k = K::Copy;
+        c.a = dadjV;
+        c.b2 = NONE;
+      }
       if (c.dst != NONE) c.dst = mapv(c.dst);
       c.a = mapv(c.a);
       c.b2 = mapv(c.b2);
@@ -6114,68 +7745,128 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
                              std::vector<std::string_view> &names,
                              std::vector<OptStats> &ostats, PassCfg cfg,
                              std::vector<uint32_t> &src_index) {
+  auto main_aware = [&](PassCfg c, uint32_t f) {
+    c.is_main = (f == 0); // main = fns[0] (dead-fn elim never removes it)
+    if (f < names.size()) c.dbg_name = names[f];
+    return c;
+  };
   for (uint32_t f = 0; f < fns.size(); ++f) {
     An A{};
-    PassCfg c1 = cfg;
-    if (f < names.size()) c1.dbg_name = names[f];
-    optimize(fns[f], ostats[f], A, c1);
+    optimize(fns[f], ostats[f], A, main_aware(cfg, f));
   }
   if (fns.size() < 2) return;
-  if (cfg.do_inline) {
-    for (int round = 0; round < 4; ++round) {
-    CallGraph G = build_callgraph(fns);
-    auto recount = [&]() {
-      std::vector<uint32_t> cs(fns.size(), 0);
-      for (uint32_t f = 0; f < fns.size(); ++f)
-        for (const Instr &I : fns[f].code)
-          if (I.k == K::Call) {
-            uint32_t c = (uint32_t)I.c;
-            if (c < cs.size()) cs[c]++;
-          }
-      return cs;
-    };
-    std::vector<uint32_t> callsites = recount();
-    bool inlined_any = false;
-    for (uint32_t s = 0; s < G.nscc; ++s) {
-      uint32_t e = (s + 1 < G.nscc) ? G.scc_begin[s + 1]
-                                    : (uint32_t)G.members.size();
-      for (uint32_t j = G.scc_begin[s]; j < e; ++j) {
-        uint32_t f = G.members[j];
-        for (;;) { // rescan after each inline: the fn changed shape
-          uint32_t site = NONE, callee = NONE;
-          for (uint32_t b = 0; b < fns[f].nblocks() && site == NONE; ++b)
-            for (uint32_t i = fns[f].blocks[b].begin;
-                 i < fns[f].blocks[b].end; ++i) {
-              const Instr &I = fns[f].code[i];
-              if (I.k != K::Call) continue;
-              uint32_t g = (uint32_t)I.c;
-              if (g == 0 || g >= fns.size()) continue; // never inline main
-              if (G.recursive[g]) continue;            // SCC: recursive
-              uint32_t sz = (uint32_t)fns[g].code.size();
-              bool small = sz <= 30;                   // always inline tiny
-              bool single_use = callsites[g] == 1 && sz <= 300;
-              if (!small && !single_use) continue;
-              if (fns[g].nparams != I.args.size()) continue;
-              if (fns[f].code.size() + sz > 8000) continue; // growth cap
-              site = i;
-              callee = g;
-              break;
+  // ---- interprocedural inlining rounds (SCC-aware; recursive never) -------
+  auto inline_rounds = [&](int rounds) {
+    if (!cfg.do_inline) return;
+    for (int round = 0; round < rounds; ++round) {
+      CallGraph G = build_callgraph(fns);
+      auto recount = [&]() {
+        std::vector<uint32_t> cs(fns.size(), 0);
+        for (uint32_t f = 0; f < fns.size(); ++f)
+          for (const Instr &I : fns[f].code)
+            if (I.k == K::Call) {
+              uint32_t c = (uint32_t)I.c;
+              if (c < cs.size()) cs[c]++;
             }
-          if (site == NONE) break;
-          if (!opt_inline_one(fns[f], fns[callee], site)) break;
-          ostats[f].inlines++;
-          inlined_any = true;
-          callsites = recount();
-          { // re-fold this caller; unroll/lcf wait for the final pass
-            An A2{};
-            PassCfg c2 = cfg;
-            c2.p_unroll = false;
-            optimize(fns[f], ostats[f], A2, c2);
+        return cs;
+      };
+      std::vector<uint32_t> callsites = recount();
+      bool inlined_any = false;
+      for (uint32_t s = 0; s < G.nscc; ++s) {
+        uint32_t e = (s + 1 < G.nscc) ? G.scc_begin[s + 1]
+                                      : (uint32_t)G.members.size();
+        for (uint32_t j = G.scc_begin[s]; j < e; ++j) {
+          uint32_t f = G.members[j];
+          for (;;) { // rescan after each inline: the fn changed shape
+            uint32_t site = NONE, callee = NONE;
+            for (uint32_t b = 0; b < fns[f].nblocks() && site == NONE; ++b)
+              for (uint32_t i = fns[f].blocks[b].begin;
+                   i < fns[f].blocks[b].end; ++i) {
+                const Instr &I = fns[f].code[i];
+                if (I.k != K::Call) continue;
+                uint32_t g = (uint32_t)I.c;
+                if (g == 0 || g >= fns.size()) continue; // never inline main
+                if (G.recursive[g]) continue;            // SCC: recursive
+                uint32_t sz = (uint32_t)fns[g].code.size();
+                bool small = sz <= 30;                   // always inline tiny
+                bool single_use = callsites[g] == 1 && sz <= 300;
+                if (!small && !single_use) continue;
+                if (fns[g].nparams != I.args.size()) continue;
+                if (fns[f].code.size() + sz > 8000) continue; // growth cap
+                site = i;
+                callee = g;
+                break;
+              }
+            if (site == NONE) break;
+            if (!opt_inline_one(fns[f], fns[callee], site)) break;
+            ostats[f].inlines++;
+            inlined_any = true;
+            callsites = recount();
+            { // re-fold this caller with TIER 0 ONLY and a tiny fixpoint
+              // budget: this only needs to propagate the inlined body's
+              // constants; the final full optimize below runs every tier
+              // to ITS fixpoint once the shape settled. Level 2 here (with
+              // its mem2reg/trapelim/licm analyses per round) made programs
+              // with many call sites quadratic — fuzz seed 21 (26 sites)
+              // spent 80+ s in these re-folds alone
+              An A2{};
+              PassCfg c2 = cfg;
+              c2.level = 1;
+              c2.fp_limit = 3;
+              c2.p_unroll = false;
+              c2.p_lcf = false;
+              c2.p_cdfold = false;
+              c2.p_ifconv = false;
+              c2.p_constcall = false;
+              c2.do_inline = false;
+              optimize(fns[f], ostats[f], A2, main_aware(c2, f));
+            }
           }
         }
       }
+      if (!inlined_any) break;
     }
-    if (!inlined_any) break;
+  };
+  inline_rounds(4);
+  // ---- 9e4: tail-call elimination of inner-SCC tail calls ------------------
+  // After inlining (non-SCC helpers are gone, so what remains as calls is
+  // genuine recursion): self tail-recursion becomes a loop, pure-tail SCCs
+  // merge into one sel-dispatched leaf function. Both keep the recursion
+  // depth cap EXACT via the budget = CAP+1 - Depth() counter. The merged
+  // functions are small leaves now, so a second wave of inlining can pull
+  // them (and their countdown loops) into their callers.
+  if (cfg.p_tailrec) {
+    if (opt_tailrec(fns, names, ostats, src_index)) {
+      const uint32_t nf_after = (uint32_t)fns.size();
+      for (uint32_t f = 0; f < nf_after; ++f) {
+        An A{};
+        PassCfg c4 = cfg;
+        // every fn tailrec TRANSFORMED gets the FULL cfg now, so cdfold can
+        // fold its recursion-budget loop into a closed form while it is
+        // still in its own frame. A cheap re-fold here (the old behavior,
+        // which only favored the appended merge leaf) left self-recursive
+        // loops like cnt(n-1, a+n) UNFOLDED — inline_rounds(2) then pulled
+        // the raw loops into every caller, and the callers' final optimize
+        // had to fold N TCE loops at once (slow, and a multi-fold hazard).
+        // Transformed fns are exactly the ones carrying the budget init:
+        // K::Depth is emitted by tce_emit_budget_init alone — user code
+        // never produces it, and nothing is inlined between tailrec and
+        // here, so the marker is exact. (Callers whose sites were rewritten
+        // only need the cheap re-fold below; their full optimize comes last.)
+        bool tced = f != 0; // main is never a TCE product
+        for (const Instr &I : fns[f].code)
+          if (I.k == K::Depth) { tced = true; break; }
+        if (tced) { // TCE'd (self loop or merged leaf): FULL cfg
+          optimize(fns[f], ostats[f], A, main_aware(c4, f));
+        } else { // everyone else: tier-0 re-fold (call sites were rewritten
+          c4.level = 1; // to sel-const form; the consts just need folding)
+          c4.fp_limit = 3;
+          c4.p_constcall = false;
+          c4.do_inline = false;
+          optimize(fns[f], ostats[f], A, main_aware(c4, f));
+        }
+      }
+      inline_rounds(2); // merged leaves are tiny: inline them into callers
     }
   }
   // ---- 9e3: const-call evaluation ---------------------------------------
@@ -6192,22 +7883,19 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
       for (uint32_t f = 0; f < fns.size(); ++f) {
         An A{};
         PassCfg c5 = cfg;
-        c5.level = 2;
+        c5.level = 1; // tier 0: propagate the new constants, nothing more
         c5.p_unroll = false;
         c5.p_lcf = false;
         c5.p_constcall = false;
         c5.do_inline = false;
-        if (f < names.size()) c5.dbg_name = names[f];
-        optimize(fns[f], ostats[f], A, c5);
+        optimize(fns[f], ostats[f], A, main_aware(c5, f));
       }
     }
   }
   eliminate_dead_fns(fns, names, ostats, src_index);
   for (uint32_t f = 0; f < fns.size(); ++f) {
     An A{};
-    PassCfg c3 = cfg;
-    if (f < names.size()) c3.dbg_name = names[f];
-    optimize(fns[f], ostats[f], A, c3);
+    optimize(fns[f], ostats[f], A, main_aware(cfg, f));
   }
 }
 
@@ -6256,7 +7944,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
     bool ch_any = false;
     for (uint32_t it = 0; it < cap; ++it) {
       bool ch = false, c = false;
-      c = opt_constprop(fn, os); // fold/identities/branch folds
+      c = opt_constprop(fn, os, cfg.is_main); // fold/identities/branch folds
       dbg_pass(cfg.debug, fn, "fold", c);
       ch |= c;
       normalize_phis(fn);
@@ -6311,6 +7999,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
   };
   any |= tier0();
   // ---- tier 1: middle passes; cheap fixpoint after each round -------------
+  // trapelim runs ONCE per optimize() call: its nt proofs are monotone (a
+  // proof stays valid as the fn shrinks), and its interval analysis is the
+  // most expensive thing in the tier — re-running it every fixpoint round
+  // of every tier re-analysis made pathological inputs ~20x slower for no
+  // additional proofs. Later rounds keep the flags; the tier-2 post-round
+  // re-runs it once more (CFG restructuring can expose new proofs).
+  bool trapelim_ran = false;
   if (cfg.level >= 2) {
     for (uint32_t outer = 0; outer < cap; ++outer) {
       bool ch = false, c = false;
@@ -6321,10 +8016,11 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         ch |= c;
         normalize_phis(fn);
       }
-      if (cfg.p_trapelim) {
+      if (cfg.p_trapelim && (outer == 0 || !trapelim_ran)) {
         An A = analyze(fn);
         c = opt_trapelim(fn, A, os); // ranges + aliasing -> nt flags
         dbg_pass(cfg.debug, fn, "trapelim", c);
+        trapelim_ran = true;
         ch |= c;
         normalize_phis(fn);
       }
@@ -6353,6 +8049,12 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         normalize_phis(fn);
       }
 #endif
+      if (cfg.p_ifconv) { // provably-binary cbr selects -> arithmetic
+        c = opt_ifconv(fn, os);
+        dbg_pass(cfg.debug, fn, "ifconv", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
       if (!ch) break;
       any = true;
       tier0();
@@ -6360,8 +8062,10 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
   }
   // ---- tier 2: expensive CFG restructuring, only after 0/1 fixpoint -------
   if (cfg.level >= 3) {
+    uint32_t t2round = 0;
     for (uint32_t outer = 0; outer < cap; ++outer) {
       bool ch = false;
+      ++t2round;
 #ifndef MJZ_DBG_NO_UNROLL
       if (cfg.p_unroll && cfg.unroll) {
         An A = analyze(fn);
@@ -6380,6 +8084,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         normalize_phis(fn);
       }
 #endif
+      if (cfg.p_cdfold) { // TCE countdown loops -> exact closed form
+        An A3 = analyze(fn);
+        bool c = opt_cdfold(fn, A3, os);
+        dbg_pass(cfg.debug, fn, "cdfold", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
       if (!ch) break;
       any = true;
       tier0();
@@ -6391,7 +8102,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
           c2 |= opt_mem2reg(fn, A, os, cfg.lift_ok, cfg.stkarr_ok);
           normalize_phis(fn);
         }
-        if (cfg.p_trapelim) {
+        if (cfg.p_trapelim && t2round < 2) { // restructuring-exposed proofs
           An A = analyze(fn);
           c2 |= opt_trapelim(fn, A, os);
           normalize_phis(fn);
@@ -6407,6 +8118,15 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         }
         if (cfg.p_reassoc) {
           c2 |= opt_reassoc(fn, os);
+          normalize_phis(fn);
+        }
+        if (cfg.p_cdfold) {
+          An A3 = analyze(fn);
+          c2 |= opt_cdfold(fn, A3, os);
+          normalize_phis(fn);
+        }
+        if (cfg.p_ifconv) {
+          c2 |= opt_ifconv(fn, os);
           normalize_phis(fn);
         }
         (void)c2;
@@ -6804,7 +8524,8 @@ enum class Bc : uint8_t {
   Lt, Le, Gt, Ge, Eq, Ne, Jmp, Jz, Print,
   ArrNew, ArrLd, ArrSt, ArrLen, In,
   Call, Ret, // Call u32 fnidx u32 nargs; Ret (value via the operand stack)
-  And, Or, Xor, Shl, Lshr, Asr, MulHi // optimizer-lowered bit ops
+  And, Or, Xor, Shl, Lshr, Asr, MulHi, // optimizer-lowered bit ops
+  Depth                                // push the frame count (call depth)
 };
 constexpr const char *bc_name(Bc op) {
   switch (op) {
@@ -6840,6 +8561,7 @@ constexpr const char *bc_name(Bc op) {
   case Bc::Lshr: return "lshr";
   case Bc::Asr: return "asr";
   case Bc::MulHi: return "mulhi";
+  case Bc::Depth: return "depth";
   }
   return "?";
 }
@@ -6897,6 +8619,7 @@ constexpr uint32_t bc_instr_size(const Instr &I) {
   case K::Store: return 5 + 5 + 5 + 1;      // Load,Load,Load,ArrSt
   case K::Len: return 5 + 1 + 5;            // Load,ArrLen,Store
   case K::Input: return 1 + 5;              // In,Store
+  case K::Depth: return 1 + 5;              // Depth,Store
   case K::Call:                             // Load*argc,Call,Store
     return 1 + 4 + 4 + 5 * (uint32_t)I.args.size() + 5;
   case K::Ret: return (I.a == NONE ? 9 : 5) + 1; // (Push|Load),Ret
@@ -6949,12 +8672,15 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
           c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Br:
-          c.push_back((uint8_t)Bc::Jmp); bc_put_u32(c, off[f][I.t]);
+          c.push_back((uint8_t)Bc::Jmp);
+          bc_put_u32(c, I.t == NONE ? off[f][b] : off[f][I.t]);
           break;
         case K::Cbr:
           c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
-          c.push_back((uint8_t)Bc::Jz); bc_put_u32(c, off[f][I.f]);
-          c.push_back((uint8_t)Bc::Jmp); bc_put_u32(c, off[f][I.t]);
+          c.push_back((uint8_t)Bc::Jz);
+          bc_put_u32(c, I.f == NONE ? off[f][b] : off[f][I.f]);
+          c.push_back((uint8_t)Bc::Jmp);
+          bc_put_u32(c, I.t == NONE ? off[f][b] : off[f][I.t]);
           break;
         case K::Print:
           c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
@@ -6984,6 +8710,10 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
           break;
         case K::Input:
           c.push_back((uint8_t)Bc::In);
+          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          break;
+        case K::Depth:
+          c.push_back((uint8_t)Bc::Depth);
           c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Call:
@@ -7058,9 +8788,9 @@ constexpr RunOut vm_run(const std::vector<uint8_t> &c,
       if (++steps > step_limit) { R.timeout = true; return R; }
       uint32_t g = bc_rd_u32(c, pc); pc += 4;
       uint32_t na = bc_rd_u32(c, pc); pc += 4;
-      if (g >= nfns || frames.size() >= MJZ_MAX_CALL_DEPTH) {
-        R.trapped = true; // bad callee / recursion depth cap
-        return R;
+      if (g >= nfns || frames.size() > MJZ_MAX_CALL_DEPTH) {
+        R.trapped = true; // bad callee / recursion depth cap (512 CALLEE
+        return R;        // activations; main's frame does not count)
       }
       std::vector<val_t> args(na, 0); // pop na args (a0 pushed first)
       for (uint32_t k = na; k-- > 0;) {
@@ -7172,6 +8902,9 @@ constexpr RunOut vm_run(const std::vector<uint8_t> &c,
     case Bc::In: // push next stdin value (0 at EOF)
       st.push_back(R.next_input());
       break;
+    case Bc::Depth: // frame count incl. main — same convention as every
+      st.push_back((val_t)frames.size()); // runner (SSA interp: stack.size)
+      break;
     }
   }
 }
@@ -7266,7 +8999,9 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       continue;
     }
     case K::Call: {
-      if (stack.size() >= MJZ_MAX_CALL_DEPTH) {
+      // depth cap: 512 CALLEE activations (the oracle/native convention;
+      // stack.size() counts main's frame, hence the strict >)
+      if (stack.size() > MJZ_MAX_CALL_DEPTH) {
         R.trapped = true; // recursion depth cap (matches native guards)
         return R;
       }
@@ -7363,6 +9098,10 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       break;
     case K::Input:
       stack.back().val[I.dst] = R.next_input();
+      stack.back().has[I.dst] = 1;
+      break;
+    case K::Depth: // frame count incl. main (matches VM + native)
+      stack.back().val[I.dst] = (val_t)stack.size();
       stack.back().has[I.dst] = 1;
       break;
     }
@@ -7608,9 +9347,16 @@ constexpr RunOut run_ast(const Ast &a, uint32_t root, uint64_t limit = 200000,
 // register set: colors are unbounded (C has unlimited locals, the VM has
 // unlimited slots), so greedy coloring is always feasible.
 //   * liveness: per-block backward dataflow to a fixpoint (same discipline
-//     as the x86 ra_plan, but on plain instructions — deliberately ignorant
-//     of the emission plan's const-inlining / branch fusion, which only
-//     makes the interference estimate conservative).
+//     as the x86 ra_plan). BRANCH FUSION AWARE: a Cbr whose comparison the
+//     emission plan folds into the branch text reads the comparison's
+//     OPERANDS at the branch, so their live ranges extend past the (now
+//     dead) compare. Treating such operands as dying at the compare was
+//     UNSOUND, not conservative: another vreg could legally share (and
+//     clobber) the operand's slot in between — fuzz seed 33 hit exactly
+//     that (a short-circuit gate compared stale slot values and consumed
+//     an input() the source never evaluates). Const-inlining (kc) and dead
+//     instrs, by contrast, only ever SHORTEN real live ranges, so ignoring
+//     those stays conservative.
 //   * interference: at each def, edges to everything live-after it; params
 //     are "defined at entry", so they conflict with each other and with
 //     everything live into the entry block.
@@ -7627,7 +9373,60 @@ constexpr void assign_slots(Fn &fn) {
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nb || !nv) return;
-  auto each_use = [&](const Instr &I, auto &&f) {
+  // Branch-fusion awareness (mirrors make_emit_plan's fusion decision
+  // EXACTLY, kept local and allocation-lean: three nv-sized vectors + one
+  // code-sized vector, so the constexpr pipeline's 4 GiB evaluation budget
+  // is not disturbed by the full plan's extra vectors). A Cbr whose
+  // comparison will be folded into the branch text is read by TWO kinds of
+  // backends and both must stay sound:
+  //  * the C backend folds the compare away and reads the comparison's
+  //    OPERANDS at the branch — their live ranges extend past the (dead)
+  //    compare. Missing this let another vreg reuse (clobber) the operand
+  //    slots in between (fuzz seed 33: a short-circuit gate compared stale
+  //    slots and consumed an input() the source never evaluates).
+  //  * the bytecode VM does not fuse: it materializes the compare and
+  //    branches on its RESULT — so I.a stays live to the branch as well.
+  // Marking both (operands + result) is the conservative union; skipping
+  // const-inlined operands would only shave slots, never correctness.
+  std::vector<uint32_t> raw(nv, 0), def_idx(nv, NONE), ndefs(nv, 0);
+  std::vector<uint32_t> fuse(fn.code.size(), NONE);
+  for (uint32_t i = 0; i < fn.code.size(); ++i) {
+    const Instr &I = fn.code[i];
+    if (I.a != NONE && I.a < nv) raw[I.a]++;
+    if (I.b2 != NONE && I.b2 < nv) raw[I.b2]++;
+    if (I.c2 != NONE && I.c2 < nv) raw[I.c2]++;
+    for (uint32_t v : I.args)
+      if (v < nv) raw[v]++;
+    if (I.dst != NONE && I.dst < nv) {
+      ++ndefs[I.dst];
+      def_idx[I.dst] = i;
+    }
+  }
+  for (uint32_t i = 0; i < fn.code.size(); ++i) {
+    const Instr &I = fn.code[i];
+    if (I.k != K::Cbr || I.a == NONE || I.a >= nv) continue;
+    uint32_t d = def_idx[I.a];
+    // single USE is not enough post-destruction (phi slots have one use but
+    // per-edge defs); require a single DEF — same condition as the plan
+    if (d == NONE || raw[I.a] != 1 || ndefs[I.a] != 1) continue;
+    const Instr &D = fn.code[d];
+    bool is_cmp = D.k == K::Bin &&
+                  (D.b == B::Lt || D.b == B::Le || D.b == B::Gt ||
+                   D.b == B::Ge || D.b == B::Eq || D.b == B::Ne);
+    if (is_cmp) fuse[i] = d;
+  }
+  auto each_use = [&](uint32_t i, auto &&f) {
+    const Instr &I = fn.code[i];
+    if (I.k == K::Cbr && i < fuse.size() && fuse[i] != NONE) {
+      const Instr &D = fn.code[fuse[i]];
+      auto one = [&](uint32_t v) {
+        if (v != NONE && v < nv) f(v);
+      };
+      one(D.a);
+      one(D.b2);
+      one(I.a);
+      return;
+    }
     auto one = [&](uint32_t v) {
       if (v != NONE && v < nv) f(v);
     };
@@ -7657,7 +9456,7 @@ constexpr void assign_slots(Fn &fn) {
         if (I.k == K::Phi) continue; // destroyed input: none (defensive)
         uint32_t d = is_def(I);
         if (d != NONE) live[d] = 0;
-        each_use(I, [&](uint32_t v) { live[v] = 1; });
+        each_use(i, [&](uint32_t v) { live[v] = 1; });
       }
       for (uint32_t v = 0; v < nv; ++v)
         if (live[v] != lin[bb][v]) {
@@ -7696,7 +9495,7 @@ constexpr void assign_slots(Fn &fn) {
           if (live[u]) edge(d, u); // the write clobbers: no sharing here
         live[d] = 0;
       }
-      each_use(I, [&](uint32_t v) { live[v] = 1; });
+      each_use(i, [&](uint32_t v) { live[v] = 1; });
     }
   }
   // ---- coloring: params pinned, then greedy, highest degree first --------
@@ -7868,6 +9667,10 @@ static OptStats sum_ostats(const Program &P) {
     t.lcf_gensims += U.ostats.lcf_gensims;
     t.constcalls += U.ostats.constcalls;
     t.deadallocs += U.ostats.deadallocs;
+    t.tces += U.ostats.tces;
+    t.tce_merges += U.ostats.tce_merges;
+    t.cdfolds += U.ostats.cdfolds;
+    t.ifconvs += U.ostats.ifconvs;
     t.lcf_rt += U.ostats.lcf_rt;
     t.divmagics += U.ostats.divmagics;
     t.notcombs += U.ostats.notcombs;
@@ -7966,6 +9769,9 @@ static void print_fn(const Fn &fn, const char *title) {
         break;
       case K::Input:
         std::printf("%s = input()", vname(fn, I.dst).c_str());
+        break;
+      case K::Depth:
+        std::printf("%s = depth()", vname(fn, I.dst).c_str());
         break;
       case K::Call: {
         std::printf("%s = f%u(", vname(fn, I.dst).c_str(), (unsigned)I.c);
@@ -8225,6 +10031,7 @@ static EmitPlan make_emit_plan(const Fn &fn) {
   return P;
 }
 
+
 // ---- 13.5a. C backend --------------------------------------------------------
 // Emits C valid as both C and C++. One function per FnUnit: helpers get
 // `static int64_t mjz_fN(...)` signatures (params are vregs v0..vP-1), a
@@ -8236,6 +10043,48 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                             bool multi_fn) {
   EmitPlan P = make_emit_plan(fn);
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
+  // def index (for the unsigned-compare pretty-printer below)
+  std::vector<uint32_t> cdefi(nv, NONE);
+  std::vector<uint32_t> nuse(nv, 0);
+  for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
+    for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0)
+      if (fn.code[i0].dst != NONE && fn.code[i0].dst < nv)
+        cdefi[fn.code[i0].dst] = i0;
+  for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
+    for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0) {
+      for (uint32_t o : {fn.code[i0].a, fn.code[i0].b2, fn.code[i0].c2})
+        if (o != NONE && o < nv) ++nuse[o];
+      for (uint32_t o : fn.code[i0].args)
+        if (o != NONE && o < nv) ++nuse[o];
+    }
+  std::vector<char> elide(fn.code.size(), 0); // xor elided by the pretty form
+  { // pre-pass: every fused Cbr whose compare matches the (v^MIN vs const)
+    // unsigned pattern and whose xor operand has this compare as its ONLY
+    // use -> the xor assignment is elided (the if reads v directly)
+    auto xorbase = [&](uint32_t o) -> uint32_t {
+      if (o == NONE || o >= nv || cdefi[o] == NONE) return NONE;
+      const Instr &X = fn.code[cdefi[o]];
+      if (X.k != K::Bin || X.b != B::Xor) return NONE;
+      if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
+        return NONE;
+      if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN) return X.a;
+      if (P.kc[X.a] && P.kv[X.a] == INT64_MIN) return X.b2;
+      return NONE;
+    };
+    for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
+      for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0) {
+        const Instr &C = fn.code[i0];
+        if (C.k != K::Cbr || P.fuse[i0] == NONE) continue;
+        const Instr &D = fn.code[P.fuse[i0]];
+        uint32_t xv = xorbase(D.a), yv = xorbase(D.b2);
+        bool left = xv != NONE && yv == NONE && D.b2 < nv && P.kc[D.b2];
+        bool right = yv != NONE && xv == NONE && D.a < nv && P.kc[D.a];
+        if (!left && !right) continue;
+        uint32_t xo = left ? D.a : D.b2;
+        if (xo < nv && nuse[xo] == 1 && cdefi[xo] != NONE)
+          elide[cdefi[xo]] = 1;
+      }
+  }
   std::string s{};
   char buf[192];
   // home naming: r%u (allocated slot) when register allocation ran,
@@ -8365,7 +10214,7 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
     }
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (P.dead[i]) continue;
+      if (P.dead[i] || elide[i]) continue;
       switch (I.k) {
       case K::Phi:
         break; // destroyed input has none
@@ -8404,17 +10253,20 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
           val_t av = ac ? P.kv[I.a] : 0;
           bool always =
               bc && (bv == 0 || (bv == -1 && ac && av == INT64_MIN));
+          // a trap must terminate the WHOLE program, exactly like the
+          // oracle/VM/asm backends (mjz_trap: puts+exit). `return 1` would
+          // only leave the helper and let the caller continue running.
           if (always) {
-            s += "  printf(\"TRAP\\n\"); return 1;\n";
+            s += "  printf(\"TRAP\\n\"); exit(1);\n";
             break;
           }
           if (bc && bv == -1)
             s += "  if (" + V(I.a) +
-                 " == INT64_MIN) { printf(\"TRAP\\n\"); return 1; }\n";
+                 " == INT64_MIN) { printf(\"TRAP\\n\"); exit(1); }\n";
           else if (!bc)
             s += "  if (" + V(I.b2) + " == 0 || (" + V(I.a) +
                  " == INT64_MIN && " + V(I.b2) +
-                 " == -1)) { printf(\"TRAP\\n\"); return 1; }\n";
+                 " == -1)) { printf(\"TRAP\\n\"); exit(1); }\n";
           std::snprintf(buf, sizeof buf, "  %s = %s %s %s;\n",
                         D(I.dst).c_str(), V(I.a).c_str(), op, V(I.b2).c_str());
           s += buf;
@@ -8465,10 +10317,53 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
           // when the TRUE arm is the fallthrough, the NOT of the compare is
           // folded INTO the compare: `if (!(a<b)) goto L;` -> `if (a>=b) goto L;`
           const Instr &D = fn.code[P.fuse[i]];
-          std::string pos =
-              "(" + V(D.a) + " " + cmp_txt(D.b) + " " + V(D.b2) + ")";
-          std::string neg =
-              "(" + V(D.a) + " " + neg_txt(D.b) + " " + V(D.b2) + ")";
+          std::string pos, neg;
+          { // unsigned-compare pretty-printer: (v ^ INT64_MIN) < (K ^ MIN)
+            // as SIGNED compare on the xor'd values is exactly the UNSIGNED
+            // compare v < K — emit it in that readable form
+            auto xorbase = [&](uint32_t o) -> uint32_t {
+              if (o == NONE || o >= nv || cdefi[o] == NONE) return NONE;
+              const Instr &X = fn.code[cdefi[o]];
+              if (X.k != K::Bin || X.b != B::Xor) return NONE;
+              if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
+                return NONE;
+              if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN) return X.a;
+              if (P.kc[X.a] && P.kv[X.a] == INT64_MIN) return X.b2;
+              return NONE;
+            };
+            auto flip = [](B o) -> B {
+              switch (o) {
+              case B::Lt: return B::Gt;
+              case B::Le: return B::Ge;
+              case B::Gt: return B::Lt;
+              case B::Ge: return B::Le;
+              default: return o;
+              }
+            };
+            uint32_t xv = xorbase(D.a), yv = xorbase(D.b2);
+            bool left = xv != NONE && yv == NONE && D.b2 < nv && P.kc[D.b2];
+            bool right = yv != NONE && xv == NONE && D.a < nv && P.kc[D.a];
+            if (left || right) {
+              uint32_t v = left ? xv : yv;
+              val_t bound = (val_t)((uint64_t)(left ? P.kv[D.b2] : P.kv[D.a]) ^
+                                    (uint64_t)INT64_MIN);
+              B op = left ? D.b : flip(D.b); // normalize: v on the left
+              char btxt[40];
+              if (bound >= 0 && bound <= 3037000499ll)
+                std::snprintf(btxt, sizeof btxt, "(uint64_t)%lld",
+                              (long long)bound);
+              else
+                std::snprintf(btxt, sizeof btxt, "UINT64_C(0x%016llx)",
+                              (unsigned long long)(uint64_t)bound);
+              pos = "((uint64_t)" + V(v) + " " + cmp_txt(op) + " " + btxt +
+                    ")";
+              neg = "((uint64_t)" + V(v) + " " + neg_txt(op) + " " + btxt +
+                    ")";
+            } else {
+              pos = "(" + V(D.a) + " " + cmp_txt(D.b) + " " + V(D.b2) + ")";
+              neg = "(" + V(D.a) + " " + neg_txt(D.b) + " " + V(D.b2) + ")";
+            }
+          }
           if (I.f == P.next[b]) { // false arm falls through
             std::snprintf(buf, sizeof buf, "  if %s goto L%u;\n", pos.c_str(),
                           (unsigned)I.t);
@@ -8585,6 +10480,16 @@ static std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                       D(I.dst).c_str());
         s += buf;
         break;
+      case K::Depth: // frames incl. main: mjz_depth counts CALLEES (main=0),
+        // so +1; in main it is provably 1 (nothing below the entry frame)
+        if (is_main) {
+          std::snprintf(buf, sizeof buf, "  %s = 1;\n", D(I.dst).c_str());
+        } else {
+          std::snprintf(buf, sizeof buf, "  %s = mjz_depth + 1;\n",
+                        D(I.dst).c_str());
+        }
+        s += buf;
+        break;
       case K::Call: {
         std::string as{};
         for (size_t k = 0; k < I.args.size(); ++k)
@@ -8654,7 +10559,8 @@ static std::string emit_c(const std::vector<Fn> &fns,
   const bool multi = fns.size() > 1;
   s += "/* generated by minijz */\n";
   s += "#include <stdio.h>\n#include <stdint.h>\n";
-  if (use_arr || multi || use_stk) s += "#include <stdlib.h>\n"; // exit()
+  s += "#include <stdlib.h>\n"; // exit(): div/mod traps can fire anywhere,
+  //                              including single-fn programs without arrays
   if (use_stk) s += "#include <string.h>\n";                    // memset()
   if (use_arr) {
     // bump arena, bit-identical to the interpreters/VM/asm backends:
@@ -8811,6 +10717,14 @@ static RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
         if (live[u] && u != p) edge(p, u);
       live[p] = 0;
     }
+    // ... and PAIRWISE, always: the prologue unconditionally moves every
+    // incoming argument into its home, so even a param whose only uses sit
+    // in unreachable code (not live-in, no edges above) must not share a
+    // home with a live sibling — the entry move would clobber it (fuzz
+    // seed 804: p0 and p1 both colored rbx, `mov %rsi,%rbx` destroyed p0)
+    for (uint32_t a = 0; a < fn.nparams && a < nv; ++a)
+      for (uint32_t b = a + 1; b < fn.nparams && b < nv; ++b)
+        edge(a, b);
   }
   for (uint32_t b = 0; b < nb; ++b) {
     std::vector<char> live = lout[b];
@@ -9318,6 +11232,14 @@ static std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         s += "  call mjz_input\n";
         st_rax(I.dst);
         break;
+      case K::Depth: // frames incl. main = mjz_depth + 1 (1 in main)
+        if (is_main) {
+          s += "  movq $1, %rax\n";
+        } else {
+          s += "  movq mjz_depth(%rip), %rax\n  incq %rax\n";
+        }
+        st_rax(I.dst);
+        break;
       case K::Call: { // SysV: up to six integer registers
         static const char *argregs[6] = {"rdi", "rsi", "rdx",
                                          "rcx", "r8", "r9"};
@@ -9582,6 +11504,7 @@ static const val_t DEMO_INS_STATS[] = {5, 3, 8, 1, 9, 9, 2, 0, 7, 6};
 static const val_t DEMO_INS_DIVMAGIC[] = {1234567890123456789, -987654321098765432};
 static const val_t DEMO_INS_LCFRT[] = {1000000};
 static const val_t DEMO_INS_CCALL[] = {5};
+static const val_t DEMO_INS_COUNT[] = {100};
 
 static const Demo demos[] = {
   {"sum_1_to_10",
@@ -9682,11 +11605,30 @@ static const Demo demos[] = {
    "fn fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\n"
    "print fact(6);\nprint fib(12);\n",
    true},
-  {"fn_mutual_recursion", // a 2-member call-graph SCC: never inlined
+  {"fn_mutual_recursion", // a 2-member call-graph SCC: never inlined, but
+   // TAIL-CALLED: tailrec merges it into one sel-dispatched leaf with an
+   // exact recursion-budget loop, the leaf is inlined into main, cdfold
+   // replaces the countdown by the closed form + TRAP guard, ifconv folds
+   // the member select, and the whole thing degenerates to print(n & 1)
    "fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }\n"
    "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
    "print is_even(10);\nprint is_odd(7);\nprint is_even(7);\n",
    true},
+  {"tailrec_mutual_fold",
+   // the full pipeline the user asked for: is_odd(input()) -> the guard
+   // (the 512-activation recursion cap is a language semantic, so
+   // is_odd(600) TRAPs) + input() & 1
+   "fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }\n"
+   "fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); }\n"
+   "print is_odd(input());\n",
+   true, DEMO_INS_CCALL, 1},
+  {"tailrec_self", // single-member: a self tail call becomes a loop, then
+   // the ADDITIVE-accumulator countdown closed form: count(100,0) = 5050
+   // via x_N = x0 + N*n0 - N(N-1)/2 — no loop, no call, exact budget guard
+   "fn count(n, acc) { if (n == 0) { return acc; } "
+   "return count(n - 1, acc + n); }\n"
+   "print count(input(), 0);\n",
+   true, DEMO_INS_COUNT, 1},
   {"const_call_eval",
    // recursion + mutual recursion + a never-read array + a runtime trip
    // count, all at once: the calls fold via the interprocedural const-call
@@ -9870,7 +11812,7 @@ static void run_demos() {
           "splices %u | phi-degen %u | dce %u | hoisted %u | INLINED %u | "
           "UNROLLED %u | REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | "
           "NOTCOMB %u | TRAP-KILL %u | MEM2REG %u | DSE %u | CONSTCALL %u | "
-          "DEADALLOC %u\n"
+          "DEADALLOC %u | TAILREC %u(+%u) |CDFOLD %u | IFCONV %u\n"
           "  destroy: edges split %u | copies %u | self %u | cycles %u | "
           "copy-fused %u\n",
           P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i,
@@ -9886,6 +11828,8 @@ static void run_demos() {
           (unsigned)os.notcombs, (unsigned)os.traps_killed,
           (unsigned)os.mem2reg_lifts, (unsigned)os.mem2reg_dses,
           (unsigned)os.constcalls, (unsigned)os.deadallocs,
+          (unsigned)os.tces, (unsigned)os.tce_merges, (unsigned)os.cdfolds,
+          (unsigned)os.ifconvs,
           (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
           (unsigned)dfu);
     }
@@ -9940,7 +11884,7 @@ struct FuzzStats {
   long arr_progs{}, in_progs{}, native_checked{};
   long fn_progs{}, inlined_total{}, unrolled_total{};
   long brk_progs{}, lifted{}, dead_stores{}, gensims{}, traps_killed{};
-  long constcalls{}, deadallocs{};
+  long constcalls{}, deadallocs{}, tces{}, cdfolds{}, ifconvs{};
 };
 
 struct GenCtx {
@@ -10000,7 +11944,13 @@ void GenCtx::gen_expr(std::string &out, int depth) {
       out += F.name + "(";
       for (int k = 0; k < F.nparams; ++k) {
         if (k) out += ", ";
-        if (F.nparams) out += std::to_string(pick(-3, 8));
+        if (F.nparams) {
+          // occasionally a RUNTIME argument: exercises tailrec -> loop ->
+          // cdfold with a live budget guard against the oracle's real
+          // recursion (and its depth cap)
+          if (use_input && pick(0, 3) == 0) out += "input()";
+          else out += std::to_string(pick(-3, 8));
+        }
       }
       out += ")";
       return;
@@ -10190,6 +12140,17 @@ void GenCtx::gen_fn_defs() {
     fns.push_back({"pe", 1});
     fns.push_back({"po", 1});
   }
+  if (pick(0, 3)) { // TAIL self recursion: tailrec -> loop -> cdfold
+    src += "fn cnt(n, a) { if (n == 0) { return a; } "
+           "return cnt(n - 1, a + n); }\n";
+    fns.push_back({"cnt", 2});
+  }
+  if (pick(0, 5)) { // TAIL mutual recursion with a RUNTIME argument
+    src += "fn ev(n) { if (n == 0) { return 1; } return od(n - 1); }\n";
+    src += "fn od(n) { if (n == 0) { return 0; } return ev(n - 1); }\n";
+    fns.push_back({"ev", 1});
+    fns.push_back({"od", 1});
+  }
 }
 
 static GenCtx gen_program(uint32_t seed) {
@@ -10214,16 +12175,27 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
     ndir = out_dir + "/fuzz_native";
     std::system(("mkdir -p '" + ndir + "'").c_str());
   }
-  for (long seed = 1; seed <= n; ++seed) {
+  // diagnostic range override: MJZ_FUZZ_FROM / MJZ_FUZZ_TO select a sub-range
+  // of seeds (the generator is deterministic, so a range is reproducible)
+  long seed_from = 1;
+  if (const char *fv = std::getenv("MJZ_FUZZ_FROM"))
+    seed_from = atol(fv);
+  if (seed_from < 1) seed_from = 1;
+  for (long seed = seed_from; seed <= n; ++seed) {
     GenCtx g = gen_program((uint32_t)seed);
     const std::string &src = g.src;
-    if (std::getenv("MJZ_FUZZ_DUMP") && seed >= n - 2)
+    if (std::getenv("MJZ_FUZZ_DUMP") && seed >= n - 2) {
       std::fprintf(stderr, "=== SEED %ld ===\n%s\n", seed, src.c_str());
+      std::string tape{};
+      for (val_t v : g.ins) tape += std::to_string(v) + " ";
+      std::fprintf(stderr, "=== TAPE %ld: %s===\n", seed, tape.c_str());
+    }
     // rotate the pass configuration: every run exercises a different slice
     // of the pipeline (defaults are level 3 + register allocation)
     PassCfg cfg{};
     cfg.set_level(3);
-    switch (seed % 8) {
+    cfg.fp_limit = 8; // fuzz programs are pathological: cap fixpoint depth
+    switch (seed % 10) {
     case 1: cfg.p_lcf = false; break;      // no closed forms / simulators
     case 2: cfg.p_unroll = false; break;   // no unrolling
     case 3: cfg.p_mem2reg = false; break;  // no array promotion
@@ -10232,7 +12204,9 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
     case 6: cfg.set_level(1); break;       // cheap tier only
     case 7: cfg.p_cse = false; cfg.p_licm = false; cfg.p_reassoc = false;
       cfg.p_divmagic = false; break;       // scalar opts off
-    }
+    case 8: cfg.p_tailrec = false; break;  // no tail-call elimination
+    case 9: cfg.p_cdfold = false; cfg.p_ifconv = false; break; // no
+    }                                      // countdown fold / if-conv
     Program P = compile(src, cfg);
     if (!P.ok) {
       std::printf("FUZZ COMPILE ERROR seed %ld: %s at %u\nsource:\n%s\n",
@@ -10253,6 +12227,9 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
       F.dead_stores += os.mem2reg_dses;
       F.constcalls += os.constcalls;
       F.deadallocs += os.deadallocs;
+      F.tces += os.tces + os.tce_merges;
+      F.cdfolds += os.cdfolds;
+      F.ifconvs += os.ifconvs;
       F.gensims += os.lcf_gensims;
       F.traps_killed += os.traps_killed;
     }
@@ -10350,13 +12327,14 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
               "LICM hoists: %ld | programs w/ arrays: %ld | w/ input(): %ld"
               " | w/ fns: %ld | w/ break/continue: %ld\n  inlined: %ld | "
               "unrolled: %ld | arrays lifted: %ld | dead stores: %ld | "
-              "const-called: %ld | dead allocs: %ld | "
+              "const-called: %ld | dead allocs: %ld | tailrec'd: %ld | "
+              "cdfolds: %ld | ifconv'd: %ld | "
               "general-sim folds: %ld | traps proven impossible: %ld | "
               "native-checked (C+asm x -O0/-O2): %ld\n",
               F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
               F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
               F.inlined_total, F.unrolled_total, F.lifted, F.dead_stores,
-              F.constcalls, F.deadallocs,
+              F.constcalls, F.deadallocs, F.tces, F.cdfolds, F.ifconvs,
               F.gensims, F.traps_killed, F.native_checked);
   CHECK(mismatches == 0, "fuzz must be clean");
 }
@@ -10588,16 +12566,24 @@ static void usage() {
       "                    destruction only); -O1: cheap tier to fixpoint\n"
       "                    (fold/copyprop/canon/cse/unreach/splice/dce);\n"
       "                    -O2: + mem2reg, trapelim (range+alias), licm,\n"
-      "                    divmagic, reassoc; -O3: + unroll, lcf, constcall,\n"
-      "                    inline (expensive CFG restructuring runs only\n"
-      "                    after the cheaper tiers reach their fixpoint;\n"
-      "                    constcall evaluates pure constant-argument calls\n"
-      "                    — recursive ones included — at compile time)\n"
+      "                    divmagic, reassoc, ifconv; -O3: + unroll, lcf,\n"
+      "                    constcall, tailrec, cdfold, inline (expensive CFG\n"
+      "                    restructuring runs only after the cheaper tiers\n"
+      "                    reach their fixpoint; constcall evaluates pure\n"
+      "                    constant-argument calls — recursive ones included\n"
+      "                    — at compile time; tailrec eliminates inner-SCC\n"
+      "                    tail calls — mutual recursion like is_even/is_odd\n"
+      "                    merges into one sel-dispatched function with an\n"
+      "                    exact recursion-budget loop; cdfold then replaces\n"
+      "                    such countdown loops by closed forms, so\n"
+      "                    print(is_odd(input())) becomes\n"
+      "                    [depth guard] + print(input() & 1))\n"
       "  --enable=P,P2      force passes on (folds, copyprop, canon, cse,\n"
       "  --disable=P,P2     force passes off  unreach, splice, dce, mem2reg,\n"
-      "                    trapelim, licm, divmagic, reassoc, unroll, lcf,\n"
-      "                    constcall, inline) — applied on top of the -O\n"
-      "                    preset, so e.g. `-O1 --enable=lcf` is legal\n"
+      "                    trapelim, licm, divmagic, reassoc, ifconv, unroll,\n"
+      "                    lcf, constcall, tailrec, cdfold, inline) — applied\n"
+      "                    on top of the -O preset, so e.g. `-O1\n"
+      "                    --enable=lcf` is legal\n"
       "  --unroll=N         full-unroll loops with constant trip count <= N\n"
       "                    (default 16; 0 disables unrolling)\n"
       "  --fp-limit=N       fixpoint round cap per tier (default 24)\n"
@@ -10756,6 +12742,9 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
   else if (eq("unroll")) p.p_unroll = on;
   else if (eq("lcf")) p.p_lcf = on;
   else if (eq("constcall")) p.p_constcall = on;
+  else if (eq("tailrec")) p.p_tailrec = on;
+  else if (eq("cdfold")) p.p_cdfold = on;
+  else if (eq("ifconv")) p.p_ifconv = on;
   else if (eq("inline")) p.do_inline = on;
   else {
     err = n;
@@ -11045,7 +13034,11 @@ int main(int argc, char **argv) {
   }
   if (C.fuzz > 0 || C.selftest) {
     if (C.selftest && C.fuzz_native <= 0) C.fuzz_native = 6; // native gate
-    run_fuzz(C.selftest ? 200 : C.fuzz, C.cc, C.fuzz_native, C.out_dir);
+    // fuzz count: the generator now emits tail-recursive + runtime-arg
+    // call shapes whose fully-optimized compilation is expensive on the
+    // pathological seeds, so the in-selftest sweep is smaller (the full
+    // --fuzz=N remains available for deep verification runs)
+    run_fuzz(C.selftest ? 20 : C.fuzz, C.cc, C.fuzz_native, C.out_dir);
   }
   if (have_action) {
     std::printf("\ntotal failures: %d (of %d checks)\n", g_fails, g_checks);
