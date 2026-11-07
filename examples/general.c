@@ -8,33 +8,68 @@ static int64_t mjz_input(void) {
   return (int64_t)v;
 }
 
+static int64_t mjz_depth = 0;
+#define MJZ_RET(x) do { --mjz_depth; return (int64_t)(x); } while (0)
 
+static int64_t mjz_f1(int64_t r0);
+
+static int64_t mjz_f1(int64_t r0) {
+  if (++mjz_depth > 512) { printf("TRAP\n"); exit(1); }
+  int64_t r3;
+  r3 = 511;
+L1:;
+  if (r0 != 0) goto L4;
+  MJZ_RET(10);
+L4:;
+  r0 = (int64_t)((uint64_t)r0 - (uint64_t)1);
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L8;
+  if (r0 != 0) goto L11;
+  MJZ_RET(0);
+L11:;
+  r0 = (int64_t)((uint64_t)r0 - (uint64_t)1);
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L8;
+  goto L1;
+L8:;
+  printf("TRAP\n"); exit(1);
+  MJZ_RET(r0);
+}
 int main(void) {
   int64_t r0;
   int64_t r2;
   int64_t r3;
-  r2 = mjz_input();
-  r3 = 511;
-L2:;
-  if (r2 != 0) goto L5;
+  r0 = mjz_input();
+  if (r0 != 0) goto L3;
   r0 = 1;
-L16:;
-L17:;
+L25:;
+  printf("%lld\n", (long long)r0);
+  r0 = mjz_input();
+  r0 = mjz_f1(r0);
   printf("%lld\n", (long long)r0);
   return 0;
-L5:;
-  r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
-  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
-  if (r3 < 0) goto L9;
-  if (r2 != 0) goto L12;
+L3:;
+  r2 = (int64_t)((uint64_t)r0 - (uint64_t)1);
+  r3 = 511;
+L8:;
+  if (r2 != 0) goto L11;
   r0 = 0;
-  goto L17;
-L12:;
+L22:;
+L23:;
+  goto L25;
+L11:;
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
-  if (r3 < 0) goto L9;
-  goto L2;
-L9:;
+  if (r3 < 0) goto L15;
+  if (r2 != 0) goto L18;
+  r0 = 10;
+  goto L23;
+L18:;
+  r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L15;
+  goto L8;
+L15:;
   printf("TRAP\n"); return 1;
-  goto L16;
+  goto L22;
 }
