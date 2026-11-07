@@ -1,31 +1,11 @@
-// main.cpp — single translation unit.
-// Mechanical split: the parts below, concatenated in include order
-// plus the main() tail, reproduce the monolithic compiler
-// byte-for-byte. See scripts/split_main.py (the generator).
-#include "src/00_common.hpp"
-#include "src/10_lexer.hpp"
-#include "src/20_ast.hpp"
-#include "src/21_parser.hpp"
-#include "src/30_ir.hpp"
-#include "src/31_builder.hpp"
-#include "src/40_opt_core.hpp"
-#include "src/41_opt_analysis.hpp"
-#include "src/42_linform.hpp"
-#include "src/50_callgraph.hpp"
-#include "src/50b_scctco.hpp"
-#include "src/50c_tco.hpp"
-#include "src/50d_cdfold.hpp"
-#include "src/50e_ifconv.hpp"
-#include "src/51_optimize.hpp"
-#include "src/52_destr.hpp"
-#include "src/60_vm.hpp"
-#include "src/61_astrun.hpp"
-#include "src/70_program.hpp"
-#include "src/71_emit_c.hpp"
-#include "src/72_emit_x64.hpp"
-#include "src/80_demo.hpp"
-#include "src/81_fuzz.hpp"
-#include "src/90_cli.hpp"
+// main.cpp — single-TU entry point.
+//
+// The compiler is a header-only constexpr library under src/minijz/:
+// every header is self-contained (includes exactly what it uses — no
+// include-order dependence), so this TU includes the umbrella and gets
+// the whole pipeline; the multi-cpp build (CMake -DMINIJZ_MULTI_CPP=ON)
+// instead compiles src/tu/*.cpp and links them.
+#include "src/minijz.hpp"
 
 int main(int argc, char **argv) {
   Cli C{};
