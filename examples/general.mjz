@@ -15,6 +15,7 @@ print is_odd(input());
 
 
 
+
 // should be like the is_odd 
 fn is_even_p(n) { if (n == 0) { print(0);  return 0; } return is_odd_p(n - 1); }
 fn is_odd_p(n)  { if (n == 0) { print(1); return 1; } return is_even_p(n - 1); }
@@ -49,3 +50,33 @@ meh=meh / 2;
 
 
 print(hard + easy + meh);
+
+
+
+fn fun(n) { 
+if (n == 0) {   return 0; }
+if (n %4==1) {  return fun1(n/4); }
+if (n %4==2) {  return fun2(n/4); }
+if (n %4==3) {  return fun3(n/4); }
+return fun(n /4); 
+}
+
+fn fun1(n) { if (n == 0) {   return 1; }
+if (n %4==1) {  return fun1(n/4); }
+if (n %4==2) {  return fun2(n/4); }
+if (n %4==3) {  return fun3(n/4); }
+return fun(n /4);  }
+fn fun2(n)  { if (n == 0) {  return 2; } 
+if (n %4==1) {  return fun1(n/4); }
+if (n %4==2) {  return fun2(n/4); }
+if (n %4==3) {  return fun3(n/4); }
+return fun(n /4); }
+fn fun3(n) { if (n == 0) {   return 3; }
+if (n %4==1) {  return fun1(n/4); }
+if (n %4==2) {  return fun2(n/4); }
+if (n %4==3) {  return fun3(n/4); }
+return fun(n /4); }
+
+
+
+print fun(input());
