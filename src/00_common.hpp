@@ -356,7 +356,7 @@
 #define MJZ_TEST_MODE_ 1
 #define MJZ_LOG_NEW_ALLOCATIONS_ 0
 #define MJZ_aggregate_tuple_workaround false
-#include "mjz_lib/alllib_import.hpp"
+#include "../mjz_lib/alllib_import.hpp"
 
 #include <cstdint>
 #include <cstdio>

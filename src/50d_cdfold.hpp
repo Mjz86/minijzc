@@ -648,7 +648,7 @@ constexpr bool opt_cdfold(Fn &fn, const An &A, OptStats &os) {
         }
       }
       fn.code.insert(fn.code.end(), cf.begin(), cf.end());
-      fn.blocks.push_back({(uint32_t)fn.code.size() - cf.size(),
+      fn.blocks.push_back({uint32_t(fn.code.size() - cf.size()),
                            (uint32_t)fn.code.size()});
       fn.succ.push_back(NONE);
       fn.succ.push_back(NONE);
