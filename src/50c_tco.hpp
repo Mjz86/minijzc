@@ -412,7 +412,16 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
       nc.push_back({.k = K::Bin, .b = B::Eq, .dst = eqv, .a = selHv,
                     .b2 = cv});
       uint32_t tt = bmap_base[from_blk];
-      uint32_t ff = (from_blk + 1 <= k - 2) ? (from_blk + 2)
+      // BUGFIX (bug #2, mutual-recursion ring dispatch): the false arm
+      // used to be (from_blk+1 <= k-2) ? (from_blk+2) : bmap_base[0],
+      // which NEVER targets block 2: for k==3 it skipped the whole
+      // dispatch chain (sel==2 fell into member 0) and for k>=4 it
+      // jumped to block 3, skipping the sel==2 dispatch. The false arm
+      // of the sel==(from_blk) check must go to the NEXT dispatch block,
+      // which is the block that checks sel==(from_blk+1) -- block id
+      // from_blk+1 in the D_i layout (block i checks sel==i) -- while
+      // k==2 (no chain) still falls to member 0's entry.
+      uint32_t ff = (from_blk + 1 <= k - 1) ? (from_blk + 1)
                                             : bmap_base[0];
       // D_i at block id i+1: compares sel == i+1; false -> D_{i+1} / E_0
       nc.push_back({.k = K::Cbr, .a = eqv, .t = tt, .f = ff});
