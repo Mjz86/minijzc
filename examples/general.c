@@ -11,18 +11,30 @@ static int64_t mjz_input(void) {
 
 int main(void) {
   int64_t r0;
-  int64_t r1;
   int64_t r2;
-  r0 = mjz_input();
-  r2 = (r0 < 0);
-  r1 = (512 <= r0);
-  r1 = (int64_t)((uint64_t)r2 | (uint64_t)r1);
-  if (!((r1 != 0))) goto L17;
-  printf("TRAP\n"); return 1;
-L20:;
+  int64_t r3;
+  r2 = mjz_input();
+  r3 = 511;
+L2:;
+  if (r2 != 0) goto L5;
+  r0 = 0;
+L16:;
+L17:;
   printf("%lld\n", (long long)r0);
   return 0;
-L17:;
-  r0 = (int64_t)((uint64_t)r0 & (uint64_t)1);
-  goto L20;
+L5:;
+  r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L9;
+  if (r2 != 0) goto L12;
+  r0 = 10;
+  goto L17;
+L12:;
+  r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L9;
+  goto L2;
+L9:;
+  printf("TRAP\n"); return 1;
+  goto L16;
 }
