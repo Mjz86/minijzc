@@ -1,0 +1,44 @@
+// showcase.mjz -- an input-driven tour of what the optimizer can do.
+// Feed it four numbers on stdin, e.g.:  echo "21 14 1000003 12" | ...
+//
+//   n  -> is_odd(n): mutual tail recursion, collapses to  n & 1
+//   m  -> gcd(n, m): Euclid as a SELF tail call, collapses to one loop
+//   n  -> sum_to(n): NON-tail recursion, stays a real (inlined-limit) call
+//   n  -> the while loop: summed by the closed-form engine, n*(n+1)/2
+//   d  -> d/7, d%7: strength-reduced to multiply-shift "divmagic"
+//   x  -> bfind: binary search over an array, tail calls + array param
+
+fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); }
+fn is_odd(n)  { if (n == 0) { return 0; } return is_even(n - 1); }
+
+fn gcd(a, b) { if (b == 0) { return a; } return gcd(b, a % b); }
+
+fn sum_to(n) { if (n <= 0) { return 0; } return sum_to(n - 1) + n; }
+
+fn bfind(a, lo, hi, x) {
+  if (lo > hi) { return -1; }
+  let mid = (lo + hi) / 2;
+  if (a[mid] == x) { return mid; }
+  if (a[mid] < x) { return bfind(a, mid + 1, hi, x); }
+  return bfind(a, lo, mid - 1, x);
+}
+
+let n = input();
+let m = input();
+print is_odd(n);
+print gcd(n, m);
+print sum_to(n);
+
+let s = 0;
+let i = 1;
+while (i <= n) { s = s + i; i = i + 1; }
+print s;
+
+let d = input();
+print d / 7;
+print d % 7;
+
+let a = array(8);
+let k = 0;
+while (k < 8) { a[k] = k * 3; k = k + 1; }
+print bfind(a, 0, 7, input());
