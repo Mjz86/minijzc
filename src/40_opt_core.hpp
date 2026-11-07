@@ -594,11 +594,17 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
       }
     }
     auto inv = [](B b) -> B {
+      // BUGFIX (bug 4, comparison negation): the negation of a comparison
+      // is the involutive partner Lt<->Ge, Le<->Gt. The Gt and Ge rows
+      // had their results swapped (Gt->Lt, Ge->Le): NOT(a>b) became a<b
+      // instead of a<=b, and NOT(a>=b) became a<=b instead of a<b, so
+      // e.g. !!(x < y) miscompiled (fuzz seed 1211: !!(input() < z9)
+      // evaluated 1 where the oracle says 0 at the equality point).
       switch (b) {
-      case B::Lt: return B::Ge;
-      case B::Le: return B::Gt;
-      case B::Gt: return B::Lt;
-      case B::Ge: return B::Le;
+      case B::Lt: return B::Ge; // NOT(a<b)  = a>=b
+      case B::Le: return B::Gt; // NOT(a<=b) = a>b
+      case B::Gt: return B::Le; // NOT(a>b)  = a<=b
+      case B::Ge: return B::Lt; // NOT(a>=b) = a<b
       case B::Eq: return B::Ne;
       case B::Ne: return B::Eq;
       default: return b;
