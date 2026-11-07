@@ -34,7 +34,8 @@ int main(int argc, char **argv) {
     usage();
     return 0;
   }
-  bool have_action = C.demo || C.selftest || C.fuzz > 0;
+  bool have_action = C.demo || C.selftest || C.fuzz > 0 ||
+                     !C.shrink_file.empty();
   std::string src{};
   std::string stem = "stdin";
   bool src_from_stdin = false; // stdin already consumed as the PROGRAM
@@ -82,10 +83,15 @@ int main(int argc, char **argv) {
     run_demos();
     std::printf("\n");
   }
+  if (!C.shrink_file.empty()) {
+    int rc = run_shrink(C, C.shrink_file);
+    if (rc != 0) ++g_fails;
+    ++g_checks;
+  }
   if (C.fuzz > 0 || C.selftest) {
     if (C.selftest && C.fuzz_native <= 0) C.fuzz_native = 6; // native gate
     run_fuzz(C.selftest ? 200 : C.fuzz, C.cc, C.fuzz_native, C.out_dir,
-             C.fuzz_from);
+             C.fuzz_from, C.fuzz_random);
   }
   if (have_action) {
     std::printf("\ntotal failures: %d (of %d checks)\n", g_fails, g_checks);

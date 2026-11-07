@@ -520,9 +520,11 @@ static GenCtx gen_program(uint32_t seed) {
 }
 
 static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
-                     const std::string &out_dir, long from = 1) {
+                     const std::string &out_dir, long from = 1,
+                     bool random_configs = false) {
   std::printf("=== differential fuzz: oracle vs SSA vs optimized vs destroyed "
-              "vs VM (rotating -O configs) ===\n");
+              "vs VM (rotating -O configs%s) ===\n",
+              random_configs ? " + RANDOM pass configs" : "");
   FuzzStats F{};
   long mismatches = 0;
   const std::string cc = cc_in.empty() ? find_cc() : cc_in;
@@ -531,6 +533,14 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
     ndir = out_dir + "/fuzz_native";
     std::system(("mkdir -p '" + ndir + "'").c_str());
   }
+  // (ported from the Branchedmain monolith) deterministic per-seed PRNG for
+  // the random pass configs: xorshift, no state outside the loop
+  auto pick32 = [](uint32_t &rng) -> uint32_t {
+    rng ^= rng << 13;
+    rng ^= rng >> 17;
+    rng ^= rng << 5;
+    return rng;
+  };
   for (long seed = from; seed < from + n; ++seed) {
     GenCtx g = gen_program((uint32_t)seed);
     const std::string &src = g.src;
@@ -558,6 +568,18 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
     case 8: cfg.p_tailrec = false; break;  // no tail-call elimination
     case 9: cfg.p_cdfold = false; cfg.p_ifconv = false; break; // no
     }                                      // countdown fold / if-conv
+    // (ported from Branchedmain) --fuzz-cfg=random: additionally disable a
+    // random 1..4 of the 20 toggles and pick a random tier, exposing pass
+    // INTERACTION bugs the fixed rotation never reaches
+    if (random_configs) {
+      uint32_t rng = (uint32_t)seed * 2654435761u + 0x9e3779b9u;
+      (void)pick32(rng);
+      cfg.set_level(1u + pick32(rng) % 3u);
+      if (cfg.level >= 2) cfg.fp_limit = 8;
+      uint32_t ndis = 1u + pick32(rng) % 4u;
+      for (uint32_t d = 0; d < ndis; ++d)
+        (void)apply_pass_flag(cfg, pick32(rng) % PASS_TOGGLE_COUNT, false);
+    }
     Program P = compile(src, cfg);
     if (!P.ok) {
       std::printf("FUZZ COMPILE ERROR seed %ld: %s at %u\nsource:\n%s\n",
@@ -609,6 +631,23 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
     if (bad) {
       ++mismatches;
       std::printf("MISMATCH seed %ld\nsource:\n%s\n", seed, src.c_str());
+      std::printf("flags   : %s\n", describe_cfg(cfg).c_str());
+      // (ported from Branchedmain) auto-save the failure: .mjz + .flags +
+      // .in next to the output dir, so --shrink can reduce it and a fresh
+      // session can reproduce it exactly
+      {
+        std::string stem = out_dir + "/fuzz_fail_" + std::to_string(seed);
+        write_file(stem + ".mjz", src);
+        write_file(stem + ".flags",
+                   "# repro: ./minijz " + stem + ".mjz --stdin=" + stem +
+                       ".in " + describe_cfg(cfg) + "\n");
+        std::string t{};
+        for (val_t v : g.ins) t += std::to_string(v) + "\n";
+        write_file(stem + ".in", t);
+        std::printf("saved   : %s.mjz / .flags / .in (shrink: ./minijz "
+                    "--shrink=%s.mjz)\n",
+                    stem.c_str(), stem.c_str());
+      }
       std::printf("oracle : trapped=%d timeout=%d out=", oracle.trapped,
                   oracle.timeout);
       for (val_t v : oracle.out) std::printf("%lld ", (long long)v);
