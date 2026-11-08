@@ -40,7 +40,7 @@ struct FuzzStats {
 
 static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
                      const std::string &out_dir, long from = 1,
-                     bool random_configs = false) {
+                     bool random_configs = false,bool mjz_fuzz_dumps =false) {
   std::printf("=== differential fuzz: oracle vs SSA vs optimized vs destroyed "
               "vs VM (rotating -O configs%s) ===\n",
               random_configs ? " + RANDOM pass configs" : "");
@@ -63,7 +63,8 @@ static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
   for (long seed = from; seed < from + n; ++seed) {
     GenCtx g = gen_program((uint32_t)seed);
     const std::string &src = g.src;
-    if (std::getenv("MJZ_FUZZ_DUMP") && seed >= from + n - 2) {
+    //std::getenv("MJZ_FUZZ_DUMP") is not recommended
+    if ( mjz_fuzz_dumps&& seed >= from + n - 2) {
       std::fprintf(stderr, "=== SEED %ld ===\n%s\n", seed, src.c_str());
       std::string tape{};
       for (val_t v : g.ins) tape += std::to_string(v) + " ";

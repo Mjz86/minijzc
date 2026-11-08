@@ -131,3 +131,7 @@ and writes `FILE.small.mjz`.
 Every run verifies oracle (AST) vs SSA vs optimized vs destroyed vs VM,
 and `--fuzz-native` additionally builds the C and asm backends at -O0/-O2
 and compares byte-for-byte.
+
+
+#NOTE:
+next time we will do clang format so the formatting is consistent

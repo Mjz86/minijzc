@@ -41,6 +41,7 @@ struct Cli {
   bool fuzz_random{false};      // --fuzz-cfg=random: random pass configs
   std::string shrink_file{};    // --shrink=FILE: delta-debug a failing program
   bool demo{false}, selftest{false}, help{false};
+  bool mjz_fuzz_dumps{false};
 };
 
 static void usage() {
@@ -144,6 +145,7 @@ static void usage() {
       "  --print-ir        dump SSA (pre/post opt) and destroyed IR\n"
       "  --print-bc        print the bytecode listing\n"
       "  --quiet           no reports, just results\n"
+      "  --fuzz_dump       dumps fuzz info (MJZ_FUZZ_DUMP env var is no longer used) \n"
       "  --help            this text\n");
 }
 
@@ -211,6 +213,7 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
     else if (a == "--no-inline") C.no_inline = true;
     else if (a == "--no-scctco") C.no_scctco = true;
     else if (a == "--no-reassoc") C.no_reassoc = true;
+    else if (a == "--fuzz_dump") C.mjz_fuzz_dumps = true;
     else if (a == "--no-lcf") C.no_lcf = true;
     else if (a == "--no-divmagic") C.no_divmagic = true;
     else if (const char *v = val("--unroll=")) C.unroll = (unsigned)atol(v);
