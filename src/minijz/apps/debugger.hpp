@@ -11,13 +11,14 @@
 // output tape are member state, so `vm state` shows EVERYTHING and
 // `vm step` moves exactly one bytecode op.
 
+#include "minijz/apps/cli_parse.hpp"
 #include "minijz/prog/program.hpp"
-#include "minijz/prog/runners.hpp"
+#include "minijz/prog/printers.hpp"
 #include "minijz/back/vm.hpp"
 #include "minijz/back/bytecode.hpp"
-#include "minijz/back/emit_c.hpp"
+#include "minijz/back/emit_plan.hpp"
 #include "minijz/runtime/astrun.hpp"
-#include "minijz/opt/driver.hpp"
+#include "minijz/opt/optimize_api.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -206,7 +207,7 @@ static void dbg_help() {
       "  quit                 leave the debugger\n");
 }
 
-static int run_debugger(const Cli &C, const std::string &src) {
+int run_debugger(const Cli &C, const std::string &src) {
   Program P = compile(src, pass_cfg_of(C));
   if (!P.ok) {
     std::printf("compile error: %s (at byte %u)\n",
@@ -295,10 +296,7 @@ static int run_debugger(const Cli &C, const std::string &src) {
       if (f < 0 || f >= (long)P.fns.size()) f = 0;
       const Fn &F = P.fns[f].ssa;
       if (f == 0)
-        print_analysis(P.an_pre_main, P.fns[0].ssa,
-                       ("analysis (mjz graph) [" +
-                        std::string(P.fn_names[0]) + "]")
-                           .c_str());
+        print_pre_main_analysis(P); // dominators/loops of pre-opt main
       for (uint32_t b = 0; b < F.nblocks(); ++b) {
         std::printf("  b%u: [i%u..i%u) succ:", b, F.blocks[b].begin,
                     F.blocks[b].end);
@@ -365,13 +363,12 @@ static int run_debugger(const Cli &C, const std::string &src) {
       if (f < 0 || f >= (long)P.fns.size()) f = 0;
       Fn live = P.fns[f].ssa; // fresh copy: the pipeline runs on the copy
       OptStats os{};
-      An an{};
       PassCfg cfg = pass_cfg_of(C);
       cfg.debug = 2; // one line per pass + IR after each changing pass
       cfg.dbg_name = P.fn_names[f];
       std::printf("== live optimize: fn %ld [%s] (from pre-opt SSA) ==\n", f,
                   std::string(P.fn_names[f]).c_str());
-      (void)optimize(live, os, an, cfg);
+      (void)optimize_light(live, os, cfg);
       std::printf("== live optimize done (%u folds, %u dce, %u inlined into "
                   "this view) ==\n",
                   (unsigned)os.folds, (unsigned)os.dce, 0u);

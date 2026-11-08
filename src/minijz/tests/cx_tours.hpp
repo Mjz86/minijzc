@@ -3,6 +3,8 @@
 // constexpr tours: curated in-compile-time checks + the general
 // simulator/vocabulary tours used by --selftest and the cx build.
 
+#include "minijz/opt/analysis/an.hpp" // analyze() for the tour checks
+#include "minijz/runtime/astrun.hpp"    // run_ast (the oracle)
 #include "minijz/prog/program.hpp"
 #include "minijz/prog/runners.hpp"
 #include "minijz/apps/fuzz_gen.hpp"
@@ -64,8 +66,9 @@ constexpr bool cx_arrays() { // arena, lifting, len, handle-chained 2-D
   if (!P.ok) return false;
   // the mjz_lib analyses really ran: a loop with nesting info
   bool loop_ok = false;
-  for (uint32_t h = 0; h < P.an_pre_main.n; ++h)
-    if (P.an_pre_main.inner[h] == h && P.an_pre_main.nest[h] == 0)
+  An A = analyze(P.ssa_all[0]); // pre-opt main analysis (was Program member)
+  for (uint32_t h = 0; h < A.n; ++h)
+    if (A.inner[h] == h && A.nest[h] == 0)
       loop_ok = true;
   if (!loop_ok) return false;
   RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
@@ -202,4 +205,13 @@ static_assert(cx_fns(),
               "MiniJZ pipeline (recursion/inline/const-call) at compile time");
 static_assert(cx_series(),
               "MiniJZ pipeline (unroll/closed forms/divmagic/VM) at compile time");
+#endif
+
+// runtime entry for the app layer: constexpr/inline functions are only
+// emitted where used, so the multi-TU build defines this alias exactly
+// once in tu/cxtours.cpp; the header-only build inlines it right here
+#ifdef MJZ_MULTI_CPP
+bool cx_pipeline_rt(); // tu/cxtours.cpp
+#else
+inline bool cx_pipeline_rt() { return cx_pipeline(); }
 #endif

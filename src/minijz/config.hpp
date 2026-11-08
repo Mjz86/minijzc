@@ -374,7 +374,16 @@
 #endif
 
 
+// CHECK bookkeeping: in the multi-cpp build these are REAL globals defined
+// once in tu/main.cpp, so checks that fire in any TU (the fuzzer runs in
+// its own TU, the demos in another) are counted by the reporting in main.
+// Header-only / constexpr builds keep them TU-local statics (zero cost).
+#ifdef MJZ_MULTI_CPP
+extern int g_checks;
+extern int g_fails;
+#else
 static int g_checks = 0, g_fails = 0;
+#endif
 #define CHECK(cond, msg)                                                       \
   do {                                                                         \
     ++g_checks;                                                                \

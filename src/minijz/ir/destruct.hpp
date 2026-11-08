@@ -4,7 +4,8 @@
 // fuse copy chains.
 
 #include "minijz/base/pass_cfg.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "minijz/ir/instr.hpp"  // Fn (was masked by the old an.hpp include)
+#include "minijz/ir/stats.hpp"
 
 // ============================================================================
 // 9g. SSA DESTRUCTION — phis -> edge copies
@@ -17,15 +18,6 @@
 //     3. strip the phis; the result is plain (non-SSA) 3-address code where
 //        every vreg is just a slot
 // ============================================================================
-struct DestrStats {
-  uint32_t edges_split{};  // critical edges split
-  uint32_t copies{};       // sequentialized edge copies emitted
-  uint32_t zeros{};        // undef phi args materialized as Const 0
-  uint32_t self_copies{};  // d<-d no-ops skipped
-  uint32_t cycles_broken{};// swap cycles broken with a temp
-  uint32_t fused{};        // post-destruction copies folded into their source
-};
-
 // sequentialize one parallel copy set; appends real instrs to `out`
 constexpr void sequentialize(
     Fn &fn, std::vector<std::pair<uint32_t, uint32_t>> &pcs,

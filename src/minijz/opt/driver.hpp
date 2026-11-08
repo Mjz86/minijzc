@@ -3,6 +3,7 @@
 // the pass manager: tiered fixpoint scheduling, -O presets.
 
 #include "minijz/ir/instr.hpp"
+#include "minijz/opt/optimize_api.hpp" // the entry declaration (light)
 #include "minijz/base/pass_cfg.hpp"
 #include "minijz/opt/analysis/an.hpp"
 #include "minijz/opt/analysis/intervals.hpp"

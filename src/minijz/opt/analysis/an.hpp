@@ -5,6 +5,7 @@
 
 #include "minijz/graph_lib.hpp"
 #include "minijz/ir/instr.hpp"
+#include "minijz/ir/stats.hpp"
 
 // ============================================================================
 // 7. analysis driver — all the graph math comes from mjz::graph_ns
@@ -63,11 +64,6 @@ constexpr An analyze(const Fn &fn) {
 //      (mjz::graph_ns::calculate_iterated_dominance_frontiers_...)
 //    - renaming by dominator-tree walk (dom tree from the lib)
 // ============================================================================
-struct SsaStats {
-  uint32_t phis{};
-  uint32_t versions{};
-};
-
 constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
   st = {};
   const uint32_t nb = fn.nblocks();

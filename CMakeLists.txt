@@ -35,10 +35,14 @@ endif()
 # the compiler binary
 # ---------------------------------------------------------------------------
 if(MINIJZ_MULTI_CPP)
+  # 9 real TUs (vs the historical 8 header-only slices that each recompiled
+  # the world): the heavy pipeline code is compiled ONCE per binary — tu/main
+  # only parses options (light), everything else links through declarations.
   add_executable(minijz
-    src/tu/front_ir.cpp src/tu/analysis.cpp src/tu/scalar.cpp
-    src/tu/loop_linear.cpp src/tu/interproc.cpp src/tu/back_prog.cpp
-    src/tu/apps.cpp src/tu/main.cpp)
+    src/tu/main.cpp src/tu/cli_app.cpp src/tu/debugger.cpp src/tu/demo.cpp
+    src/tu/shrink.cpp src/tu/cxtours.cpp src/tu/fuzz.cpp src/tu/prog.cpp
+    src/tu/backends.cpp)
+  target_compile_definitions(minijz PRIVATE MJZ_MULTI_CPP)
   target_include_directories(minijz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                                            ${CMAKE_CURRENT_SOURCE_DIR}/src
                                            ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib)

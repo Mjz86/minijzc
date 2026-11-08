@@ -71,7 +71,7 @@ static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
 // selftest output must stay byte-identical -> serial; a plain fuzz run
 // parallelizes over the cores (capped at 4: the workers are memory-hungry
 // compilers, and g++ boxes OOM under naive core-count parallelism)
-static long default_fuzz_jobs(bool selftest) {
+long default_fuzz_jobs(bool selftest) {
   if (selftest) return 1;
   unsigned hw = std::thread::hardware_concurrency();
   if (hw == 0) hw = 1;
@@ -349,7 +349,7 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
   CHECK(mismatches == 0, "fuzz must be clean");
 }
 
-static void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
+void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
                      const std::string &out_dir, long from = 1,
                      bool random_configs = false, bool mjz_fuzz_dumps = false,
                      long jobs = 1) {

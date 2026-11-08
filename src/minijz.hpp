@@ -54,3 +54,4 @@
 #include "minijz/apps/fuzz_run.hpp"
 #include "minijz/apps/cli.hpp"
 #include "minijz/apps/shrink.hpp"
+#include "minijz/apps/debugger.hpp"

@@ -366,7 +366,7 @@ static const Demo demos[] = {
    false, DEMO_INS_NOTNOT, 16},
 };
 
-static void run_demos() {
+void run_demos() {
   std::printf("=== curated programs: compile | analyze | optimize | execute ===\n");
   for (const Demo &d : demos) {
     std::printf("--- %s ---\n", d.name);
@@ -392,7 +392,7 @@ static void run_demos() {
         dcy += U.dstats.cycles_broken;
         dfu += U.dstats.fused;
       }
-      print_analysis(P.an_pre_main, P.fns[0].ssa, "analysis (mjz graph)");
+      print_pre_main_analysis(P);
       std::printf(
           "  fns: %zu | ssa: %zu instrs, %u phis | opt: %zu | destroyed: %zu\n"
           "  opt report: iters %u | folds %u | copies %u | copyprop %u | "

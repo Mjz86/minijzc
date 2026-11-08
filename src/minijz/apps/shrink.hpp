@@ -2,7 +2,8 @@
 // === shrink.hpp ========================================
 // --shrink: line-chunk delta-debugging of failing programs.
 
-#include "minijz/apps/cli.hpp"
+#include "minijz/apps/cli_parse.hpp"
+#include "minijz/apps/app_api.hpp" // compile_report decl
 #include "minijz/prog/program.hpp"
 #include "minijz/prog/runners.hpp"
 #include "minijz/runtime/astrun.hpp"
@@ -16,7 +17,7 @@
 // C/asm parity at -O0 -- backend-only bugs are exactly what shrinking
 // exists for. A sibling .in tape (as the fuzzer saves) is picked up
 // automatically; deletions must keep the program compiling.
-static int run_shrink(const Cli &C, const std::string &path) {
+int run_shrink(const Cli &C, const std::string &path) {
   std::string src = slurp_file(path);
   if (src.empty()) {
     std::printf("cannot read '%s'\n", path.c_str());
