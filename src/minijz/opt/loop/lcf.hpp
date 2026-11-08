@@ -26,10 +26,11 @@
 // driver re-analyzes (inner loops fold first, enabling their parents).
 inline constexpr uint64_t LCF_TRIP_BUDGET = (uint64_t)1 << 21; // ~2.1M trips
 inline constexpr uint64_t LCF_SIM_BUDGET = 40000000ull;        // sim steps
-constexpr uint64_t lcf_pow(uint64_t a, uint64_t n) { // a^n mod 2^64
+constexpr uint64_t lcf_pow(uint64_t a, uint64_t n) {           // a^n mod 2^64
   uint64_t r = 1;
   while (n) {
-    if (n & 1) r *= a;
+    if (n & 1)
+      r *= a;
     a *= a;
     n >>= 1;
   }
@@ -43,10 +44,12 @@ constexpr void lcf_geo(uint64_t a, uint64_t n, uint64_t &S, uint64_t &T,
   S = 0;
   T = 0;
   P = 1;
-  if (!n) return;
+  if (!n)
+    return;
   uint64_t m = 0;
   int hi = 63;
-  while (!((n >> hi) & 1)) --hi;
+  while (!((n >> hi) & 1))
+    --hi;
   for (int bit = hi; bit >= 0; --bit) {
     const uint64_t Sm = S, Tm = T, Pm = P;
     S = Sm * (Pm + 1);
@@ -62,10 +65,12 @@ constexpr void lcf_geo(uint64_t a, uint64_t n, uint64_t &S, uint64_t &T,
   }
 }
 constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
-  if (A.n != fn.nblocks() || !fn.nblocks()) return false;
+  if (A.n != fn.nblocks() || !fn.nblocks())
+    return false;
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  if (!nv) return false;
+  if (!nv)
+    return false;
   std::vector<char> kc(nv, 0);
   std::vector<val_t> kv(nv, 0);
   std::vector<uint32_t> defi(nv, NONE), defb(nv, NONE);
@@ -79,91 +84,122 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         defb[I.dst] = b;
       }
       auto bump = [&](uint32_t v) {
-        if (v != NONE && v < nv) ++uses[v];
+        if (v != NONE && v < nv)
+          ++uses[v];
       };
       bump(I.a);
       bump(I.b2);
       bump(I.c2);
-      for (uint32_t v : I.args) bump(v);
+      for (uint32_t v : I.args)
+        bump(v);
     }
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (I.k == K::Const && I.dst != NONE && I.dst < nv &&
-          ndefs[I.dst] == 1) {
+      if (I.k == K::Const && I.dst != NONE && I.dst < nv && ndefs[I.dst] == 1) {
         kc[I.dst] = 1;
         kv[I.dst] = I.c;
       }
     }
   std::vector<uint32_t> headers;
   for (uint32_t h = 0; h < A.n; ++h)
-    if (A.inner[h] == h) headers.push_back(h);
+    if (A.inner[h] == h)
+      headers.push_back(h);
   for (size_t i = 0; i + 1 < headers.size(); ++i)
     for (size_t j = i + 1; j < headers.size(); ++j)
       if (A.nest[headers[j]] > A.nest[headers[i]])
         std::swap(headers[i], headers[j]);
   for (uint32_t h : headers) {
     auto row = A.loops.range()[h];
-    if (row.empty()) continue;
+    if (row.empty())
+      continue;
     std::vector<char> inL(nb, 0);
-    for (ulen x : row) inL[(uint32_t)x] = 1;
+    for (ulen x : row)
+      inL[(uint32_t)x] = 1;
     inL[h] = 1;
     uint32_t pre = NONE, latch = NONE, outside = 0;
     for (uint32_t p : fn.preds[h]) {
-      if (inL[p]) latch = p;
-      else { pre = p; ++outside; }
+      if (inL[p])
+        latch = p;
+      else {
+        pre = p;
+        ++outside;
+      }
     }
-    if (outside != 1 || pre == NONE || latch == NONE) continue;
-    if (fn.blocks[h].begin == fn.blocks[h].end) continue;
+    if (outside != 1 || pre == NONE || latch == NONE)
+      continue;
+    if (fn.blocks[h].begin == fn.blocks[h].end)
+      continue;
     const Instr hterm = fn.code[fn.blocks[h].end - 1];
-    if (hterm.k != K::Cbr) continue;
+    if (hterm.k != K::Cbr)
+      continue;
     uint32_t X = NONE, body = NONE;
     {
       bool bad = false;
       for (uint32_t b = 0; b < nb && !bad; ++b) {
-        if (!inL[b]) continue;
+        if (!inL[b])
+          continue;
         for (uint32_t s : {fn.succ0(b), fn.succ1(b)}) {
-          if (s == NONE) continue;
+          if (s == NONE)
+            continue;
           if (!inL[s]) {
-            if (b != h) { bad = true; break; }
-            if (X == NONE) X = s;
-            else if (X != s) { bad = true; break; }
+            if (b != h) {
+              bad = true;
+              break;
+            }
+            if (X == NONE)
+              X = s;
+            else if (X != s) {
+              bad = true;
+              break;
+            }
           }
         }
       }
-      if (bad || X == NONE) continue;
+      if (bad || X == NONE)
+        continue;
     }
-    if (hterm.t == X && hterm.f != NONE && inL[hterm.f]) body = hterm.f;
-    else if (hterm.f == X && inL[hterm.t]) body = hterm.t;
-    else continue;
-    if (body == h) continue; // self-loop header: rare shape, skip
-    struct HPhi { uint32_t dst, pre_arg, latch_arg; };
+    if (hterm.t == X && hterm.f != NONE && inL[hterm.f])
+      body = hterm.f;
+    else if (hterm.f == X && inL[hterm.t])
+      body = hterm.t;
+    else
+      continue;
+    if (body == h)
+      continue; // self-loop header: rare shape, skip
+    struct HPhi {
+      uint32_t dst, pre_arg, latch_arg;
+    };
     std::vector<HPhi> hphis;
     {
       uint32_t nphi = 0;
       for (uint32_t i = fn.blocks[h].begin; i < fn.blocks[h].end; ++i) {
         const Instr &I = fn.code[i];
-        if (I.k != K::Phi) break;
+        if (I.k != K::Phi)
+          break;
         ++nphi;
         uint32_t pa = (I.t == pre) ? I.a : ((I.f == pre) ? I.b2 : NONE);
         uint32_t la = (I.t == latch) ? I.a : ((I.f == latch) ? I.b2 : NONE);
-        if (pa == NONE || la == NONE) continue;
+        if (pa == NONE || la == NONE)
+          continue;
         hphis.push_back({I.dst, pa, la});
       }
-      if (!nphi || hphis.size() != nphi) continue;
+      if (!nphi || hphis.size() != nphi)
+        continue;
     }
     // ---- induction phi + header test (same shape unroll requires) ----------
     uint32_t ind = NONE, ind_idx = NONE, cond = hterm.a;
     val_t step_mag = 0;
     bool step_sub = false;
-    if (cond == NONE || cond >= nv || defi[cond] == NONE ||
-        defb[cond] != h)
+    if (cond == NONE || cond >= nv || defi[cond] == NONE || defb[cond] != h)
       continue;
     for (size_t pi = 0; pi < hphis.size() && ind == NONE; ++pi) {
       uint32_t L = hphis[pi].latch_arg;
-      if (L >= nv || defi[L] == NONE || !inL[defb[L]]) continue;
+      if (L >= nv || defi[L] == NONE || !inL[defb[L]])
+        continue;
       const Instr D = fn.code[defi[L]];
-      if (D.k != K::Bin) continue;
+      if (D.k != K::Bin)
+        continue;
       val_t mag = 0;
       bool sub = false, okst = false;
       if (D.b == B::Add) {
@@ -182,13 +218,18 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           okst = true;
         }
       }
-      if (!okst) continue;
+      if (!okst)
+        continue;
       const Instr C = fn.code[defi[cond]];
-      if (C.k != K::Bin || (C.b != B::Lt && C.b != B::Le)) continue;
+      if (C.k != K::Bin || (C.b != B::Lt && C.b != B::Le))
+        continue;
       bool uses_it = false;
-      if (C.a == hphis[pi].dst && C.b2 < nv) uses_it = true;
-      else if (C.b2 == hphis[pi].dst && C.a < nv) uses_it = true;
-      if (!uses_it) continue;
+      if (C.a == hphis[pi].dst && C.b2 < nv)
+        uses_it = true;
+      else if (C.b2 == hphis[pi].dst && C.a < nv)
+        uses_it = true;
+      if (!uses_it)
+        continue;
       ind = hphis[pi].dst;
       ind_idx = (uint32_t)pi;
       step_mag = mag;
@@ -206,35 +247,41 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       // induction variable at all, just constants and purity.
       bool ok = true;
       for (const HPhi &p : hphis)
-        if (!(p.pre_arg < nv && kc[p.pre_arg])) ok = false;
+        if (!(p.pre_arg < nv && kc[p.pre_arg]))
+          ok = false;
       { // purity: header = phis + Const/Copy/Bin + Cbr; others + Br only
         for (uint32_t b2 = 0; b2 < nb && ok; ++b2) {
-          if (!inL[b2]) continue;
-          for (uint32_t i = fn.blocks[b2].begin; i < fn.blocks[b2].end;
-               ++i) {
+          if (!inL[b2])
+            continue;
+          for (uint32_t i = fn.blocks[b2].begin; i < fn.blocks[b2].end; ++i) {
             const Instr &I = fn.code[i];
             if (i + 1 == fn.blocks[b2].end) {
               if (b2 == h) {
-                if (I.k != K::Cbr) ok = false;
+                if (I.k != K::Cbr)
+                  ok = false;
               } else if (I.k != K::Br)
                 ok = false;
               break;
             }
             if (I.k == K::Phi) {
-              if (b2 != h) ok = false;
+              if (b2 != h)
+                ok = false;
             } else if (I.k == K::Const || I.k == K::Copy) {
             } else if (I.k == K::Bin) {
             } else
               ok = false;
-            if (!ok) break;
+            if (!ok)
+              break;
           }
         }
       }
       { // outside uses may reference ONLY header phi dsts
         std::vector<char> phid(nv, 0);
-        for (const HPhi &p : hphis) phid[p.dst] = 1;
+        for (const HPhi &p : hphis)
+          phid[p.dst] = 1;
         for (uint32_t b2 = 0; b2 < nb && ok; ++b2) {
-          if (inL[b2]) continue;
+          if (inL[b2])
+            continue;
           for (uint32_t i = fn.blocks[b2].begin; i < fn.blocks[b2].end && ok;
                ++i) {
             const Instr &I = fn.code[i];
@@ -246,13 +293,15 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
             chk(I.a);
             chk(I.b2);
             chk(I.c2);
-            for (uint32_t v : I.args) chk(v);
+            for (uint32_t v : I.args)
+              chk(v);
           }
         }
       }
       { // pre must not already reach the exit (phi rekey would dup preds)
         for (uint32_t p : fn.preds[X])
-          if (p == pre) ok = false;
+          if (p == pre)
+            ok = false;
       }
       std::vector<uint32_t> chain{};
       if (ok) { // the straight-line body chain from `body` to the latch
@@ -261,17 +310,19 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           chain.push_back(cur2);
           cur2 = fn.succ0(cur2);
         }
-        if (cur2 != h) ok = false;
+        if (cur2 != h)
+          ok = false;
       }
       if (ok) { // every outside-defined operand used inside is a constant
         for (uint32_t b2 = 0; b2 < nb && ok; ++b2) {
-          if (!inL[b2]) continue;
-          for (uint32_t i = fn.blocks[b2].begin;
-               i < fn.blocks[b2].end && ok; ++i) {
+          if (!inL[b2])
+            continue;
+          for (uint32_t i = fn.blocks[b2].begin; i < fn.blocks[b2].end && ok;
+               ++i) {
             const Instr &I = fn.code[i];
             auto ck = [&](uint32_t v) {
-              if (v != NONE && v < nv &&
-                  !(defi[v] != NONE && inL[defb[v]]) && !kc[v])
+              if (v != NONE && v < nv && !(defi[v] != NONE && inL[defb[v]]) &&
+                  !kc[v])
                 ok = false;
             };
             ck(I.a);
@@ -282,7 +333,8 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       }
       if (ok) {
         std::vector<val_t> val(nv, 0);
-        for (const HPhi &p : hphis) val[p.dst] = kv[p.pre_arg];
+        for (const HPhi &p : hphis)
+          val[p.dst] = kv[p.pre_arg];
         std::vector<val_t> nxt(hphis.size());
         bool trap = false, done = false;
         uint64_t steps = 0;
@@ -296,7 +348,8 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
             return true;
           case K::Bin: {
             Rv r = w_bin(I.b, val[I.a], val[I.b2]);
-            if (r.trap) return false;
+            if (r.trap)
+              return false;
             val[I.dst] = r.v;
             return true;
           }
@@ -305,12 +358,14 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           }
         };
         for (uint64_t it = 0; it < LCF_TRIP_BUDGET && !trap && !done; ++it) {
-          for (uint32_t i = fn.blocks[h].begin; i + 1 < fn.blocks[h].end;
-               ++i) {
-            if (fn.code[i].k == K::Phi) continue;
-            if (!eval(fn.code[i])) trap = true;
+          for (uint32_t i = fn.blocks[h].begin; i + 1 < fn.blocks[h].end; ++i) {
+            if (fn.code[i].k == K::Phi)
+              continue;
+            if (!eval(fn.code[i]))
+              trap = true;
           }
-          if (trap) break;
+          if (trap)
+            break;
           if (val[hterm.a] == 0) { // header test fails: exit with the
             done = true;           // current phi values as final values
             break;
@@ -318,11 +373,15 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           for (uint32_t cb : chain) {
             for (uint32_t i = fn.blocks[cb].begin; i + 1 < fn.blocks[cb].end;
                  ++i) // skip the trailing Br (purity-checked above)
-              if (!eval(fn.code[i])) trap = true;
-            if (trap) break;
+              if (!eval(fn.code[i]))
+                trap = true;
+            if (trap)
+              break;
           }
-          if (trap) break;
-          if ((steps += 1 + chain.size()) > LCF_SIM_BUDGET) break;
+          if (trap)
+            break;
+          if ((steps += 1 + chain.size()) > LCF_SIM_BUDGET)
+            break;
           for (size_t pi = 0; pi < hphis.size(); ++pi)
             nxt[pi] = val[hphis[pi].latch_arg];
           for (size_t pi = 0; pi < hphis.size(); ++pi)
@@ -348,30 +407,37 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
                 fn.blocks[x].end += kk;
                 continue;
               }
-              if (fn.blocks[x].begin >= pe + 1) fn.blocks[x].begin += kk;
-              if (fn.blocks[x].end >= pe + 1) fn.blocks[x].end += kk;
+              if (fn.blocks[x].begin >= pe + 1)
+                fn.blocks[x].begin += kk;
+              if (fn.blocks[x].end >= pe + 1)
+                fn.blocks[x].end += kk;
             }
           }
           os.lcf_gensims++;
           // rewire: the preheader jumps straight to the exit; loop dies
-          for (uint32_t i = fn.blocks[pre].begin; i < fn.blocks[pre].end;
-               ++i) {
+          for (uint32_t i = fn.blocks[pre].begin; i < fn.blocks[pre].end; ++i) {
             Instr &I = fn.code[i];
-            if (I.k == K::Br && I.t == h) I.t = X;
+            if (I.k == K::Br && I.t == h)
+              I.t = X;
             else if (I.k == K::Cbr) {
-              if (I.t == h) I.t = X;
-              if (I.f == h) I.f = X;
+              if (I.t == h)
+                I.t = X;
+              if (I.f == h)
+                I.f = X;
             }
           }
-          if (fn.succ[2 * pre] == h) fn.succ[2 * pre] = X;
-          if (fn.succ[2 * pre + 1] == h) fn.succ[2 * pre + 1] = X;
+          if (fn.succ[2 * pre] == h)
+            fn.succ[2 * pre] = X;
+          if (fn.succ[2 * pre + 1] == h)
+            fn.succ[2 * pre + 1] = X;
           for (uint32_t b2 = 0; b2 < nb; ++b2) {
-            if (inL[b2]) continue;
-            for (uint32_t i = fn.blocks[b2].begin; i < fn.blocks[b2].end;
-                 ++i) {
+            if (inL[b2])
+              continue;
+            for (uint32_t i = fn.blocks[b2].begin; i < fn.blocks[b2].end; ++i) {
               Instr &I = fn.code[i];
               auto rw = [&](uint32_t &v) {
-                if (v == NONE || v >= nv) return;
+                if (v == NONE || v >= nv)
+                  return;
                 for (size_t pi = 0; pi < hphis.size(); ++pi)
                   if (v == hphis[pi].dst) {
                     v = finalv[pi];
@@ -381,14 +447,18 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
               rw(I.a);
               rw(I.b2);
               rw(I.c2);
-              for (uint32_t &av : I.args) rw(av);
+              for (uint32_t &av : I.args)
+                rw(av);
             }
           }
           for (uint32_t i = fn.blocks[X].begin; i < fn.blocks[X].end; ++i) {
             Instr &I = fn.code[i]; // exit phis: h-edge departs from pre now
-            if (I.k != K::Phi) break;
-            if (I.t == h) I.t = pre;
-            else if (I.f == h) I.f = pre;
+            if (I.k != K::Phi)
+              break;
+            if (I.t == h)
+              I.t = pre;
+            else if (I.f == h)
+              I.f = pre;
           }
           fn.recompute_preds();
           return true; // one loop per call: the driver re-analyzes
@@ -405,8 +475,10 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
     // a runtime bound must be defined outside the loop (otherwise the trip
     // count depends on the body and no closed form exists)
     if (!bound_const) {
-      if (Bv == NONE || Bv >= nv) continue;
-      if (defi[Bv] != NONE && inL[defb[Bv]]) continue;
+      if (Bv == NONE || Bv >= nv)
+        continue;
+      if (defi[Bv] != NONE && inL[defb[Bv]])
+        continue;
     }
     // ---- exact compile-time trip count N (when both sides are constant) ----
     uint64_t N = ~0ull;
@@ -418,8 +490,12 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         val_t lhs = lhs_is_ind ? iv : bound;
         val_t rhs = lhs_is_ind ? bound : iv;
         bool go = (C.b == B::Lt) ? (lhs < rhs) : (lhs <= rhs);
-        if (!go) { N = k; break; }
-        if (k >= LCF_TRIP_BUDGET) break;
+        if (!go) {
+          N = k;
+          break;
+        }
+        if (k >= LCF_TRIP_BUDGET)
+          break;
         iv = step_sub ? w_sub(iv, step_mag).v : w_add(iv, step_mag).v;
       }
     }
@@ -438,10 +514,12 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
     // ---- safety: outside uses may reference ONLY header phi dsts ----------
     {
       std::vector<char> phid(nv, 0);
-      for (const HPhi &p : hphis) phid[p.dst] = 1;
+      for (const HPhi &p : hphis)
+        phid[p.dst] = 1;
       bool bad = false;
       for (uint32_t b = 0; b < nb && !bad; ++b) {
-        if (inL[b]) continue;
+        if (inL[b])
+          continue;
         for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
           const Instr &I = fn.code[i];
           auto chk = [&](uint32_t v) {
@@ -452,18 +530,23 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           chk(I.a);
           chk(I.b2);
           chk(I.c2);
-          for (uint32_t v : I.args) chk(v);
-          if (bad) break;
+          for (uint32_t v : I.args)
+            chk(v);
+          if (bad)
+            break;
         }
       }
-      if (bad) continue;
+      if (bad)
+        continue;
     }
     // pre must not already reach the exit (phi rekey would duplicate preds)
     {
       bool bad = false;
       for (uint32_t p : fn.preds[X])
-        if (p == pre) bad = true;
-      if (bad) continue;
+        if (p == pre)
+          bad = true;
+      if (bad)
+        continue;
     }
     // ---- body purity: straight-line scalar math only ----------------------
     // (header: phis + Const/Copy/Bin + the Cbr; other blocks: Const/Copy/Bin
@@ -471,26 +554,31 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
     {
       bool ok = true;
       for (uint32_t b = 0; b < nb && ok; ++b) {
-        if (!inL[b]) continue;
+        if (!inL[b])
+          continue;
         for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
           const Instr &I = fn.code[i];
           if (i + 1 == fn.blocks[b].end) { // terminator
             if (b == h) {
-              if (I.k != K::Cbr) ok = false;
+              if (I.k != K::Cbr)
+                ok = false;
             } else if (I.k != K::Br)
               ok = false;
             break;
           }
           if (I.k == K::Phi) {
-            if (b != h) ok = false;
+            if (b != h)
+              ok = false;
           } else if (I.k == K::Const || I.k == K::Copy) {
           } else if (I.k == K::Bin) {
           } else
             ok = false;
-          if (!ok) break;
+          if (!ok)
+            break;
         }
       }
-      if (!ok) continue;
+      if (!ok)
+        continue;
     }
     // ---- may-trap scan: Div/Mod that is not PROVEN trap-free ------------
     // The analytic closed form cannot preserve a runtime trap (it deletes the
@@ -498,11 +586,14 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
     // once trap-elimination has marked every Div/Mod in the loop `nt`.
     bool loop_maytrap = false;
     for (uint32_t b = 0; b < nb && !loop_maytrap; ++b) {
-      if (!inL[b]) continue;
+      if (!inL[b])
+        continue;
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
         const Instr &I = fn.code[i];
-        if (I.k != K::Bin || (I.b != B::Div && I.b != B::Mod)) continue;
-        if (I.nt) continue; // proven trap-free by the range analysis
+        if (I.k != K::Bin || (I.b != B::Div && I.b != B::Mod))
+          continue;
+        if (I.nt)
+          continue; // proven trap-free by the range analysis
         if (!(I.b2 < nv && kc[I.b2] && kv[I.b2] != 0)) {
           loop_maytrap = true;
           break;
@@ -510,12 +601,16 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       }
     }
     // ---- analytic: every phi must evolve as  x' = a*x + b*i + g ------------
-    struct Evo { bool ok; uint64_t a, b, g; };
+    struct Evo {
+      bool ok;
+      uint64_t a, b, g;
+    };
     std::vector<Evo> evo(hphis.size(), {false, 0, 0, 0});
     bool analytic = true;
     {
       std::vector<char> scope(nb, 0);
-      for (uint32_t b = 0; b < nb; ++b) scope[b] = inL[b];
+      for (uint32_t b = 0; b < nb; ++b)
+        scope[b] = inL[b];
       for (size_t pi = 0; pi < hphis.size() && analytic; ++pi) {
         LinForm L{};
         std::vector<uint32_t> absr{};
@@ -553,16 +648,21 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       // (T = N(N-1)/2 exactly mod 2^64 via the even-factor trick).
       bool rt_ok = !step_sub && step_mag >= 1 && lhs_is_ind;
       if (rt_ok) { // exit must have exactly one pred (the header), no phis
-        if (fn.preds[X].size() != 1 || fn.preds[X][0] != h) rt_ok = false;
+        if (fn.preds[X].size() != 1 || fn.preds[X][0] != h)
+          rt_ok = false;
         for (uint32_t i = fn.blocks[X].begin; i < fn.blocks[X].end && rt_ok;
              ++i)
-          if (fn.code[i].k == K::Phi) rt_ok = false;
+          if (fn.code[i].k == K::Phi)
+            rt_ok = false;
         const Instr &pt = fn.code[fn.blocks[pre].end - 1];
-        if (pt.k != K::Br || pt.t != h) rt_ok = false; // also idempotence
+        if (pt.k != K::Br || pt.t != h)
+          rt_ok = false; // also idempotence
         for (const Evo &e : evo)
-          if (!e.ok || e.a != 1) rt_ok = false; // additive recurrences only
+          if (!e.ok || e.a != 1)
+            rt_ok = false; // additive recurrences only
       }
-      if (!rt_ok) continue;
+      if (!rt_ok)
+        continue;
       // ---- vacuous-guard proof --------------------------------------------
       // With a CONSTANT i0 >= 0 and unit step, the induction can never wrap
       // before the exit: whenever the condition c0 holds, D = B - i0 lands
@@ -577,9 +677,9 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       // its merge-phi args degenerate away).
       bool body_pure = true;
       for (uint32_t b2 = 0; b2 < nb && body_pure; ++b2) {
-        if (!inL[b2]) continue;
-        for (uint32_t i2 = fn.blocks[b2].begin; i2 < fn.blocks[b2].end;
-             ++i2) {
+        if (!inL[b2])
+          continue;
+        for (uint32_t i2 = fn.blocks[b2].begin; i2 < fn.blocks[b2].end; ++i2) {
           const Instr &BI = fn.code[i2];
           if (BI.k == K::Phi || BI.k == K::Const || BI.k == K::Copy ||
               BI.k == K::Br || BI.k == K::Cbr)
@@ -595,9 +695,9 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           break;
         }
       }
-      const bool vacuous =
-          body_pure && IP.pre_arg != NONE && IP.pre_arg < nv &&
-          kc[IP.pre_arg] && kv[IP.pre_arg] >= 0 && step_mag == 1;
+      const bool vacuous = body_pure && IP.pre_arg != NONE && IP.pre_arg < nv &&
+                           kc[IP.pre_arg] && kv[IP.pre_arg] >= 0 &&
+                           step_mag == 1;
       const bool is_le = (C.b == B::Le);
       const uint32_t i0v = IP.pre_arg;
       const uint32_t G = fn.nblocks();
@@ -730,10 +830,12 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       cfi.push_back({.k = K::Br, .t = X});
       // ---- commit: append G/CF, rewrite outside uses, insert merge phis ----
       fn.blocks[G].begin = (uint32_t)fn.code.size();
-      for (const Instr &x : gi) fn.code.push_back(x);
+      for (const Instr &x : gi)
+        fn.code.push_back(x);
       fn.blocks[G].end = (uint32_t)fn.code.size();
       fn.blocks[CF].begin = (uint32_t)fn.code.size();
-      for (const Instr &x : cfi) fn.code.push_back(x);
+      for (const Instr &x : cfi)
+        fn.code.push_back(x);
       fn.blocks[CF].end = (uint32_t)fn.code.size();
       fn.succ[2 * G] = CF;
       fn.succ[2 * G + 1] = vacuous ? NONE : h; // vacuous: G never enters h
@@ -745,11 +847,13 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         for (size_t pi = 0; pi < hphis.size(); ++pi)
           phidst[pi] = new_anon_vreg(fn, fn.base_of(hphis[pi].dst));
         for (uint32_t b = 0; b < nb; ++b) {
-          if (inL[b]) continue;
+          if (inL[b])
+            continue;
           for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
             Instr &I = fn.code[i];
             auto rw = [&](uint32_t &v) {
-              if (v == NONE || v >= nv) return;
+              if (v == NONE || v >= nv)
+                return;
               for (size_t pi = 0; pi < hphis.size(); ++pi)
                 if (v == hphis[pi].dst) {
                   v = phidst[pi];
@@ -759,14 +863,18 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
             rw(I.a);
             rw(I.b2);
             rw(I.c2);
-            for (uint32_t &av : I.args) rw(av);
+            for (uint32_t &av : I.args)
+              rw(av);
           }
         }
         std::vector<Instr> xphis{};
         for (size_t pi = 0; pi < hphis.size(); ++pi)
-          xphis.push_back({.k = K::Phi, .dst = phidst[pi],
-                           .a = hphis[pi].dst, .b2 = cfv[pi],
-                           .t = h, .f = CF});
+          xphis.push_back({.k = K::Phi,
+                           .dst = phidst[pi],
+                           .a = hphis[pi].dst,
+                           .b2 = cfv[pi],
+                           .t = h,
+                           .f = CF});
         uint32_t xpos = fn.blocks[X].begin;
         fn.code.insert(fn.code.begin() + (long)xpos, xphis.begin(),
                        xphis.end());
@@ -776,26 +884,34 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
             fn.blocks[b].end += k;
             continue;
           }
-          if (fn.blocks[b].begin > xpos) fn.blocks[b].begin += k;
-          if (fn.blocks[b].end > xpos) fn.blocks[b].end += k;
+          if (fn.blocks[b].begin > xpos)
+            fn.blocks[b].begin += k;
+          if (fn.blocks[b].end > xpos)
+            fn.blocks[b].end += k;
         }
       }
       { // preheader now enters the guard instead of the header
         for (uint32_t i = fn.blocks[pre].begin; i < fn.blocks[pre].end; ++i) {
           Instr &I = fn.code[i];
-          if (I.k == K::Br && I.t == h) I.t = G;
+          if (I.k == K::Br && I.t == h)
+            I.t = G;
         }
-        if (fn.succ[2 * pre] == h) fn.succ[2 * pre] = G;
-        if (fn.succ[2 * pre + 1] == h) fn.succ[2 * pre + 1] = G;
+        if (fn.succ[2 * pre] == h)
+          fn.succ[2 * pre] = G;
+        if (fn.succ[2 * pre + 1] == h)
+          fn.succ[2 * pre + 1] = G;
         // the header phis key their entry arg by `pre`; that edge is now
         // G->h, so the keys must follow -- otherwise SSA destruction drops
         // the entry values on the (only) path into the fallback loop and
         // the loop would start from garbage phi state
         for (uint32_t i = fn.blocks[h].begin; i < fn.blocks[h].end; ++i) {
           Instr &P = fn.code[i];
-          if (P.k != K::Phi) break;
-          if (P.t == pre) P.t = G;
-          else if (P.f == pre) P.f = G;
+          if (P.k != K::Phi)
+            break;
+          if (P.t == pre)
+            P.t = G;
+          else if (P.f == pre)
+            P.f = G;
         }
       }
       fn.recompute_preds();
@@ -811,8 +927,10 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           fn.blocks[x].end += k;
           continue;
         }
-        if (fn.blocks[x].begin >= pe + 1) fn.blocks[x].begin += k;
-        if (fn.blocks[x].end >= pe + 1) fn.blocks[x].end += k;
+        if (fn.blocks[x].begin >= pe + 1)
+          fn.blocks[x].begin += k;
+        if (fn.blocks[x].end >= pe + 1)
+          fn.blocks[x].end += k;
       }
     };
     if (analytic && !loop_maytrap) {
@@ -838,19 +956,19 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         } else if (K1 == 1) {
           uint32_t c = new_anon_vreg(fn, 0);
           batch.push_back({.k = K::Const, .dst = c, .c = (val_t)K0});
-          batch.push_back({.k = K::Bin, .b = B::Add, .dst = fv, .a = x0,
-                           .b2 = c});
+          batch.push_back(
+              {.k = K::Bin, .b = B::Add, .dst = fv, .a = x0, .b2 = c});
         } else if (K0 == 0) {
           uint32_t c = new_anon_vreg(fn, 0);
           batch.push_back({.k = K::Const, .dst = c, .c = (val_t)K1});
-          batch.push_back({.k = K::Bin, .b = B::Mul, .dst = fv, .a = x0,
-                           .b2 = c});
+          batch.push_back(
+              {.k = K::Bin, .b = B::Mul, .dst = fv, .a = x0, .b2 = c});
         } else {
           uint32_t c1 = new_anon_vreg(fn, 0);
           uint32_t t = new_anon_vreg(fn, fn.base_of(hphis[pi].dst));
           batch.push_back({.k = K::Const, .dst = c1, .c = (val_t)K1});
-          batch.push_back({.k = K::Bin, .b = B::Mul, .dst = t, .a = x0,
-                           .b2 = c1});
+          batch.push_back(
+              {.k = K::Bin, .b = B::Mul, .dst = t, .a = x0, .b2 = c1});
           uint32_t c2 = new_anon_vreg(fn, 0);
           batch.push_back({.k = K::Const, .dst = c2, .c = (val_t)K0});
           batch.push_back(
@@ -864,20 +982,24 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       // ---- fallback: exact compile-time simulation of all N iterations -----
       bool ok = true;
       for (const HPhi &p : hphis)
-        if (!(p.pre_arg < nv && kc[p.pre_arg])) ok = false;
+        if (!(p.pre_arg < nv && kc[p.pre_arg]))
+          ok = false;
       uint64_t loop_instrs = 0;
       for (uint32_t b = 0; b < nb; ++b)
-        if (inL[b]) loop_instrs += fn.blocks[b].end - fn.blocks[b].begin;
-      if (ok && N * loop_instrs > LCF_SIM_BUDGET) ok = false;
+        if (inL[b])
+          loop_instrs += fn.blocks[b].end - fn.blocks[b].begin;
+      if (ok && N * loop_instrs > LCF_SIM_BUDGET)
+        ok = false;
       if (ok) { // every outside-defined operand must be a known constant
         for (uint32_t b = 0; b < nb && ok; ++b) {
-          if (!inL[b]) continue;
-          for (uint32_t i = fn.blocks[b].begin;
-               i < fn.blocks[b].end && ok; ++i) {
+          if (!inL[b])
+            continue;
+          for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && ok;
+               ++i) {
             const Instr &I = fn.code[i];
             auto ck = [&](uint32_t v) {
-              if (v != NONE && v < nv &&
-                  !(defi[v] != NONE && inL[defb[v]]) && !kc[v])
+              if (v != NONE && v < nv && !(defi[v] != NONE && inL[defb[v]]) &&
+                  !kc[v])
                 ok = false;
             };
             ck(I.a);
@@ -893,10 +1015,12 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           chain.push_back(cur);
           cur = fn.succ0(cur);
         }
-        if (cur != h) ok = false;
+        if (cur != h)
+          ok = false;
         if (ok) {
           std::vector<val_t> val(nv, 0);
-          for (const HPhi &p : hphis) val[p.dst] = kv[p.pre_arg];
+          for (const HPhi &p : hphis)
+            val[p.dst] = kv[p.pre_arg];
           std::vector<val_t> nxt(hphis.size());
           bool trap = false;
           auto eval = [&](const Instr &I) -> bool {
@@ -909,7 +1033,8 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
               return true;
             case K::Bin: {
               Rv r = w_bin(I.b, val[I.a], val[I.b2]);
-              if (r.trap) return false;
+              if (r.trap)
+                return false;
               val[I.dst] = r.v;
               return true;
             }
@@ -918,19 +1043,24 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
             }
           };
           for (uint64_t it = 0; it < N && !trap; ++it) {
-            for (uint32_t i = fn.blocks[h].begin;
-                 i + 1 < fn.blocks[h].end; ++i) {
-              if (fn.code[i].k == K::Phi) continue;
-              if (!eval(fn.code[i])) trap = true;
+            for (uint32_t i = fn.blocks[h].begin; i + 1 < fn.blocks[h].end;
+                 ++i) {
+              if (fn.code[i].k == K::Phi)
+                continue;
+              if (!eval(fn.code[i]))
+                trap = true;
             }
-            if (trap) break;
+            if (trap)
+              break;
             for (uint32_t cb : chain) {
-              for (uint32_t i = fn.blocks[cb].begin; i < fn.blocks[cb].end;
-                   ++i)
-                if (!eval(fn.code[i])) trap = true;
-              if (trap) break;
+              for (uint32_t i = fn.blocks[cb].begin; i < fn.blocks[cb].end; ++i)
+                if (!eval(fn.code[i]))
+                  trap = true;
+              if (trap)
+                break;
             }
-            if (trap) break;
+            if (trap)
+              break;
             for (size_t pi = 0; pi < hphis.size(); ++pi)
               nxt[pi] = val[hphis[pi].latch_arg];
             for (size_t pi = 0; pi < hphis.size(); ++pi)
@@ -939,8 +1069,7 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
           if (!trap) {
             std::vector<Instr> batch{};
             for (size_t pi = 0; pi < hphis.size(); ++pi) {
-              const uint32_t fv =
-                  new_anon_vreg(fn, fn.base_of(hphis[pi].dst));
+              const uint32_t fv = new_anon_vreg(fn, fn.base_of(hphis[pi].dst));
               finalv[pi] = fv;
               batch.push_back(
                   {.k = K::Const, .dst = fv, .c = val[hphis[pi].dst]});
@@ -952,24 +1081,32 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         }
       }
     }
-    if (!folded) continue;
+    if (!folded)
+      continue;
     // ---- rewire: preheader jumps straight to the exit; loop dies -----------
     for (uint32_t i = fn.blocks[pre].begin; i < fn.blocks[pre].end; ++i) {
       Instr &I = fn.code[i];
-      if (I.k == K::Br && I.t == h) I.t = X;
+      if (I.k == K::Br && I.t == h)
+        I.t = X;
       else if (I.k == K::Cbr) {
-        if (I.t == h) I.t = X;
-        if (I.f == h) I.f = X;
+        if (I.t == h)
+          I.t = X;
+        if (I.f == h)
+          I.f = X;
       }
     }
-    if (fn.succ[2 * pre] == h) fn.succ[2 * pre] = X;
-    if (fn.succ[2 * pre + 1] == h) fn.succ[2 * pre + 1] = X;
+    if (fn.succ[2 * pre] == h)
+      fn.succ[2 * pre] = X;
+    if (fn.succ[2 * pre + 1] == h)
+      fn.succ[2 * pre + 1] = X;
     for (uint32_t b = 0; b < nb; ++b) { // outside uses of phis -> final values
-      if (inL[b]) continue;
+      if (inL[b])
+        continue;
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
         Instr &I = fn.code[i];
         auto rw = [&](uint32_t &v) {
-          if (v == NONE || v >= nv) return;
+          if (v == NONE || v >= nv)
+            return;
           for (size_t pi = 0; pi < hphis.size(); ++pi)
             if (v == hphis[pi].dst) {
               v = finalv[pi];
@@ -979,14 +1116,18 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
         rw(I.a);
         rw(I.b2);
         rw(I.c2);
-        for (uint32_t &av : I.args) rw(av);
+        for (uint32_t &av : I.args)
+          rw(av);
       }
     }
     for (uint32_t i = fn.blocks[X].begin; i < fn.blocks[X].end; ++i) {
       Instr &I = fn.code[i]; // exit phis: the h-edge now departs from pre
-      if (I.k != K::Phi) break;
-      if (I.t == h) I.t = pre;
-      else if (I.f == h) I.f = pre;
+      if (I.k != K::Phi)
+        break;
+      if (I.t == h)
+        I.t = pre;
+      else if (I.f == h)
+        I.f = pre;
     }
     fn.recompute_preds();
     return true; // one loop per call: the driver re-analyzes
@@ -1000,21 +1141,29 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
 constexpr void normalize_phis(Fn &fn) {
   for (uint32_t b = 0; b < fn.nblocks(); ++b) {
     uint32_t begin = fn.blocks[b].begin, end = fn.blocks[b].end;
-    if (end - begin < 2) continue;
+    if (end - begin < 2)
+      continue;
     bool need = false;
     for (uint32_t i = begin; i < end; ++i) {
-      if (fn.code[i].k == K::Phi) continue;
+      if (fn.code[i].k == K::Phi)
+        continue;
       for (uint32_t j = i + 1; j < end; ++j)
-        if (fn.code[j].k == K::Phi) { need = true; break; }
+        if (fn.code[j].k == K::Phi) {
+          need = true;
+          break;
+        }
       break;
     }
-    if (!need) continue;
+    if (!need)
+      continue;
     std::vector<Instr> phis{}, rest{};
     for (uint32_t i = begin; i < end; ++i)
       (fn.code[i].k == K::Phi ? phis : rest).push_back(fn.code[i]);
     uint32_t w = begin;
-    for (const Instr &I : phis) fn.code[w++] = I;
-    for (const Instr &I : rest) fn.code[w++] = I;
+    for (const Instr &I : phis)
+      fn.code[w++] = I;
+    for (const Instr &I : rest)
+      fn.code[w++] = I;
   }
 }
 

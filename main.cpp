@@ -11,7 +11,8 @@
 
 int main(int argc, char **argv) {
   Cli C{};
-  if (!parse_cli(argc, argv, C)) return 2;
+  if (!parse_cli(argc, argv, C))
+    return 2;
   if (C.help) {
     usage();
     return 0;

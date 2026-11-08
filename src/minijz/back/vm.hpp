@@ -14,57 +14,123 @@
 //     Div/Mod trap exactly like the interpreters. Runs the destroyed IR.
 // ============================================================================
 enum class Bc : uint8_t {
-  Halt = 0, Push, Load, Store, Add, Sub, Mul, Div, Mod,
-  Lt, Le, Gt, Ge, Eq, Ne, Jmp, Jz, Print,
-  ArrNew, ArrLd, ArrSt, ArrLen, In,
-  Call, Ret, // Call u32 fnidx u32 nargs; Ret (value via the operand stack)
-  And, Or, Xor, Shl, Lshr, Asr, MulHi, // optimizer-lowered bit ops
-  Depth                                // push the frame count (call depth)
+  Halt = 0,
+  Push,
+  Load,
+  Store,
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+  Eq,
+  Ne,
+  Jmp,
+  Jz,
+  Print,
+  ArrNew,
+  ArrLd,
+  ArrSt,
+  ArrLen,
+  In,
+  Call,
+  Ret, // Call u32 fnidx u32 nargs; Ret (value via the operand stack)
+  And,
+  Or,
+  Xor,
+  Shl,
+  Lshr,
+  Asr,
+  MulHi, // optimizer-lowered bit ops
+  Depth  // push the frame count (call depth)
 };
 constexpr const char *bc_name(Bc op) {
   switch (op) {
-  case Bc::Halt: return "halt";
-  case Bc::Push: return "push";
-  case Bc::Load: return "load";
-  case Bc::Store: return "store";
-  case Bc::Add: return "add";
-  case Bc::Sub: return "sub";
-  case Bc::Mul: return "mul";
-  case Bc::Div: return "div";
-  case Bc::Mod: return "mod";
-  case Bc::Lt: return "lt";
-  case Bc::Le: return "le";
-  case Bc::Gt: return "gt";
-  case Bc::Ge: return "ge";
-  case Bc::Eq: return "eq";
-  case Bc::Ne: return "ne";
-  case Bc::Jmp: return "jmp";
-  case Bc::Jz: return "jz";
-  case Bc::Print: return "print";
-  case Bc::ArrNew: return "arrnew";
-  case Bc::ArrLd: return "arrld";
-  case Bc::ArrSt: return "arrst";
-  case Bc::ArrLen: return "arrlen";
-  case Bc::In: return "in";
-  case Bc::Call: return "call";
-  case Bc::Ret: return "ret";
-  case Bc::And: return "and";
-  case Bc::Or: return "or";
-  case Bc::Xor: return "xor";
-  case Bc::Shl: return "shl";
-  case Bc::Lshr: return "lshr";
-  case Bc::Asr: return "asr";
-  case Bc::MulHi: return "mulhi";
-  case Bc::Depth: return "depth";
+  case Bc::Halt:
+    return "halt";
+  case Bc::Push:
+    return "push";
+  case Bc::Load:
+    return "load";
+  case Bc::Store:
+    return "store";
+  case Bc::Add:
+    return "add";
+  case Bc::Sub:
+    return "sub";
+  case Bc::Mul:
+    return "mul";
+  case Bc::Div:
+    return "div";
+  case Bc::Mod:
+    return "mod";
+  case Bc::Lt:
+    return "lt";
+  case Bc::Le:
+    return "le";
+  case Bc::Gt:
+    return "gt";
+  case Bc::Ge:
+    return "ge";
+  case Bc::Eq:
+    return "eq";
+  case Bc::Ne:
+    return "ne";
+  case Bc::Jmp:
+    return "jmp";
+  case Bc::Jz:
+    return "jz";
+  case Bc::Print:
+    return "print";
+  case Bc::ArrNew:
+    return "arrnew";
+  case Bc::ArrLd:
+    return "arrld";
+  case Bc::ArrSt:
+    return "arrst";
+  case Bc::ArrLen:
+    return "arrlen";
+  case Bc::In:
+    return "in";
+  case Bc::Call:
+    return "call";
+  case Bc::Ret:
+    return "ret";
+  case Bc::And:
+    return "and";
+  case Bc::Or:
+    return "or";
+  case Bc::Xor:
+    return "xor";
+  case Bc::Shl:
+    return "shl";
+  case Bc::Lshr:
+    return "lshr";
+  case Bc::Asr:
+    return "asr";
+  case Bc::MulHi:
+    return "mulhi";
+  case Bc::Depth:
+    return "depth";
   }
   return "?";
 }
 constexpr void bc_put_u32(std::vector<uint8_t> &c, uint32_t v) {
-  for (int i = 0; i < 4; ++i) { c.push_back((uint8_t)(v & 0xff)); v >>= 8; }
+  for (int i = 0; i < 4; ++i) {
+    c.push_back((uint8_t)(v & 0xff));
+    v >>= 8;
+  }
 }
 constexpr void bc_put_i64(std::vector<uint8_t> &c, int64_t v) {
   uint64_t u = (uint64_t)v;
-  for (int i = 0; i < 8; ++i) { c.push_back((uint8_t)(u & 0xff)); u >>= 8; }
+  for (int i = 0; i < 8; ++i) {
+    c.push_back((uint8_t)(u & 0xff));
+    u >>= 8;
+  }
 }
 constexpr uint32_t bc_rd_u32(const std::vector<uint8_t> &c, size_t p) {
   return (uint32_t)c[p] | ((uint32_t)c[p + 1] << 8) |
@@ -72,51 +138,85 @@ constexpr uint32_t bc_rd_u32(const std::vector<uint8_t> &c, size_t p) {
 }
 constexpr int64_t bc_rd_i64(const std::vector<uint8_t> &c, size_t p) {
   uint64_t u = 0;
-  for (int i = 0; i < 8; ++i) u |= (uint64_t)c[p + (size_t)i] << (8 * i);
+  for (int i = 0; i < 8; ++i)
+    u |= (uint64_t)c[p + (size_t)i] << (8 * i);
   return (int64_t)u;
 }
 constexpr Bc bc_of_bin(B b) {
   switch (b) {
-  case B::Add: return Bc::Add;
-  case B::Sub: return Bc::Sub;
-  case B::Mul: return Bc::Mul;
-  case B::Div: return Bc::Div;
-  case B::Mod: return Bc::Mod;
-  case B::Lt: return Bc::Lt;
-  case B::Le: return Bc::Le;
-  case B::Gt: return Bc::Gt;
-  case B::Ge: return Bc::Ge;
-  case B::Eq: return Bc::Eq;
-  case B::Ne: return Bc::Ne;
-  case B::And: return Bc::And;
-  case B::Or: return Bc::Or;
-  case B::Xor: return Bc::Xor;
-  case B::Shl: return Bc::Shl;
-  case B::LShr: return Bc::Lshr;
-  case B::AShr: return Bc::Asr;
-  case B::MulHi: return Bc::MulHi;
+  case B::Add:
+    return Bc::Add;
+  case B::Sub:
+    return Bc::Sub;
+  case B::Mul:
+    return Bc::Mul;
+  case B::Div:
+    return Bc::Div;
+  case B::Mod:
+    return Bc::Mod;
+  case B::Lt:
+    return Bc::Lt;
+  case B::Le:
+    return Bc::Le;
+  case B::Gt:
+    return Bc::Gt;
+  case B::Ge:
+    return Bc::Ge;
+  case B::Eq:
+    return Bc::Eq;
+  case B::Ne:
+    return Bc::Ne;
+  case B::And:
+    return Bc::And;
+  case B::Or:
+    return Bc::Or;
+  case B::Xor:
+    return Bc::Xor;
+  case B::Shl:
+    return Bc::Shl;
+  case B::LShr:
+    return Bc::Lshr;
+  case B::AShr:
+    return Bc::Asr;
+  case B::MulHi:
+    return Bc::MulHi;
   }
   return Bc::Halt;
 }
 constexpr uint32_t bc_instr_size(const Instr &I) {
   switch (I.k) {
-  case K::Const: return 9 + 5;              // Push + Store
-  case K::Copy: return 5 + 5;               // Load + Store
-  case K::Bin: return 5 + 5 + 1 + 5;        // Load,Load,op,Store
-  case K::Br: return 5;                     // Jmp
-  case K::Cbr: return 5 + 5 + 5;            // Load,Jz,Jmp
-  case K::Print: return 5 + 1;              // Load,Print
-  case K::Exit: return 1;                   // Halt
-  case K::Phi: return 0;                    // gone (destroyed)
-  case K::Alloc: return 5 + 1 + 5;          // Load,ArrNew,Store
-  case K::Load: return 5 + 5 + 1 + 5;       // Load,Load,ArrLd,Store
-  case K::Store: return 5 + 5 + 5 + 1;      // Load,Load,Load,ArrSt
-  case K::Len: return 5 + 1 + 5;            // Load,ArrLen,Store
-  case K::Input: return 1 + 5;              // In,Store
-  case K::Depth: return 1 + 5;              // Depth,Store
-  case K::Call:                             // Load*argc,Call,Store
+  case K::Const:
+    return 9 + 5; // Push + Store
+  case K::Copy:
+    return 5 + 5; // Load + Store
+  case K::Bin:
+    return 5 + 5 + 1 + 5; // Load,Load,op,Store
+  case K::Br:
+    return 5; // Jmp
+  case K::Cbr:
+    return 5 + 5 + 5; // Load,Jz,Jmp
+  case K::Print:
+    return 5 + 1; // Load,Print
+  case K::Exit:
+    return 1; // Halt
+  case K::Phi:
+    return 0; // gone (destroyed)
+  case K::Alloc:
+    return 5 + 1 + 5; // Load,ArrNew,Store
+  case K::Load:
+    return 5 + 5 + 1 + 5; // Load,Load,ArrLd,Store
+  case K::Store:
+    return 5 + 5 + 5 + 1; // Load,Load,Load,ArrSt
+  case K::Len:
+    return 5 + 1 + 5; // Load,ArrLen,Store
+  case K::Input:
+    return 1 + 5; // In,Store
+  case K::Depth:
+    return 1 + 5; // Depth,Store
+  case K::Call:   // Load*argc,Call,Store
     return 1 + 4 + 4 + 5 * (uint32_t)I.args.size() + 5;
-  case K::Ret: return (I.a == NONE ? 9 : 5) + 1; // (Push|Load),Ret
+  case K::Ret:
+    return (I.a == NONE ? 9 : 5) + 1; // (Push|Load),Ret
   }
   return 0;
 }
@@ -152,78 +252,103 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
         case K::Phi:
           break;
         case K::Const:
-          c.push_back((uint8_t)Bc::Push); bc_put_i64(c, I.c);
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Push);
+          bc_put_i64(c, I.c);
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Copy:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Bin:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.b2));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.b2));
           c.push_back((uint8_t)bc_of_bin(I.b));
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Br:
           c.push_back((uint8_t)Bc::Jmp);
           bc_put_u32(c, I.t == NONE ? off[f][b] : off[f][I.t]);
           break;
         case K::Cbr:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
           c.push_back((uint8_t)Bc::Jz);
           bc_put_u32(c, I.f == NONE ? off[f][b] : off[f][I.f]);
           c.push_back((uint8_t)Bc::Jmp);
           bc_put_u32(c, I.t == NONE ? off[f][b] : off[f][I.t]);
           break;
         case K::Print:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
           c.push_back((uint8_t)Bc::Print);
           break;
         case K::Alloc:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
           c.push_back((uint8_t)Bc::ArrNew);
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Load:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.b2));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.b2));
           c.push_back((uint8_t)Bc::ArrLd);
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Store:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.b2));
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.c2));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.b2));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.c2));
           c.push_back((uint8_t)Bc::ArrSt);
           break;
         case K::Len:
-          c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
+          c.push_back((uint8_t)Bc::Load);
+          bc_put_u32(c, slot_id(fns[f], I.a));
           c.push_back((uint8_t)Bc::ArrLen);
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Input:
           c.push_back((uint8_t)Bc::In);
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Depth:
           c.push_back((uint8_t)Bc::Depth);
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Call:
           for (uint32_t av : I.args) { // args pushed in parameter order
-            c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], av));
+            c.push_back((uint8_t)Bc::Load);
+            bc_put_u32(c, slot_id(fns[f], av));
           }
           c.push_back((uint8_t)Bc::Call);
           bc_put_u32(c, (uint32_t)I.c);
           bc_put_u32(c, (uint32_t)I.args.size());
-          c.push_back((uint8_t)Bc::Store); bc_put_u32(c, slot_id(fns[f], I.dst));
+          c.push_back((uint8_t)Bc::Store);
+          bc_put_u32(c, slot_id(fns[f], I.dst));
           break;
         case K::Ret:
           if (I.a == NONE) {
-            c.push_back((uint8_t)Bc::Push); bc_put_i64(c, 0);
+            c.push_back((uint8_t)Bc::Push);
+            bc_put_i64(c, 0);
           } else {
-            c.push_back((uint8_t)Bc::Load); bc_put_u32(c, slot_id(fns[f], I.a));
+            c.push_back((uint8_t)Bc::Load);
+            bc_put_u32(c, slot_id(fns[f], I.a));
           }
           c.push_back((uint8_t)Bc::Ret);
           break;
@@ -244,13 +369,13 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
 //      watch every slot, the operand stack, the arena, and the pc move.
 // ============================================================================
 struct VmCtx {
-  const std::vector<uint8_t> *c{}; // the bytecode image (not owned)
-  size_t pc{};                     // next op to fetch
+  const std::vector<uint8_t> *c{};        // the bytecode image (not owned)
+  size_t pc{};                            // next op to fetch
   std::vector<std::vector<val_t>> frames; // one slot vector per activation
-  std::vector<uint32_t> rets;      // return pcs of suspended callers
-  std::vector<uint32_t> fr_fn;     // fn index of each frame (debugger)
-  std::vector<val_t> st{};         // the operand stack
-  RunOut R{};                      // output + arena + input tape position
+  std::vector<uint32_t> rets;             // return pcs of suspended callers
+  std::vector<uint32_t> fr_fn;            // fn index of each frame (debugger)
+  std::vector<val_t> st{};                // the operand stack
+  RunOut R{}; // output + arena + input tape position
   uint64_t steps{}, step_limit{};
   bool started{}, halted{}, trapped{}, timeout{};
   // which function is pc in? (bytecode layout: [u32 nfns][nfns x (u32 off,
@@ -260,7 +385,8 @@ struct VmCtx {
     uint32_t best = 0;
     for (uint32_t f = 0; f < nf; ++f) {
       uint32_t off = bc_rd_u32(*c, 4 + (size_t)8 * f);
-      if (off <= p) best = f;
+      if (off <= p)
+        best = f;
     }
     return best;
   }
@@ -280,7 +406,11 @@ constexpr bool vm_init(VmCtx &S, const std::vector<uint8_t> &c,
   S.R.ins = ins;
   S.step_limit = step_limit;
   S.started = true;
-  if (c.size() < 4) { S.trapped = true; S.R.trapped = true; return false; }
+  if (c.size() < 4) {
+    S.trapped = true;
+    S.R.trapped = true;
+    return false;
+  }
   const uint32_t nfns = bc_rd_u32(c, 0);
   if (!nfns || c.size() < 4 + (size_t)8 * nfns) {
     S.trapped = true;
@@ -297,7 +427,8 @@ constexpr bool vm_init(VmCtx &S, const std::vector<uint8_t> &c,
 // Halt/Call/Ret/ArrSt), not sub-ops, so one step limit means the same thing
 // for interpreter and VM.
 constexpr bool vm_step_op(VmCtx &S) {
-  if (!S.started || S.halted || S.trapped || S.timeout) return false;
+  if (!S.started || S.halted || S.trapped || S.timeout)
+    return false;
   const std::vector<uint8_t> &c = *S.c;
   if (S.pc >= c.size()) {
     S.trapped = true;
@@ -362,7 +493,8 @@ constexpr bool vm_step_op(VmCtx &S) {
     }
     S.rets.push_back((uint32_t)S.pc);
     std::vector<val_t> fr(S.fn_slots(g), 0);
-    for (uint32_t k = 0; k < na && k < fr.size(); ++k) fr[k] = args[k];
+    for (uint32_t k = 0; k < na && k < fr.size(); ++k)
+      fr[k] = args[k];
     S.frames.push_back(std::move(fr));
     S.fr_fn.push_back(g);
     S.pc = S.fn_off(g);
@@ -388,11 +520,24 @@ constexpr bool vm_step_op(VmCtx &S) {
     S.st.push_back(v); // the caller's Store pops it into the result slot
     break;
   }
-  case Bc::Add: case Bc::Sub: case Bc::Mul: case Bc::Div: case Bc::Mod:
-  case Bc::Lt: case Bc::Le: case Bc::Gt: case Bc::Ge: case Bc::Eq:
+  case Bc::Add:
+  case Bc::Sub:
+  case Bc::Mul:
+  case Bc::Div:
+  case Bc::Mod:
+  case Bc::Lt:
+  case Bc::Le:
+  case Bc::Gt:
+  case Bc::Ge:
+  case Bc::Eq:
   case Bc::Ne:
-  case Bc::And: case Bc::Or: case Bc::Xor: case Bc::Shl: case Bc::Lshr:
-  case Bc::Asr: case Bc::MulHi: {
+  case Bc::And:
+  case Bc::Or:
+  case Bc::Xor:
+  case Bc::Shl:
+  case Bc::Lshr:
+  case Bc::Asr:
+  case Bc::MulHi: {
     if (S.st.size() < 2) {
       S.trapped = true;
       R.trapped = true;
@@ -404,25 +549,62 @@ constexpr bool vm_step_op(VmCtx &S) {
     S.st.pop_back();
     Rv v{};
     switch (op) {
-    case Bc::Add: v = w_add(x, y); break;
-    case Bc::Sub: v = w_sub(x, y); break;
-    case Bc::Mul: v = w_mul(x, y); break;
-    case Bc::Div: v = w_div(x, y); break;
-    case Bc::Mod: v = w_mod(x, y); break;
-    case Bc::Lt: v = {x < y, false}; break;
-    case Bc::Le: v = {x <= y, false}; break;
-    case Bc::Gt: v = {x > y, false}; break;
-    case Bc::Ge: v = {x >= y, false}; break;
-    case Bc::Eq: v = {x == y, false}; break;
-    case Bc::Ne: v = {x != y, false}; break;
-    case Bc::And: v = w_and(x, y); break;
-    case Bc::Or: v = w_or(x, y); break;
-    case Bc::Xor: v = w_xor(x, y); break;
-    case Bc::Shl: v = w_shl(x, y); break;
-    case Bc::Lshr: v = w_lshr(x, y); break;
-    case Bc::Asr: v = w_ashr(x, y); break;
-    case Bc::MulHi: v = w_mulhi(x, y); break;
-    default: break;
+    case Bc::Add:
+      v = w_add(x, y);
+      break;
+    case Bc::Sub:
+      v = w_sub(x, y);
+      break;
+    case Bc::Mul:
+      v = w_mul(x, y);
+      break;
+    case Bc::Div:
+      v = w_div(x, y);
+      break;
+    case Bc::Mod:
+      v = w_mod(x, y);
+      break;
+    case Bc::Lt:
+      v = {x < y, false};
+      break;
+    case Bc::Le:
+      v = {x <= y, false};
+      break;
+    case Bc::Gt:
+      v = {x > y, false};
+      break;
+    case Bc::Ge:
+      v = {x >= y, false};
+      break;
+    case Bc::Eq:
+      v = {x == y, false};
+      break;
+    case Bc::Ne:
+      v = {x != y, false};
+      break;
+    case Bc::And:
+      v = w_and(x, y);
+      break;
+    case Bc::Or:
+      v = w_or(x, y);
+      break;
+    case Bc::Xor:
+      v = w_xor(x, y);
+      break;
+    case Bc::Shl:
+      v = w_shl(x, y);
+      break;
+    case Bc::Lshr:
+      v = w_lshr(x, y);
+      break;
+    case Bc::Asr:
+      v = w_ashr(x, y);
+      break;
+    case Bc::MulHi:
+      v = w_mulhi(x, y);
+      break;
+    default:
+      break;
     }
     if (v.trap) {
       S.trapped = true;
@@ -450,7 +632,8 @@ constexpr bool vm_step_op(VmCtx &S) {
     S.st.pop_back();
     uint32_t t = bc_rd_u32(c, S.pc);
     S.pc += 4;
-    if (v == 0) S.pc = t;
+    if (v == 0)
+      S.pc = t;
     break;
   }
   case Bc::Print: {
@@ -539,7 +722,8 @@ constexpr RunOut vm_run(const std::vector<uint8_t> &c,
                         uint64_t step_limit = 200000,
                         const std::vector<val_t> &ins = {}) {
   VmCtx S{};
-  if (!vm_init(S, c, step_limit, ins)) return S.R;
+  if (!vm_init(S, c, step_limit, ins))
+    return S.R;
   while (vm_step_op(S)) {
   }
   return S.R;
@@ -555,7 +739,10 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
                           const std::vector<val_t> &ins = {}) {
   RunOut R{};
   R.ins = ins;
-  if (fns.empty() || fns[0].nblocks() == 0) { R.trapped = true; return R; }
+  if (fns.empty() || fns[0].nblocks() == 0) {
+    R.trapped = true;
+    return R;
+  }
   struct Fr {
     uint32_t fn;
     std::vector<val_t> val;
@@ -568,18 +755,22 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
   std::vector<Resume> resumes;
   {
     uint32_t nv0 = fns[0].nvars + (uint32_t)fns[0].version_base.size();
-    stack.push_back({0, std::vector<val_t>(nv0, 0),
-                     std::vector<char>(nv0, 0)});
+    stack.push_back({0, std::vector<val_t>(nv0, 0), std::vector<char>(nv0, 0)});
   }
   uint64_t steps = 0;
   uint32_t cur_fn = 0, cur_blk = 0;
   int64_t i = (int64_t)fns[0].blocks[0].begin;
   for (;;) {
-    if (++steps > step_limit) { R.timeout = true; return R; }
-    if (cur_fn >= fns.size()) { R.trapped = true; return R; }
+    if (++steps > step_limit) {
+      R.timeout = true;
+      return R;
+    }
+    if (cur_fn >= fns.size()) {
+      R.trapped = true;
+      return R;
+    }
     const Fn &F = fns[cur_fn];
-    if (cur_blk >= F.nblocks() ||
-        i < (int64_t)F.blocks[cur_blk].begin ||
+    if (cur_blk >= F.nblocks() || i < (int64_t)F.blocks[cur_blk].begin ||
         i >= (int64_t)F.blocks[cur_blk].end) {
       R.trapped = true;
       return R;
@@ -591,18 +782,23 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       continue;
     case K::Br:
     case K::Cbr: {
-      uint32_t next = (I.k == K::Br)
-                          ? I.t
-                          : ((stack.back().val[I.a] != 0) ? I.t : I.f);
-      if (next >= F.nblocks()) { R.trapped = true; return R; }
+      uint32_t next =
+          (I.k == K::Br) ? I.t : ((stack.back().val[I.a] != 0) ? I.t : I.f);
+      if (next >= F.nblocks()) {
+        R.trapped = true;
+        return R;
+      }
       // stage phi values of `next` for this edge: read all, then write all
       std::vector<std::pair<uint32_t, val_t>> staged{};
       for (uint32_t j = F.blocks[next].begin; j < F.blocks[next].end; ++j) {
         const Instr &P = F.code[j];
-        if (P.k != K::Phi) break;
+        if (P.k != K::Phi)
+          break;
         uint32_t arg = NONE;
-        if (P.t == cur_blk && P.a != NONE) arg = P.a;
-        else if (P.f == cur_blk && P.b2 != NONE) arg = P.b2;
+        if (P.t == cur_blk && P.a != NONE)
+          arg = P.a;
+        else if (P.f == cur_blk && P.b2 != NONE)
+          arg = P.b2;
         if (arg != NONE)
           staged.push_back({P.dst, stack.back().val[arg]});
       }
@@ -662,8 +858,9 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
     }
     case K::Const:
       if (I.dst >= stack.back().val.size())
-        std::fprintf(stderr, "OOB const: fn=%u blk=%u dst=%u valsize=%zu nfns=%zu\n",
-                     cur_fn, cur_blk, I.dst, stack.back().val.size(), fns.size());
+        std::fprintf(
+            stderr, "OOB const: fn=%u blk=%u dst=%u valsize=%zu nfns=%zu\n",
+            cur_fn, cur_blk, I.dst, stack.back().val.size(), fns.size());
       stack.back().val[I.dst] = I.c;
       stack.back().has[I.dst] = 1;
       break;
@@ -680,26 +877,65 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       val_t x = stack.back().val[I.a], y = stack.back().val[I.b2];
       Rv r{};
       switch (I.b) {
-      case B::Add: r = w_add(x, y); break;
-      case B::Sub: r = w_sub(x, y); break;
-      case B::Mul: r = w_mul(x, y); break;
-      case B::Div: r = w_div(x, y); break;
-      case B::Mod: r = w_mod(x, y); break;
-      case B::Lt: r = {x < y, false}; break;
-      case B::Le: r = {x <= y, false}; break;
-      case B::Gt: r = {x > y, false}; break;
-      case B::Ge: r = {x >= y, false}; break;
-      case B::Eq: r = {x == y, false}; break;
-      case B::Ne: r = {x != y, false}; break;
-      case B::And: r = w_and(x, y); break;
-      case B::Or: r = w_or(x, y); break;
-      case B::Xor: r = w_xor(x, y); break;
-      case B::Shl: r = w_shl(x, y); break;
-      case B::LShr: r = w_lshr(x, y); break;
-      case B::AShr: r = w_ashr(x, y); break;
-      case B::MulHi: r = w_mulhi(x, y); break;
+      case B::Add:
+        r = w_add(x, y);
+        break;
+      case B::Sub:
+        r = w_sub(x, y);
+        break;
+      case B::Mul:
+        r = w_mul(x, y);
+        break;
+      case B::Div:
+        r = w_div(x, y);
+        break;
+      case B::Mod:
+        r = w_mod(x, y);
+        break;
+      case B::Lt:
+        r = {x < y, false};
+        break;
+      case B::Le:
+        r = {x <= y, false};
+        break;
+      case B::Gt:
+        r = {x > y, false};
+        break;
+      case B::Ge:
+        r = {x >= y, false};
+        break;
+      case B::Eq:
+        r = {x == y, false};
+        break;
+      case B::Ne:
+        r = {x != y, false};
+        break;
+      case B::And:
+        r = w_and(x, y);
+        break;
+      case B::Or:
+        r = w_or(x, y);
+        break;
+      case B::Xor:
+        r = w_xor(x, y);
+        break;
+      case B::Shl:
+        r = w_shl(x, y);
+        break;
+      case B::LShr:
+        r = w_lshr(x, y);
+        break;
+      case B::AShr:
+        r = w_ashr(x, y);
+        break;
+      case B::MulHi:
+        r = w_mulhi(x, y);
+        break;
       }
-      if (r.trap) { R.trapped = true; return R; }
+      if (r.trap) {
+        R.trapped = true;
+        return R;
+      }
       stack.back().val[I.dst] = r.v;
       stack.back().has[I.dst] = 1;
       break;
@@ -709,14 +945,20 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       break;
     case K::Alloc: {
       Rv r = R.arena_alloc(stack.back().val[I.a]);
-      if (r.trap) { R.trapped = true; return R; }
+      if (r.trap) {
+        R.trapped = true;
+        return R;
+      }
       stack.back().val[I.dst] = r.v;
       stack.back().has[I.dst] = 1;
       break;
     }
     case K::Load: {
       Rv r = R.arena_load(stack.back().val[I.a], stack.back().val[I.b2]);
-      if (r.trap) { R.trapped = true; return R; }
+      if (r.trap) {
+        R.trapped = true;
+        return R;
+      }
       stack.back().val[I.dst] = r.v;
       stack.back().has[I.dst] = 1;
       break;

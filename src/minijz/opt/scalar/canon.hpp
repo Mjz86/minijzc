@@ -7,9 +7,10 @@
 #include "minijz/ir/instr.hpp"
 #include "minijz/opt/analysis/an.hpp"
 
-// --- 9a4. canonicalization ----------------------------------------------------
-// Puts every pure Bin into ONE canonical shape so equivalent computations
-// become identical (which is what makes CSE hit) and identities match:
+// --- 9a4. canonicalization
+// ---------------------------------------------------- Puts every pure Bin into
+// ONE canonical shape so equivalent computations become identical (which is
+// what makes CSE hit) and identities match:
 //   * comparisons: `a > b` -> `b < a`, `a >= b` -> `b <= a`  (one direction)
 //   * commutative ops (+ * == !=): known-constant operand on the RIGHT,
 //     otherwise the smaller vreg id first — exactly the key order the CSE
@@ -28,15 +29,18 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
       kv[I.dst] = I.c;
     }
   auto key = [&](uint32_t v) -> uint64_t {
-    if (v == NONE) return 0;
-    if (v < nv && kc[v]) return ((uint64_t)1 << 63) ^ (uint64_t)kv[v];
+    if (v == NONE)
+      return 0;
+    if (v < nv && kc[v])
+      return ((uint64_t)1 << 63) ^ (uint64_t)kv[v];
     return (uint64_t)v;
   };
   bool changed = false;
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       Instr &I = fn.code[i];
-      if (I.k != K::Bin) continue;
+      if (I.k != K::Bin)
+        continue;
       if (I.b == B::Gt || I.b == B::Ge) { // canonical comparison direction
         std::swap(I.a, I.b2);
         I.b = (I.b == B::Gt) ? B::Lt : B::Le;
@@ -44,7 +48,8 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
         changed = true;
       } else if (I.b == B::Add || I.b == B::Mul || I.b == B::Eq ||
                  I.b == B::Ne || I.b == B::And || I.b == B::Or ||
-                 I.b == B::Xor || I.b == B::MulHi) { // commutative canonical order
+                 I.b == B::Xor ||
+                 I.b == B::MulHi) { // commutative canonical order
         if (key(I.b2) < key(I.a)) {
           std::swap(I.a, I.b2);
           os.canon_swaps++;
@@ -65,12 +70,14 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
     for (uint32_t i = 0; i < fn.code.size(); ++i) {
       const Instr &I = fn.code[i];
       auto bump = [&](uint32_t v) {
-        if (v != NONE && v < nv) ++uses[v];
+        if (v != NONE && v < nv)
+          ++uses[v];
       };
       bump(I.a);
       bump(I.b2);
       bump(I.c2);
-      for (uint32_t v : I.args) bump(v);
+      for (uint32_t v : I.args)
+        bump(v);
       if (I.dst != NONE && I.dst < nv) {
         ++ndefs[I.dst];
         defi[I.dst] = i;
@@ -84,28 +91,41 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
       // e.g. !!(x < y) miscompiled (fuzz seed 1211: !!(input() < z9)
       // evaluated 1 where the oracle says 0 at the equality point).
       switch (b) {
-      case B::Lt: return B::Ge; // NOT(a<b)  = a>=b
-      case B::Le: return B::Gt; // NOT(a<=b) = a>b
-      case B::Gt: return B::Le; // NOT(a>b)  = a<=b
-      case B::Ge: return B::Lt; // NOT(a>=b) = a<b
-      case B::Eq: return B::Ne;
-      case B::Ne: return B::Eq;
-      default: return b;
+      case B::Lt:
+        return B::Ge; // NOT(a<b)  = a>=b
+      case B::Le:
+        return B::Gt; // NOT(a<=b) = a>b
+      case B::Gt:
+        return B::Le; // NOT(a>b)  = a<=b
+      case B::Ge:
+        return B::Lt; // NOT(a>=b) = a<b
+      case B::Eq:
+        return B::Ne;
+      case B::Ne:
+        return B::Eq;
+      default:
+        return b;
       }
     };
     for (uint32_t b = 0; b < fn.nblocks(); ++b)
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
         Instr &I = fn.code[i];
-        if (I.k != K::Bin || (I.b != B::Eq && I.b != B::Ne)) continue;
-        if (I.b2 == NONE || I.b2 >= nv || !kc[I.b2]) continue; // const right
+        if (I.k != K::Bin || (I.b != B::Eq && I.b != B::Ne))
+          continue;
+        if (I.b2 == NONE || I.b2 >= nv || !kc[I.b2])
+          continue; // const right
         val_t cv = kv[I.b2];
-        if (cv != 0 && cv != 1) continue;
+        if (cv != 0 && cv != 1)
+          continue;
         uint32_t t1 = I.a;
-        if (t1 == NONE || t1 >= nv) continue;
+        if (t1 == NONE || t1 >= nv)
+          continue;
         uint32_t d = defi[t1];
-        if (d == NONE || ndefs[t1] != 1 || uses[t1] != 1) continue;
+        if (d == NONE || ndefs[t1] != 1 || uses[t1] != 1)
+          continue;
         const Instr &D = fn.code[d];
-        if (D.k != K::Bin) continue;
+        if (D.k != K::Bin)
+          continue;
         if (D.b != B::Lt && D.b != B::Le && D.b != B::Gt && D.b != B::Ge &&
             D.b != B::Eq && D.b != B::Ne)
           continue;
@@ -122,4 +142,5 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
   return changed;
 }
 
-// --- 9a3. dominator-scoped common subexpression elimination -------------------
+// --- 9a3. dominator-scoped common subexpression elimination
+// -------------------

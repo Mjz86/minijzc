@@ -41,31 +41,37 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
   RaPlan R{};
   R.color.assign(nv, -1);
   R.spill.assign(nv, 0);
-  if (!nb || !nv) return R;
+  if (!nb || !nv)
+    return R;
   // textual-use reader honoring inlined consts and fused branches
   auto each_use = [&](uint32_t i, auto &&f) {
     const Instr &I = fn.code[i];
     if (P.fuse[i] != NONE) { // the branch reads the comparison's operands
       const Instr &D = fn.code[P.fuse[i]];
       auto one = [&](uint32_t v) {
-        if (v != NONE && v < nv && !P.kc[v]) f(v);
+        if (v != NONE && v < nv && !P.kc[v])
+          f(v);
       };
       one(D.a);
       one(D.b2);
       return;
     }
     auto one = [&](uint32_t v) {
-      if (v != NONE && v < nv && !P.kc[v]) f(v);
+      if (v != NONE && v < nv && !P.kc[v])
+        f(v);
     };
     one(I.a);
     one(I.b2);
     one(I.c2);
-    for (uint32_t v : I.args) one(v);
+    for (uint32_t v : I.args)
+      one(v);
   };
   auto is_def = [&](uint32_t i) -> uint32_t { // live def of instr i (or NONE)
     const Instr &I = fn.code[i];
-    if (P.dead[i]) return NONE;
-    if (I.dst == NONE || I.dst >= nv || P.kc[I.dst]) return NONE;
+    if (P.dead[i])
+      return NONE;
+    if (I.dst == NONE || I.dst >= nv || P.kc[I.dst])
+      return NONE;
     return I.dst;
   };
   // ---- block liveness (backward scan, fixpoint over successors) ----------
@@ -78,13 +84,16 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
       std::fill(lo.begin(), lo.end(), 0);
       for (uint32_t s : {fn.succ0((uint32_t)b), fn.succ1((uint32_t)b)})
         if (s != NONE && s < nb)
-          for (uint32_t v = 0; v < nv; ++v) lo[v] |= lin[s][v];
+          for (uint32_t v = 0; v < nv; ++v)
+            lo[v] |= lin[s][v];
       std::vector<char> live = lo;
       for (uint32_t i = fn.blocks[(uint32_t)b].end;
            i-- > fn.blocks[(uint32_t)b].begin;) {
-        if (P.dead[i]) continue;
+        if (P.dead[i])
+          continue;
         uint32_t d = is_def(i);
-        if (d != NONE) live[d] = 0;
+        if (d != NONE)
+          live[d] = 0;
         each_use(i, [&](uint32_t v) { live[v] = 1; });
       }
       for (uint32_t v = 0; v < nv; ++v)
@@ -93,14 +102,17 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
           changed = true;
         }
     }
-    if (!changed) break;
+    if (!changed)
+      break;
   }
   // ---- interference edges ------------------------------------------------
   std::vector<std::vector<ulen>> adj(nv);
   auto edge = [&](uint32_t a, uint32_t b) {
-    if (a == b || a >= nv || b >= nv) return;
+    if (a == b || a >= nv || b >= nv)
+      return;
     for (uint32_t x : adj[a])
-      if (x == b) return;
+      if (x == b)
+        return;
     adj[a].push_back(b);
     adj[b].push_back(a);
   };
@@ -109,7 +121,8 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
     std::vector<char> live = lin[0];
     for (uint32_t p = 0; p < fn.nparams && p < nv; ++p) {
       for (uint32_t u = 0; u < nv; ++u)
-        if (live[u] && u != p) edge(p, u);
+        if (live[u] && u != p)
+          edge(p, u);
       live[p] = 0;
     }
     // ... and PAIRWISE, always: the prologue unconditionally moves every
@@ -124,11 +137,13 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
   for (uint32_t b = 0; b < nb; ++b) {
     std::vector<char> live = lout[b];
     for (uint32_t i = fn.blocks[b].end; i-- > fn.blocks[b].begin;) {
-      if (P.dead[i]) continue;
+      if (P.dead[i])
+        continue;
       uint32_t d = is_def(i);
       if (d != NONE) {
         for (uint32_t u = 0; u < nv; ++u)
-          if (live[u]) edge(d, u);
+          if (live[u])
+            edge(d, u);
         live[d] = 0;
       }
       each_use(i, [&](uint32_t v) { live[v] = 1; });
@@ -139,16 +154,19 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
   auto colored = gns::color_chordal_graph<V>(forest);
   // ---- assignment: colors 0..4 -> rbx,r12..r15; the rest spill ------------
   std::vector<char> hasloc(nv, 0);
-  for (uint32_t v = 0; v < fn.nparams && v < nv; ++v) hasloc[v] = 1;
+  for (uint32_t v = 0; v < fn.nparams && v < nv; ++v)
+    hasloc[v] = 1;
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
-      if (is_def(i) != NONE) hasloc[fn.code[i].dst] = 1;
+      if (is_def(i) != NONE)
+        hasloc[fn.code[i].dst] = 1;
   for (uint32_t b = 0; b < nb; ++b) // defensive: used-but-undefined
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
       each_use(i, [&](uint32_t v) { hasloc[v] = 1; });
   uint32_t spills = 0;
   for (uint32_t v = 0; v < nv; ++v) {
-    if (!hasloc[v]) continue;
+    if (!hasloc[v])
+      continue;
     uint64_t c = (v < colored.first.size()) ? (uint64_t)colored.first[v] : 0;
     if (c < 5) {
       R.color[v] = (int32_t)c;
@@ -163,7 +181,7 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
 }
 
 MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
-                              bool multi) {
+                                    bool multi) {
   EmitPlan P = make_emit_plan(fn);
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   char buf[192];
@@ -176,9 +194,7 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   auto hascolor = [&](uint32_t v) -> bool {
     return v != NONE && v < nv && RP.color[v] >= 0 && RP.color[v] < 5;
   };
-  auto rname = [&](uint32_t v) -> const char * {
-    return RREGS[RP.color[v]];
-  };
+  auto rname = [&](uint32_t v) -> const char * { return RREGS[RP.color[v]]; };
   // number of callee-saved registers this function pushes (computed here so
   // the spill offsets below can skip them)
   const uint32_t npush = (uint32_t)__builtin_popcount(RP.usedmask);
@@ -192,7 +208,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
     return std::string(buf);
   };
   auto loc = [&](uint32_t v) -> std::string { // operand text: %reg or slot
-    if (hascolor(v)) return std::string("%") + rname(v);
+    if (hascolor(v))
+      return std::string("%") + rname(v);
     return slot(v);
   };
   auto is_c = [&](uint32_t v) -> bool {
@@ -203,22 +220,22 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   auto ld = [&](const char *reg, uint32_t v) {
     if (is_c(v)) {
       if (fits32(cv(v)))
-        std::snprintf(buf, sizeof buf, "  movq $%lld, %%%s\n",
-                      (long long)cv(v), reg);
+        std::snprintf(buf, sizeof buf, "  movq $%lld, %%%s\n", (long long)cv(v),
+                      reg);
       else
         std::snprintf(buf, sizeof buf, "  movabsq $%lld, %%%s\n",
                       (long long)cv(v), reg);
     } else if (hascolor(v)) {
       std::snprintf(buf, sizeof buf, "  movq %%%s, %%%s\n", rname(v), reg);
     } else {
-      std::snprintf(buf, sizeof buf, "  movq %s, %%%s\n", slot(v).c_str(),
-                    reg);
+      std::snprintf(buf, sizeof buf, "  movq %s, %%%s\n", slot(v).c_str(), reg);
     }
     s += buf;
   };
   // store %rax into a destination (register in place, or spill slot)
   auto st_rax = [&](uint32_t v) {
-    if (v == NONE || v >= nv) return;
+    if (v == NONE || v >= nv)
+      return;
     if (hascolor(v)) {
       std::snprintf(buf, sizeof buf, "  movq %%rax, %%%s\n", rname(v));
       s += buf;
@@ -230,8 +247,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   auto src_into = [&](const char *dr, uint32_t x) {
     if (is_c(x)) {
       if (fits32(cv(x))) {
-        std::snprintf(buf, sizeof buf, "  movq $%lld, %%%s\n",
-                      (long long)cv(x), dr);
+        std::snprintf(buf, sizeof buf, "  movq $%lld, %%%s\n", (long long)cv(x),
+                      dr);
         s += buf;
       } else {
         std::snprintf(buf, sizeof buf, "  movabsq $%lld, %%rax\n",
@@ -243,39 +260,53 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
     } else if (hascolor(x) && !std::strcmp(rname(x), dr)) {
       // already in place: no code
     } else {
-      std::snprintf(buf, sizeof buf, "  movq %s, %%%s\n", loc(x).c_str(),
-                    dr);
+      std::snprintf(buf, sizeof buf, "  movq %s, %%%s\n", loc(x).c_str(), dr);
       s += buf;
     }
   };
   auto jcc_of = [](B b) -> const char * {
     switch (b) {
-    case B::Lt: return "jl";
-    case B::Le: return "jle";
-    case B::Gt: return "jg";
-    case B::Ge: return "jge";
-    case B::Eq: return "je";
-    default: return "jne";
+    case B::Lt:
+      return "jl";
+    case B::Le:
+      return "jle";
+    case B::Gt:
+      return "jg";
+    case B::Ge:
+      return "jge";
+    case B::Eq:
+      return "je";
+    default:
+      return "jne";
     }
   };
   auto jcc_inv = [](const char *j) -> const char * {
-    if (!std::strcmp(j, "jl")) return "jge";
-    if (!std::strcmp(j, "jle")) return "jg";
-    if (!std::strcmp(j, "jg")) return "jle";
-    if (!std::strcmp(j, "jge")) return "jl";
-    if (!std::strcmp(j, "je")) return "jne";
+    if (!std::strcmp(j, "jl"))
+      return "jge";
+    if (!std::strcmp(j, "jle"))
+      return "jg";
+    if (!std::strcmp(j, "jg"))
+      return "jle";
+    if (!std::strcmp(j, "jge"))
+      return "jl";
+    if (!std::strcmp(j, "je"))
+      return "jne";
     return "je";
   };
   // frame: spill bytes, 16-aligned, padded so calls stay aligned given the
   // (possibly odd) number of pushed callee-saved registers
   uint64_t frame = ((uint64_t)RP.nspill * 8 + 15) / 16 * 16;
-  if (npush & 1) frame += 8;
-  if (frame < (uint64_t)RP.nspill * 8) frame = RP.nspill * 8;
+  if (npush & 1)
+    frame += 8;
+  if (frame < (uint64_t)RP.nspill * 8)
+    frame = RP.nspill * 8;
   // block labels are file-scope in asm: prefix per function
   auto lbl = [&](uint32_t b) -> std::string {
     char l[48];
-    if (is_main) std::snprintf(l, sizeof l, ".Lb%u", (unsigned)b);
-    else std::snprintf(l, sizeof l, ".LF%u_%u", (unsigned)fidx, (unsigned)b);
+    if (is_main)
+      std::snprintf(l, sizeof l, ".Lb%u", (unsigned)b);
+    else
+      std::snprintf(l, sizeof l, ".LF%u_%u", (unsigned)fidx, (unsigned)b);
     return std::string(l);
   };
   if (is_main) {
@@ -302,12 +333,14 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
       std::vector<uint32_t> pu(nv, 0);
       for (const Instr &I : fn.code) {
         auto bump = [&](uint32_t v) {
-          if (v != NONE && v < nv) ++pu[v];
+          if (v != NONE && v < nv)
+            ++pu[v];
         };
         bump(I.a);
         bump(I.b2);
         bump(I.c2);
-        for (uint32_t v : I.args) bump(v);
+        for (uint32_t v : I.args)
+          bump(v);
       }
       for (uint32_t p = 0; p < fn.nparams && p < 6; ++p)
         if (pu[p] != 0)
@@ -322,12 +355,15 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   for (uint32_t b : P.order)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (P.dead[i]) continue;
-      if (I.k == K::Br && I.t != P.next[b]) refd[I.t] = 1;
+      if (P.dead[i])
+        continue;
+      if (I.k == K::Br && I.t != P.next[b])
+        refd[I.t] = 1;
       if (I.k == K::Cbr) {
         if (P.fuse[i] == NONE && I.a < nv && P.kc[I.a]) {
           uint32_t tgt = (P.kv[I.a] != 0) ? I.t : I.f; // constant condition
-          if (tgt != P.next[b]) refd[tgt] = 1;
+          if (tgt != P.next[b])
+            refd[tgt] = 1;
         } else if (I.f == P.next[b]) {
           refd[I.t] = 1; // `jcc .Lb_t` false arm falls through
         } else if (I.t == P.next[b]) {
@@ -340,13 +376,15 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
     }
   bool saw_exit = false;
   for (uint32_t b : P.order) {
-    if (refd[b]) s += lbl(b) + ":\n";
+    if (refd[b])
+      s += lbl(b) + ":\n";
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (P.dead[i]) continue;
+      if (P.dead[i])
+        continue;
       switch (I.k) {
       case K::Phi:
-        break; // destroyed input has none
+        break;         // destroyed input has none
       case K::Const: { // multi-def slot: a real write of THIS constant
         if (hascolor(I.dst)) {
           if (fits32(I.c)) {
@@ -408,12 +446,12 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         case B::And:
         case B::Or:
         case B::Xor: {
-          const char *op = I.b == B::Add    ? "addq"
-                           : I.b == B::Sub  ? "subq"
-                           : I.b == B::Mul  ? "imulq"
-                           : I.b == B::And  ? "andq"
-                           : I.b == B::Or   ? "orq"
-                                            : "xorq";
+          const char *op = I.b == B::Add   ? "addq"
+                           : I.b == B::Sub ? "subq"
+                           : I.b == B::Mul ? "imulq"
+                           : I.b == B::And ? "andq"
+                           : I.b == B::Or  ? "orq"
+                                           : "xorq";
           const bool comm = (I.b != B::Sub);
           if (!yimm && hascolor(y) && !std::strcmp(rname(y), dr)) {
             // TWO-ADDRESS HAZARD: y is coalesced into the destination
@@ -481,9 +519,9 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         }
         case B::Div:
         case B::Mod: {
-          bool bc = yimm;            // divisor known?
+          bool bc = yimm; // divisor known?
           val_t bv = bc ? cv(y) : 0;
-          bool ac = is_c(x);         // dividend known?
+          bool ac = is_c(x); // dividend known?
           val_t av = ac ? cv(x) : 0;
           bool always = bc && (bv == 0 || (bv == -1 && ac && av == INT64_MIN));
           if (always) {
@@ -495,7 +533,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
             src_into("rax", x);
             ld("rcx", y);
             s += "  cqto\n  idivq %rcx\n";
-            if (I.b == B::Mod) s += "  movq %rdx, %rax\n";
+            if (I.b == B::Mod)
+              s += "  movq %rdx, %rax\n";
             st_rax(I.dst);
             break;
           }
@@ -518,7 +557,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
             s += "1:\n";
           }
           s += "  cqto\n  idivq %rcx\n";
-          if (I.b == B::Mod) s += "  movq %rdx, %rax\n";
+          if (I.b == B::Mod)
+            s += "  movq %rdx, %rax\n";
           st_rax(I.dst); // register in place, spill slot otherwise
           break;
         }
@@ -543,8 +583,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
                           set, dr);
             s += buf;
           } else {
-            std::snprintf(buf, sizeof buf,
-                          "  %s %%dl\n  movzbq %%dl, %%rax\n", set);
+            std::snprintf(buf, sizeof buf, "  %s %%dl\n  movzbq %%dl, %%rax\n",
+                          set);
             s += buf;
           }
           break;
@@ -573,8 +613,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
           }
           if (P.fuse[i] == NONE) { // truth test on the condition value
             if (hascolor(x)) {
-              std::snprintf(buf, sizeof buf, "  testq %%%s, %%%s\n",
-                            rname(x), rname(x));
+              std::snprintf(buf, sizeof buf, "  testq %%%s, %%%s\n", rname(x),
+                            rname(x));
               s += buf;
             } else {
               ld("rax", x);
@@ -589,8 +629,7 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
               s += buf;
             } else if (is_c(y)) {
               ld("rcx", y);
-              std::snprintf(buf, sizeof buf, "  cmpq %%rcx, %%%s\n",
-                            rname(x));
+              std::snprintf(buf, sizeof buf, "  cmpq %%rcx, %%%s\n", rname(x));
               s += buf;
             } else {
               std::snprintf(buf, sizeof buf, "  cmpq %s, %%%s\n",
@@ -612,7 +651,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         };
         if (P.fuse[i] == NONE && is_c(I.a)) { // constant condition
           uint32_t tgt = (cv(I.a) != 0) ? I.t : I.f;
-          if (tgt != P.next[b]) s += "  jmp " + lbl(tgt) + "\n";
+          if (tgt != P.next[b])
+            s += "  jmp " + lbl(tgt) + "\n";
           break;
         }
         B op = emit_cmp();
@@ -668,7 +708,7 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         break;
       case K::Call: { // SysV: up to six integer registers
         static const char *argregs[6] = {"rdi", "rsi", "rdx",
-                                         "rcx", "r8", "r9"};
+                                         "rcx", "r8",  "r9"};
         for (size_t k = 0; k < I.args.size() && k < 6; ++k)
           ld(argregs[k], I.args[k]);
         s += "  call mjz_f" + std::to_string((unsigned)I.c) + "\n";
@@ -676,9 +716,12 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         break;
       }
       case K::Ret:
-        if (I.a != NONE) ld("rax", I.a);
-        else s += "  xorl %eax, %eax\n";
-        if (multi) s += "  decq mjz_depth(%rip)\n";
+        if (I.a != NONE)
+          ld("rax", I.a);
+        else
+          s += "  xorl %eax, %eax\n";
+        if (multi)
+          s += "  decq mjz_depth(%rip)\n";
         if (frame) {
           std::snprintf(buf, sizeof buf, "  addq $%llu, %%rsp\n",
                         (unsigned long long)frame);
@@ -696,13 +739,14 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
       }
     }
   }
-  if (!saw_exit) s += "  xorl %edi, %edi\n  call exit\n";
+  if (!saw_exit)
+    s += "  xorl %edi, %edi\n  call exit\n";
   return s;
 }
 
 // whole-program asm: callee bodies, main, shared trap path + helpers + data.
 MJZ_EMIT_FN std::string emit_x64(const std::vector<Fn> &fns,
-                            const std::vector<std::string_view> &names) {
+                                 const std::vector<std::string_view> &names) {
   (void)names;
   std::string s{};
   char buf[160];
@@ -711,8 +755,7 @@ MJZ_EMIT_FN std::string emit_x64(const std::vector<Fn> &fns,
   bool use_arr = false, use_in = false;
   for (const Fn &fn : fns)
     for (const Instr &I : fn.code) {
-      if (I.k == K::Alloc || I.k == K::Load || I.k == K::Store ||
-          I.k == K::Len)
+      if (I.k == K::Alloc || I.k == K::Load || I.k == K::Store || I.k == K::Len)
         use_arr = true;
       else if (I.k == K::Input)
         use_in = true;
@@ -732,13 +775,13 @@ MJZ_EMIT_FN std::string emit_x64(const std::vector<Fn> &fns,
     // exactly (CAP = 2^21 slots; handles are element indices)
     s += "# int64 mjz_alloc(int64 n): bump-allocate n slots, return handle\n";
     s += "mjz_alloc:\n";
-    s += "  testq %rdi, %rdi\n  js mjz_trap\n";        // n < 0
+    s += "  testq %rdi, %rdi\n  js mjz_trap\n"; // n < 0
     s += "  movabsq $2097152, %rdx\n  cmpq %rdx, %rdi\n  jg mjz_trap\n";
-    s += "  subq %rdi, %rdx\n";                        // CAP - n (no ovf)
-    s += "  movq mjz_atop(%rip), %rax\n";              // h = top
-    s += "  cmpq %rdx, %rax\n  jg mjz_trap\n";        // top > CAP - n
+    s += "  subq %rdi, %rdx\n";                // CAP - n (no ovf)
+    s += "  movq mjz_atop(%rip), %rax\n";      // h = top
+    s += "  cmpq %rdx, %rax\n  jg mjz_trap\n"; // top > CAP - n
     s += "  leaq mjz_alen(%rip), %rdx\n";
-    s += "  movq %rdi, (%rdx,%rax,8)\n";               // len[h] = n
+    s += "  movq %rdi, (%rdx,%rax,8)\n";                     // len[h] = n
     s += "  addq %rax, %rdi\n  movq %rdi, mjz_atop(%rip)\n"; // top = h+n
     s += "  ret\n";
     s += "# int64 mjz_len(int64 h): 0 for any non-handle\n";
@@ -767,7 +810,8 @@ MJZ_EMIT_FN std::string emit_x64(const std::vector<Fn> &fns,
     s += "  movq %rdx, (%r9,%rsi,8)\n  ret\n";
   }
   if (use_in) {
-    s += "# int64 mjz_input(void): scanf into stack scratch; 0 on EOF/failure\n";
+    s +=
+        "# int64 mjz_input(void): scanf into stack scratch; 0 on EOF/failure\n";
     s += "mjz_input:\n";
     s += "  pushq %rbx\n  subq $16, %rsp\n";
     s += "  leaq .Lscan(%rip), %rdi\n";
@@ -779,7 +823,8 @@ MJZ_EMIT_FN std::string emit_x64(const std::vector<Fn> &fns,
   s += "  .section .rodata\n";
   s += ".Lfmt:\n  .string \"%lld\\n\"\n";
   s += ".Ltraps:\n  .string \"TRAP\"\n";
-  if (use_in) s += ".Lscan:\n  .string \"%lld\"\n";
+  if (use_in)
+    s += ".Lscan:\n  .string \"%lld\"\n";
   if (use_arr) { // (CAP + 1) * 8 bytes each; handles may equal CAP
     s += "  .section .bss\n  .balign 32\n";
     s += "mjz_arena:\n  .zero 16777224\n";
@@ -792,6 +837,7 @@ MJZ_EMIT_FN std::string emit_x64(const std::vector<Fn> &fns,
   return s;
 }
 
-// ---- 13.5c. bytecode listing (disassembly) -----------------------------------
+// ---- 13.5c. bytecode listing (disassembly)
+// -----------------------------------
 
 #undef MJZ_EMIT_FN

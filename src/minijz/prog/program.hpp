@@ -18,10 +18,10 @@
 #include <string_view>
 #include <vector>
 
-struct FnUnit { // one function's journey through the pipeline
-  Fn ssa{};        // SSA before optimization
-  Fn opt{};        // SSA after optimization
-  Fn destroyed{};  // after SSA destruction (no phis; slots only)
+struct FnUnit {   // one function's journey through the pipeline
+  Fn ssa{};       // SSA before optimization
+  Fn opt{};       // SSA after optimization
+  Fn destroyed{}; // after SSA destruction (no phis; slots only)
   SsaStats sstats{};
   OptStats ostats{};
   DestrStats dstats{};
@@ -31,9 +31,9 @@ struct Program {
   std::vector<Fn> ssa_all{}; // pre-opt SSA of EVERY fn (original indices;
                              // the unoptimized runners need the full set even
                              // after the optimizer dropped dead functions)
-  std::vector<FnUnit> fns{};                // [0] = main body, then fns
+  std::vector<FnUnit> fns{}; // [0] = main body, then fns
   std::vector<std::string_view> fn_names{}; // parallel source names
-  bool uses_input{}; // the program contains input()
+  bool uses_input{};                        // the program contains input()
   bool ok{};
   const char *error{};
   uint32_t errpos{};
@@ -54,7 +54,8 @@ void print_pre_main_analysis(const Program &P);
 
 // assemble one IR view (0 = ssa, 1 = opt, 2 = destroyed) of a program
 constexpr std::vector<Fn> fns_of(const Program &P, int which) {
-  if (which == 0) return P.ssa_all; // unoptimized: ALL functions, orig indices
+  if (which == 0)
+    return P.ssa_all; // unoptimized: ALL functions, orig indices
   std::vector<Fn> out{};
   out.reserve(P.fns.size());
   for (const FnUnit &U : P.fns)
@@ -99,8 +100,8 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.mem2reg_dses += U.ostats.mem2reg_dses;
     t.scctco += U.ostats.scctco;
     t.scctco_folds += U.ostats.scctco_folds;
-    if (U.ostats.iters > t.iters) t.iters = U.ostats.iters;
+    if (U.ostats.iters > t.iters)
+      t.iters = U.ostats.iters;
   }
   return t;
 }
-

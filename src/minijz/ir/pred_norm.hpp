@@ -5,11 +5,11 @@
 
 #include "minijz/ir/instr.hpp"
 
-// ---- 6z. multi-predecessor normalization (binary merge trees) ----------------
-// A Phi in this IR carries exactly TWO arguments (keyed by the predecessor
-// ids in t/f), so every merge point must have at most two predecessors.
-// `continue` adds a second back edge to a loop header and `break` out of
-// nested arms adds exit edges, so break/continue programs can produce 3+
+// ---- 6z. multi-predecessor normalization (binary merge trees)
+// ---------------- A Phi in this IR carries exactly TWO arguments (keyed by the
+// predecessor ids in t/f), so every merge point must have at most two
+// predecessors. `continue` adds a second back edge to a loop header and `break`
+// out of nested arms adds exit edges, so break/continue programs can produce 3+
 // pred blocks; SSA construction would then place 2-arg phis with missing
 // edges. This pass rewrites each >2-pred block's extra incoming edges
 // through a right-leaning chain of fresh 2-pred merge blocks:
@@ -25,7 +25,8 @@ constexpr void normalize_multi_preds(Fn &fn) {
     fn.recompute_preds();
     const uint32_t nb = fn.nblocks();
     for (uint32_t b = 0; b < nb && !again; ++b) {
-      if (fn.preds[b].size() <= 2) continue;
+      if (fn.preds[b].size() <= 2)
+        continue;
       const std::vector<uint32_t> ps = fn.preds[b]; // copy: succ mutates
       const uint32_t k = (uint32_t)ps.size();
       // fresh chain blocks M1..M(k-2) (M[j], 1-based)
@@ -49,21 +50,24 @@ constexpr void normalize_multi_preds(Fn &fn) {
         for (int s = 0; s < 2; ++s)
           if (fn.succ[2 * p + (uint32_t)s] == b) {
             fn.succ[2 * p + (uint32_t)s] = to;
-            for (uint32_t i = fn.blocks[p].begin; i < fn.blocks[p].end;
-                 ++i) {
+            for (uint32_t i = fn.blocks[p].begin; i < fn.blocks[p].end; ++i) {
               Instr &I = fn.code[i];
               if (I.k == K::Br && I.t == b)
                 I.t = to;
               else if (I.k == K::Cbr) {
-                if (I.t == b) I.t = to;
-                if (I.f == b) I.f = to;
+                if (I.t == b)
+                  I.t = to;
+                if (I.f == b)
+                  I.f = to;
               }
             }
           }
       };
       redirect(ps[1], M[1]);
-      if (k > 2) redirect(ps[2], M[1]);
-      for (uint32_t j = 3; j < k; ++j) redirect(ps[j], M[j - 1]);
+      if (k > 2)
+        redirect(ps[2], M[1]);
+      for (uint32_t j = 3; j < k; ++j)
+        redirect(ps[j], M[j - 1]);
       again = true; // rescan with fresh preds
     }
   }

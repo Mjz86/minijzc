@@ -18,11 +18,11 @@
 
 // the per-file compile report + in-process runs; returns the optimized RunOut
 RunOut compile_report(Program &P, const Cli &C, const std::string &src,
-                             bool brief) {
+                      bool brief) {
   P = compile(src, pass_cfg_of(C));
   if (!P.ok) {
-    std::printf("compile error: %s (at byte %u)\n",
-                P.error ? P.error : "?", (unsigned)P.errpos);
+    std::printf("compile error: %s (at byte %u)\n", P.error ? P.error : "?",
+                (unsigned)P.errpos);
     return {};
   }
   if (!brief && !C.quiet) {
@@ -50,20 +50,19 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u)\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
-        P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i,
-        (unsigned)os.iters, (unsigned)os.folds, (unsigned)os.copies,
-        (unsigned)os.copyprops, (unsigned)os.cses, (unsigned)os.canon_swaps,
-        (unsigned)os.canon_cmps, (unsigned)os.brs_folded,
-        (unsigned)os.cbr_same, (unsigned)os.blocks_gone, (unsigned)os.splices,
-        (unsigned)os.phi_degens, (unsigned)os.dce, (unsigned)os.hoisted,
-        (unsigned)os.inlines, (unsigned)os.unrolls, (unsigned)os.reassocs,
-        (unsigned)os.reassoc_gone, (unsigned)os.lcf_loops,
-        (unsigned)os.lcf_sims, (unsigned)os.lcf_gensims, (unsigned)os.lcf_rt,
-        (unsigned)os.divmagics, (unsigned)os.notcombs,
+        P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i, (unsigned)os.iters,
+        (unsigned)os.folds, (unsigned)os.copies, (unsigned)os.copyprops,
+        (unsigned)os.cses, (unsigned)os.canon_swaps, (unsigned)os.canon_cmps,
+        (unsigned)os.brs_folded, (unsigned)os.cbr_same,
+        (unsigned)os.blocks_gone, (unsigned)os.splices, (unsigned)os.phi_degens,
+        (unsigned)os.dce, (unsigned)os.hoisted, (unsigned)os.inlines,
+        (unsigned)os.unrolls, (unsigned)os.reassocs, (unsigned)os.reassoc_gone,
+        (unsigned)os.lcf_loops, (unsigned)os.lcf_sims, (unsigned)os.lcf_gensims,
+        (unsigned)os.lcf_rt, (unsigned)os.divmagics, (unsigned)os.notcombs,
         (unsigned)os.traps_killed, (unsigned)os.mem2reg_lifts,
         (unsigned)os.mem2reg_dses, (unsigned)os.scctco,
-        (unsigned)os.scctco_folds, (unsigned)de_c,
-        (unsigned)dz_c, (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
+        (unsigned)os.scctco_folds, (unsigned)de_c, (unsigned)dz_c,
+        (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
   }
   if (C.print_ir) {
     for (size_t f = 0; f < P.fns.size(); ++f) {
@@ -79,7 +78,8 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
       print_fn(P.fns[f].destroyed, t3);
     }
   }
-  if (C.no_exec && !C.do_run) return {}; // compile/emit only
+  if (C.no_exec && !C.do_run)
+    return {}; // compile/emit only
   RunOut R = run_prog(fns_of(P, 1), C.steps, C.inputs);
   RunOut Ro = run_ast(P.P.ast, P.P.root, C.steps, C.inputs);
   if (!C.quiet || brief) {
@@ -138,7 +138,8 @@ static void run_matrix(Program &P, const Cli &C, const std::string &stem) {
   std::string in_path = "/dev/null";
   if (!C.stdin_text.empty()) {
     std::string p = C.out_dir + "/" + stem + ".in.tmp";
-    if (write_file(p, C.stdin_text)) in_path = p;
+    if (write_file(p, C.stdin_text))
+      in_path = p;
   }
   std::printf("  %-18s %10s  %s\n", "backend", "time(ms)", "output");
   std::printf("  %-18s %10.3f  %s\n", "interp (SSA opt)", t_interp,
@@ -153,12 +154,13 @@ static void run_matrix(Program &P, const Cli &C, const std::string &stem) {
     };
     Job jobs[2] = {{"c", c_path, false}, {"asm", s_path, true}};
     for (Job &J : jobs) {
-      std::string exe = C.out_dir + "/" + stem + "." + J.tag + ".O" + lvl +
-                        ".exe";
-      std::string build = "timeout 60 " + cc + " -w -O" + lvl + " " +
-                          J.src_path + " -o " + exe;
+      std::string exe =
+          C.out_dir + "/" + stem + "." + J.tag + ".O" + lvl + ".exe";
+      std::string build =
+          "timeout 60 " + cc + " -w -O" + lvl + " " + J.src_path + " -o " + exe;
       if (std::system(build.c_str()) != 0) {
-        std::printf("  %-18s %10s  BUILD FAILED (%s -O%s)\n", J.tag, "-", cc.c_str(), lvl.c_str());
+        std::printf("  %-18s %10s  BUILD FAILED (%s -O%s)\n", J.tag, "-",
+                    cc.c_str(), lvl.c_str());
         continue;
       }
       std::string out_text{};
@@ -168,11 +170,13 @@ static void run_matrix(Program &P, const Cli &C, const std::string &stem) {
         t0 = now_ms();
         rc = run_capture("timeout 20 " + exe, out_text, cap, in_path);
         double dt = now_ms() - t0;
-        if (dt < best) best = dt;
+        if (dt < best)
+          best = dt;
       }
       bool timed_out = (rc != 0 && (((unsigned)rc >> 8) == 124 ||
-                                     ((unsigned)rc >> 8) == 137));
-      if (timed_out) out_text += "TIMEOUT\n";
+                                    ((unsigned)rc >> 8) == 137));
+      if (timed_out)
+        out_text += "TIMEOUT\n";
       bool match = (out_text == ref_text);
       std::string name = std::string(J.tag) + " -O" + lvl;
       std::printf("  %-18s %10.3f  %s\n", name.c_str(), best,
@@ -190,19 +194,22 @@ static void repl() {
   for (;;) {
     std::printf("minijz> ");
     std::fflush(stdout);
-    if (!std::fgets(line, sizeof line, stdin)) break;
+    if (!std::fgets(line, sizeof line, stdin))
+      break;
     std::string t(line);
     while (!t.empty() && (t.back() == '\n' || t.back() == '\r' ||
                           t.back() == ' ' || t.back() == '\t'))
       t.pop_back();
-    if (t == ":q") break;
+    if (t == ":q")
+      break;
     if (t == ":r") {
       buf.clear();
       std::printf("(buffer reset)\n");
       continue;
     }
     if (t.empty()) {
-      if (buf.empty()) continue;
+      if (buf.empty())
+        continue;
       Cli C{};
       C.steps = 10000000;
       Program P{};

@@ -6,23 +6,26 @@
 #include "minijz/ir/instr.hpp"
 #include "minijz/opt/analysis/an.hpp"
 
-// --- 9a3. dominator-scoped common subexpression elimination -------------------
-// A pure, non-trapping Bin recomputed under a *dominating* identical Bin is
-// replaced by the dominating def. Visibility is exactly "def dominates use",
-// checked with the lib's dominance intervals: we walk the dominator tree (from
-// the lib) in preorder, keeping a scoped table — entries pushed on block entry
-// are truncated on exit. The renaming map is applied in a SECOND pass over
-// the whole function after the walk completes: a Phi's argument is a use on
-// an INCOMING EDGE, so the block defining the replaced vreg can be scanned
-// AFTER the phi's own block in preorder (a merge block does not sit below the
-// predecessor in the dominator tree) — rewriting during the walk would leave
-// the phi pointing at a dropped def (a ghost vreg reading as 0).
+// --- 9a3. dominator-scoped common subexpression elimination
+// ------------------- A pure, non-trapping Bin recomputed under a *dominating*
+// identical Bin is replaced by the dominating def. Visibility is exactly "def
+// dominates use", checked with the lib's dominance intervals: we walk the
+// dominator tree (from the lib) in preorder, keeping a scoped table — entries
+// pushed on block entry are truncated on exit. The renaming map is applied in a
+// SECOND pass over the whole function after the walk completes: a Phi's
+// argument is a use on an INCOMING EDGE, so the block defining the replaced
+// vreg can be scanned AFTER the phi's own block in preorder (a merge block does
+// not sit below the predecessor in the dominator tree) — rewriting during the
+// walk would leave the phi pointing at a dropped def (a ghost vreg reading as
+// 0).
 constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
-  if (A.n != fn.nblocks() || !fn.nblocks()) return false;
+  if (A.n != fn.nblocks() || !fn.nblocks())
+    return false;
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   std::vector<uint32_t> ren(nv, NONE);
   auto resolve = [&](uint32_t v) -> uint32_t {
-    while (v != NONE && v < nv && ren[v] != NONE) v = ren[v];
+    while (v != NONE && v < nv && ren[v] != NONE)
+      v = ren[v];
     return v;
   };
   // known constants: two temps holding 7 are the SAME operand. CSE keys
@@ -36,9 +39,9 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
     }
   struct Ent {
     B op;
-    uint32_t x, y;   // vreg operands (NONE if the operand is a known const)
-    val_t xv, yv;    // const operand values
-    uint32_t val;    // the defining vreg (the CSE replacement)
+    uint32_t x, y; // vreg operands (NONE if the operand is a known const)
+    val_t xv, yv;  // const operand values
+    uint32_t val;  // the defining vreg (the CSE replacement)
   };
   std::vector<Ent> table;
   struct Fr {
@@ -59,9 +62,11 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
         // resolved operands, LOCAL only (for the CSE key); the mutation
         // happens in the second pass, once the map is complete
         uint32_t ra = resolve(I.a), rb = resolve(I.b2);
-        if (I.k != K::Bin || I.dst == NONE) continue;
+        if (I.k != K::Bin || I.dst == NONE)
+          continue;
         if (I.b == B::Div || I.b == B::Mod)
-          if (!I.nt) continue; // may trap: keep (nt: proven safe, pure)
+          if (!I.nt)
+            continue; // may trap: keep (nt: proven safe, pure)
         Ent e{};
         e.op = I.b;
         e.x = ra;
@@ -78,9 +83,9 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
                     I.b == B::Ne || I.b == B::And || I.b == B::Or ||
                     I.b == B::Xor || I.b == B::MulHi;
         auto lt = [](const Ent &e, int i) -> uint64_t { // orderable tag
-          if (i == 0) return e.x == NONE ? ((uint64_t)1 << 63) ^
-                                              (uint64_t)e.xv
-                                         : (uint64_t)e.x;
+          if (i == 0)
+            return e.x == NONE ? ((uint64_t)1 << 63) ^ (uint64_t)e.xv
+                               : (uint64_t)e.x;
           return e.y == NONE ? ((uint64_t)1 << 63) ^ (uint64_t)e.yv
                              : (uint64_t)e.y;
         };
@@ -124,14 +129,19 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
     for (uint32_t b = 0; b < fn.nblocks(); ++b)
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
         Instr &I = fn.code[i];
-        if (I.a != NONE) I.a = resolve(I.a);
-        if (I.b2 != NONE) I.b2 = resolve(I.b2);
-        if (I.c2 != NONE) I.c2 = resolve(I.c2);
-        for (uint32_t &av : I.args) av = resolve(av);
+        if (I.a != NONE)
+          I.a = resolve(I.a);
+        if (I.b2 != NONE)
+          I.b2 = resolve(I.b2);
+        if (I.c2 != NONE)
+          I.c2 = resolve(I.c2);
+        for (uint32_t &av : I.args)
+          av = resolve(av);
       }
     // sweep CSE'd instrs, preserving block ranges
     bool any_drop = false;
-    for (char c : drop) any_drop |= (c != 0);
+    for (char c : drop)
+      any_drop |= (c != 0);
     if (any_drop) {
       std::vector<Instr> nc{};
       nc.reserve(fn.code.size());
@@ -139,7 +149,8 @@ constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
         uint32_t ob = fn.blocks[b].begin, oe = fn.blocks[b].end;
         fn.blocks[b].begin = (uint32_t)nc.size();
         for (uint32_t i = ob; i < oe; ++i)
-          if (!drop[i]) nc.push_back(fn.code[i]);
+          if (!drop[i])
+            nc.push_back(fn.code[i]);
         fn.blocks[b].end = (uint32_t)nc.size();
       }
       fn.code = std::move(nc);

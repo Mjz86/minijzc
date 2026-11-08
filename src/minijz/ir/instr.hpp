@@ -8,35 +8,89 @@
 // 5. IR: three-address code in basic blocks
 // ============================================================================
 enum class K : uint8_t {
-  Const, Copy, Bin, Br, Cbr, Print, Phi, Exit,
-  Alloc, Load, Store, Len, Input,  // arrays + stdin (arena handles)
-  Depth,                           // dst = current call depth (frames incl
-                                   // main: 1 in main, k+1 in the k-th
-                                   // callee) — created by tail-call
-                                   // elimination to materialize the exact
-                                   // recursion budget; pure within a fn
-  Call, Ret                        // functions: c = callee fn index (args in
-                                   // Instr::args); Ret never appears in main
+  Const,
+  Copy,
+  Bin,
+  Br,
+  Cbr,
+  Print,
+  Phi,
+  Exit,
+  Alloc,
+  Load,
+  Store,
+  Len,
+  Input, // arrays + stdin (arena handles)
+  Depth, // dst = current call depth (frames incl
+         // main: 1 in main, k+1 in the k-th
+         // callee) — created by tail-call
+         // elimination to materialize the exact
+         // recursion budget; pure within a fn
+  Call,
+  Ret // functions: c = callee fn index (args in
+      // Instr::args); Ret never appears in main
 };
 enum class B : uint8_t {
-  Add, Sub, Mul, Div, Mod, Lt, Le, Gt, Ge, Eq, Ne,
-  And, Or, Xor, Shl, LShr, AShr, MulHi // bitwise/shift/mulhi: created by
-                                          // the optimizer (div-by-const magic);
-                                          // the surface language has no syntax
-                                          // for them (yet)
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod,
+  Lt,
+  Le,
+  Gt,
+  Ge,
+  Eq,
+  Ne,
+  And,
+  Or,
+  Xor,
+  Shl,
+  LShr,
+  AShr,
+  MulHi // bitwise/shift/mulhi: created by
+        // the optimizer (div-by-const magic);
+        // the surface language has no syntax
+        // for them (yet)
 };
 constexpr const char *bname(B b) {
   switch (b) {
-  case B::Add: return "+";  case B::Sub: return "-";
-  case B::Mul: return "*";  case B::Div: return "/";
-  case B::Mod: return "%";  case B::Lt: return "<";
-  case B::Le: return "<="; case B::Gt: return ">";
-  case B::Ge: return ">="; case B::Eq: return "==";
-  case B::Ne: return "!=";
-  case B::And: return "&";  case B::Or: return "|";
-  case B::Xor: return "^";  case B::Shl: return "shl";
-  case B::LShr: return "lshr"; case B::AShr: return "ashr";
-  case B::MulHi: return "mulhi";
+  case B::Add:
+    return "+";
+  case B::Sub:
+    return "-";
+  case B::Mul:
+    return "*";
+  case B::Div:
+    return "/";
+  case B::Mod:
+    return "%";
+  case B::Lt:
+    return "<";
+  case B::Le:
+    return "<=";
+  case B::Gt:
+    return ">";
+  case B::Ge:
+    return ">=";
+  case B::Eq:
+    return "==";
+  case B::Ne:
+    return "!=";
+  case B::And:
+    return "&";
+  case B::Or:
+    return "|";
+  case B::Xor:
+    return "^";
+  case B::Shl:
+    return "shl";
+  case B::LShr:
+    return "lshr";
+  case B::AShr:
+    return "ashr";
+  case B::MulHi:
+    return "mulhi";
   }
   return "?";
 }
@@ -44,36 +98,54 @@ constexpr const char *bname(B b) {
 // one B op on values (used by the compile-time loop simulator)
 constexpr Rv w_bin(B b, val_t x, val_t y) {
   switch (b) {
-  case B::Add: return w_add(x, y);
-  case B::Sub: return w_sub(x, y);
-  case B::Mul: return w_mul(x, y);
-  case B::Div: return w_div(x, y);
-  case B::Mod: return w_mod(x, y);
-  case B::Lt: return {x < y, false};
-  case B::Le: return {x <= y, false};
-  case B::Gt: return {x > y, false};
-  case B::Ge: return {x >= y, false};
-  case B::Eq: return {x == y, false};
-  case B::Ne: return {x != y, false};
-  case B::And: return w_and(x, y);
-  case B::Or: return w_or(x, y);
-  case B::Xor: return w_xor(x, y);
-  case B::Shl: return w_shl(x, y);
-  case B::LShr: return w_lshr(x, y);
-  case B::AShr: return w_ashr(x, y);
-  case B::MulHi: return w_mulhi(x, y);
+  case B::Add:
+    return w_add(x, y);
+  case B::Sub:
+    return w_sub(x, y);
+  case B::Mul:
+    return w_mul(x, y);
+  case B::Div:
+    return w_div(x, y);
+  case B::Mod:
+    return w_mod(x, y);
+  case B::Lt:
+    return {x < y, false};
+  case B::Le:
+    return {x <= y, false};
+  case B::Gt:
+    return {x > y, false};
+  case B::Ge:
+    return {x >= y, false};
+  case B::Eq:
+    return {x == y, false};
+  case B::Ne:
+    return {x != y, false};
+  case B::And:
+    return w_and(x, y);
+  case B::Or:
+    return w_or(x, y);
+  case B::Xor:
+    return w_xor(x, y);
+  case B::Shl:
+    return w_shl(x, y);
+  case B::LShr:
+    return w_lshr(x, y);
+  case B::AShr:
+    return w_ashr(x, y);
+  case B::MulHi:
+    return w_mulhi(x, y);
   }
   return {0, true};
 }
 
 struct Instr {
   K k{};
-  B b{};                 // Bin opcode
-  uint32_t dst{NONE};    // defined vreg (NONE if none)
+  B b{};                      // Bin opcode
+  uint32_t dst{NONE};         // defined vreg (NONE if none)
   uint32_t a{NONE}, b2{NONE}; // operands (NONE = unused; 0 is a VALID vreg!)
   uint32_t t{NONE}, f{NONE};  // Br target / Cbr targets; Phi: pred ids of args
-  int64_t c{};           // Const value; Phi: base var id; Call: callee fn idx
-  uint32_t c2{NONE};     // third operand (Store: the stored value vreg)
+  int64_t c{};       // Const value; Phi: base var id; Call: callee fn idx
+  uint32_t c2{NONE}; // third operand (Store: the stored value vreg)
   // nt = "no trap PROVEN": a range/alias analysis proved this Div/Mod
   // cannot trap (divisor excludes 0, and excludes -1 or the dividend
   // excludes INT64_MIN) or this Load/Store is provably in bounds (handle
@@ -83,7 +155,7 @@ struct Instr {
   std::vector<uint32_t> args{}; // Call: argument vregs, parameter order
 };
 struct Block {
-  uint32_t begin{}, end{};     // instrs [begin,end)
+  uint32_t begin{}, end{}; // instrs [begin,end)
 };
 struct Fn {
   std::vector<Instr> code{};
@@ -138,8 +210,10 @@ struct Fn {
   constexpr void recompute_preds() {
     preds.assign(nblocks(), {});
     for (uint32_t b = 0; b < nblocks(); ++b) {
-      if (succ0(b) != NONE) preds[succ0(b)].push_back(b);
-      if (succ1(b) != NONE) preds[succ1(b)].push_back(b);
+      if (succ0(b) != NONE)
+        preds[succ0(b)].push_back(b);
+      if (succ1(b) != NONE)
+        preds[succ1(b)].push_back(b);
     }
   }
 };
@@ -148,8 +222,10 @@ struct Fn {
 // i.e. --no-regalloc or a never-run allocator) keeps one named local per
 // vreg; a filled slot_of is the interference-coloring home (see 11z).
 constexpr uint32_t slot_id(const Fn &fn, uint32_t v) {
-  if (v == NONE) return 0;
-  if (fn.slot_of.empty()) return v;
+  if (v == NONE)
+    return 0;
+  if (fn.slot_of.empty())
+    return v;
   return v < fn.slot_of.size() ? fn.slot_of[v] : 0;
 }
 constexpr uint32_t slot_count(const Fn &fn) {

@@ -38,7 +38,7 @@ constexpr bool fn_local_pure(const Fn &f) {
     switch (I.k) {
     case K::Const:
     case K::Copy:
-    case K::Bin:   // Div/Mod may trap -> the EVALUATOR aborts on real traps
+    case K::Bin: // Div/Mod may trap -> the EVALUATOR aborts on real traps
     case K::Br:
     case K::Cbr:
     case K::Phi:
@@ -62,7 +62,8 @@ constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
     uint32_t f = work.back();
     work.pop_back();
     for (const Instr &I : fns[f].code) {
-      if (I.k == K::Depth) return true;
+      if (I.k == K::Depth)
+        return true;
       if (I.k == K::Call) {
         uint32_t g = (uint32_t)I.c;
         if (g < n && !seen[g]) {
@@ -83,7 +84,8 @@ constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
   while (!work.empty()) {
     uint32_t f = work.back();
     work.pop_back();
-    if (!fn_local_pure(fns[f])) return false;
+    if (!fn_local_pure(fns[f]))
+      return false;
     for (const Instr &I : fns[f].code)
       if (I.k == K::Call) {
         uint32_t g = (uint32_t)I.c;
@@ -102,18 +104,23 @@ constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
 constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
                             const std::vector<val_t> &args, val_t &out,
                             uint32_t depth, uint64_t &steps) {
-  if (depth >= MJZ_MAX_CALL_DEPTH) return false; // runtime would TRAP
+  if (depth >= MJZ_MAX_CALL_DEPTH)
+    return false; // runtime would TRAP
   const Fn &F = fns[fi];
-  if (F.nblocks() == 0) return false;
+  if (F.nblocks() == 0)
+    return false;
   const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
   std::vector<val_t> val(nv, 0);
   for (size_t k = 0; k < args.size() && k < F.nparams; ++k)
-    if (k < nv) val[k] = args[k];
+    if (k < nv)
+      val[k] = args[k];
   uint32_t blk = 0;
   uint32_t pc = F.blocks[0].begin;
   for (;;) {
-    if (++steps > MJZ_CONSTCALL_STEPS) return false; // budget exhausted
-    if (blk >= F.nblocks() || pc >= F.blocks[blk].end) return false;
+    if (++steps > MJZ_CONSTCALL_STEPS)
+      return false; // budget exhausted
+    if (blk >= F.nblocks() || pc >= F.blocks[blk].end)
+      return false;
     const Instr &I = F.code[pc];
     switch (I.k) {
     case K::Phi: // resolved on the incoming edge, never inline
@@ -121,46 +128,54 @@ constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
       continue;
     case K::Depth: // eval's `depth` = activations-1; frames incl. main =
       // depth+2 (main=1; the callee called from main sits at frame 2)
-      if (I.dst >= nv) return false;
+      if (I.dst >= nv)
+        return false;
       val[I.dst] = (val_t)depth + 2;
       ++pc;
       continue;
     case K::Const:
-      if (I.dst >= nv) return false;
+      if (I.dst >= nv)
+        return false;
       val[I.dst] = I.c;
       ++pc;
       continue;
     case K::Copy:
-      if (I.dst >= nv || I.a >= nv) return false;
+      if (I.dst >= nv || I.a >= nv)
+        return false;
       val[I.dst] = val[I.a];
       ++pc;
       continue;
     case K::Bin: {
-      if (I.a >= nv || I.b2 >= nv || I.dst >= nv) return false;
+      if (I.a >= nv || I.b2 >= nv || I.dst >= nv)
+        return false;
       Rv r = w_bin(I.b, val[I.a], val[I.b2]);
-      if (r.trap) return false; // runtime trap is observable: keep the call
+      if (r.trap)
+        return false; // runtime trap is observable: keep the call
       val[I.dst] = r.v;
       ++pc;
       continue;
     }
     case K::Br:
     case K::Cbr: {
-      uint32_t next = (I.k == K::Br)
-                          ? I.t
-                          : ((val[I.a] != 0) ? I.t : I.f);
-      if (next >= F.nblocks()) return false;
+      uint32_t next = (I.k == K::Br) ? I.t : ((val[I.a] != 0) ? I.t : I.f);
+      if (next >= F.nblocks())
+        return false;
       // stage the successor's phis for THIS edge: read all, then write all
       std::vector<std::pair<uint32_t, val_t>> staged{};
       for (uint32_t j = F.blocks[next].begin; j < F.blocks[next].end; ++j) {
         const Instr &P = F.code[j];
-        if (P.k != K::Phi) break;
+        if (P.k != K::Phi)
+          break;
         uint32_t arg = NONE;
-        if (P.t == blk && P.a != NONE) arg = P.a;
-        else if (P.f == blk && P.b2 != NONE) arg = P.b2;
+        if (P.t == blk && P.a != NONE)
+          arg = P.a;
+        else if (P.f == blk && P.b2 != NONE)
+          arg = P.b2;
         if (arg != NONE && arg < nv && P.dst < nv)
           staged.push_back({P.dst, val[arg]});
       }
-      for (const auto &st : staged) val[st.first] = st.second;
+      for (const auto &st : staged)
+        val[st.first] = st.second;
       blk = next;
       pc = F.blocks[blk].begin;
       continue;
@@ -171,13 +186,15 @@ constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
     case K::Call: {
       std::vector<val_t> cargs{};
       for (uint32_t a : I.args) {
-        if (a >= nv) return false;
+        if (a >= nv)
+          return false;
         cargs.push_back(val[a]);
       }
       val_t r{};
       if (!eval_pure_fn(fns, (uint32_t)I.c, cargs, r, depth + 1, steps))
         return false;
-      if (I.dst < nv) val[I.dst] = r;
+      if (I.dst < nv)
+        val[I.dst] = r;
       ++pc;
       continue;
     }
@@ -191,7 +208,8 @@ constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
 constexpr bool opt_constcall(std::vector<Fn> &fns,
                              std::vector<OptStats> &ostats) {
   const uint32_t n = (uint32_t)fns.size();
-  if (n < 2 || ostats.size() < n) return false;
+  if (n < 2 || ostats.size() < n)
+    return false;
   std::vector<uint8_t> pure(n, 0);
   for (uint32_t f = 0; f < n; ++f)
     pure[f] = fn_pure_closure(fns, f) ? 1 : 0;
@@ -199,19 +217,23 @@ constexpr bool opt_constcall(std::vector<Fn> &fns,
   for (uint32_t f = 0; f < n; ++f) {
     Fn &F = fns[f];
     const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
-    if (!nv || F.nblocks() == 0) continue;
+    if (!nv || F.nblocks() == 0)
+      continue;
     // def index (SSA: one def per vreg) + bounded const-value walk
     std::vector<uint32_t> def_at(nv, NONE);
     for (uint32_t b = 0; b < F.nblocks(); ++b)
       for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
         const Instr &I = F.code[i];
-        if (I.dst != NONE && I.dst < nv) def_at[I.dst] = i;
+        if (I.dst != NONE && I.dst < nv)
+          def_at[I.dst] = i;
       }
     auto cval = [&](uint32_t v, val_t &out) -> bool {
       for (int d = 0; d < 16; ++d) { // bounded Copy/phi-of-same chains
-        if (v == NONE || v >= nv) return false;
+        if (v == NONE || v >= nv)
+          return false;
         uint32_t at = def_at[v];
-        if (at == NONE) return false;
+        if (at == NONE)
+          return false;
         const Instr &D = F.code[at];
         if (D.k == K::Const) {
           out = D.c;
@@ -232,9 +254,11 @@ constexpr bool opt_constcall(std::vector<Fn> &fns,
     for (uint32_t b = 0; b < F.nblocks(); ++b)
       for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
         Instr &I = F.code[i];
-        if (I.k != K::Call) continue;
+        if (I.k != K::Call)
+          continue;
         uint32_t g = (uint32_t)I.c;
-        if (g >= n || !pure[g] || I.args.size() != fns[g].nparams) continue;
+        if (g >= n || !pure[g] || I.args.size() != fns[g].nparams)
+          continue;
         std::vector<val_t> args{};
         bool allc = true;
         for (uint32_t a : I.args) {
@@ -245,7 +269,8 @@ constexpr bool opt_constcall(std::vector<Fn> &fns,
           }
           args.push_back(v);
         }
-        if (!allc) continue;
+        if (!allc)
+          continue;
         val_t out{};
         uint64_t steps = 0;
         // Frame-exactness rules for the evaluator's recursion cap and its
@@ -258,10 +283,12 @@ constexpr bool opt_constcall(std::vector<Fn> &fns,
         bool in_main = (f == 0);
         uint32_t d0 = 0;
         if (!in_main) {
-          if (closure_has_depth(fns, g)) continue;
+          if (closure_has_depth(fns, g))
+            continue;
           d0 = MJZ_MAX_CALL_DEPTH - 1;
         }
-        if (!eval_pure_fn(fns, g, args, out, d0, steps)) continue;
+        if (!eval_pure_fn(fns, g, args, out, d0, steps))
+          continue;
         // same dst: every user reads the constant directly
         I.k = K::Const;
         I.b = B::Add;

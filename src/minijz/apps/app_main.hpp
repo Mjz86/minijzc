@@ -11,8 +11,8 @@
 #include "minijz/base/native_run.hpp"
 
 int minijz_app_main(Cli C) {
-  bool have_action = C.demo || C.selftest || C.fuzz > 0 ||
-                     !C.shrink_file.empty();
+  bool have_action =
+      C.demo || C.selftest || C.fuzz > 0 || !C.shrink_file.empty();
   std::string src{};
   std::string stem = "stdin";
   bool src_from_stdin = false; // stdin already consumed as the PROGRAM
@@ -62,18 +62,21 @@ int minijz_app_main(Cli C) {
   }
   if (!C.shrink_file.empty()) {
     int rc = run_shrink(C, C.shrink_file);
-    if (rc != 0) ++g_fails;
+    if (rc != 0)
+      ++g_fails;
     ++g_checks;
   }
   if (C.fuzz > 0 || C.selftest) {
-    if (C.selftest && C.fuzz_native <= 0) C.fuzz_native = 6; // native gate
+    if (C.selftest && C.fuzz_native <= 0)
+      C.fuzz_native = 6; // native gate
     long jobs = C.fuzz_jobs > 0 ? C.fuzz_jobs : default_fuzz_jobs(C.selftest);
     run_fuzz(C.selftest ? 200 : C.fuzz, C.cc, C.fuzz_native, C.out_dir,
              C.fuzz_from, C.fuzz_random, C.mjz_fuzz_dumps, jobs);
   }
   if (have_action) {
     std::printf("\ntotal failures: %d (of %d checks)\n", g_fails, g_checks);
-    if (!src.empty()) std::printf("\n");
+    if (!src.empty())
+      std::printf("\n");
   }
 
   if (!src.empty()) {
@@ -88,7 +91,7 @@ int minijz_app_main(Cli C) {
         std::ifstream f(C.stdin_path, std::ios::binary);
         if (f) {
           C.stdin_text = std::string((std::istreambuf_iterator<char>(f)),
-                                      std::istreambuf_iterator<char>());
+                                     std::istreambuf_iterator<char>());
           C.inputs = parse_inputs(C.stdin_text);
         } else {
           std::printf("cannot read --stdin file '%s'\n", C.stdin_path.c_str());
@@ -103,9 +106,8 @@ int minijz_app_main(Cli C) {
         std::printf("cannot read --stdin file '%s'\n", C.stdin_path.c_str());
         return 1;
       }
-      C.stdin_text =
-          std::string((std::istreambuf_iterator<char>(f)),
-                      std::istreambuf_iterator<char>());
+      C.stdin_text = std::string((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
       C.inputs = parse_inputs(C.stdin_text);
     } else if (!C.no_exec || C.do_run) {
       // probe only when something will actually execute in-process
@@ -132,7 +134,8 @@ int minijz_app_main(Cli C) {
     }
     Program P{};
     RunOut R = compile_report(P, C, src, false);
-    if (!P.ok) return 1;
+    if (!P.ok)
+      return 1;
     if (C.debug_plan) { // dump the emission plan decisions per instr
       for (size_t fi = 0; fi < P.fns.size(); ++fi) {
         const Fn &F = P.fns[fi].destroyed;
@@ -175,7 +178,8 @@ int minijz_app_main(Cli C) {
       write_file_bytes(bc_path, bc);
       std::string lst = emit_bc_listing(bc);
       write_file(bc_path + ".lst", lst);
-      if (C.print_bc) std::printf("%s", lst.c_str());
+      if (C.print_bc)
+        std::printf("%s", lst.c_str());
       if (!C.quiet && C.emit_bc)
         std::printf("wrote %s (+ .lst)\n", bc_path.c_str());
     }
@@ -185,12 +189,14 @@ int minijz_app_main(Cli C) {
       if (C.emit_c || C.emit_exe) { // exe builds from the emitted C
         std::string p = C.out_dir + "/" + stem + ".c";
         write_file(p, emit_c(fns_of(P, 2), P.fn_names));
-        if (!C.quiet && C.emit_c) std::printf("wrote %s\n", p.c_str());
+        if (!C.quiet && C.emit_c)
+          std::printf("wrote %s\n", p.c_str());
       }
       if (C.emit_asm) {
         std::string p = C.out_dir + "/" + stem + ".s";
         write_file(p, emit_x64(fns_of(P, 2), P.fn_names));
-        if (!C.quiet) std::printf("wrote %s\n", p.c_str());
+        if (!C.quiet)
+          std::printf("wrote %s\n", p.c_str());
       }
       if (C.emit_exe) {
         std::string cc = C.cc.empty() ? find_cc() : C.cc;
@@ -198,12 +204,11 @@ int minijz_app_main(Cli C) {
           std::printf("no native compiler found (tried clang++, g++, cc); "
                       "exe not built\n");
         } else {
-          std::string exe = C.exe_name.empty() ? C.out_dir + "/" + stem + ".exe"
-                                               : C.exe_name;
+          std::string exe =
+              C.exe_name.empty() ? C.out_dir + "/" + stem + ".exe" : C.exe_name;
           std::string lvl = C.native_O.empty() ? "0" : C.native_O.front();
           std::string c_path = C.out_dir + "/" + stem + ".c";
-          std::string cmd =
-              cc + " -w -O" + lvl + " " + c_path + " -o " + exe;
+          std::string cmd = cc + " -w -O" + lvl + " " + c_path + " -o " + exe;
           if (std::system(cmd.c_str()) == 0) {
             if (!C.quiet)
               std::printf("built %s (via: %s)\n", exe.c_str(), cmd.c_str());

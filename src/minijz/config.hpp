@@ -10,12 +10,12 @@
 //
 // EVERY piece of CFG mathematics is delegated to the library:
 //   mjz::graph_ns::make_basic_forest / make_basic_inv_forest      (CSR graphs)
-//   mjz::graph_ns::calculate_dominators_from_entry                (Lengauer–Tarjan)
-//   mjz::graph_ns::make_dominator_forest_given_dominators        (dominator tree)
-//   mjz::graph_ns::calculate_dominance_intervals_given_...       (O(1) dominates)
-//   mjz::graph_ns::calculate_natural_loops_with_header_...       (natural loops)
-//   mjz::graph_ns::calculate_nesting_of_natural_loop_headers     (loop nesting)
-//   mjz::graph_ns::calculate_dominance_frontiers_given_dominators (DF)
+//   mjz::graph_ns::calculate_dominators_from_entry (Lengauer–Tarjan)
+//   mjz::graph_ns::make_dominator_forest_given_dominators        (dominator
+//   tree) mjz::graph_ns::calculate_dominance_intervals_given_...       (O(1)
+//   dominates) mjz::graph_ns::calculate_natural_loops_with_header_... (natural
+//   loops) mjz::graph_ns::calculate_nesting_of_natural_loop_headers     (loop
+//   nesting) mjz::graph_ns::calculate_dominance_frontiers_given_dominators (DF)
 //   mjz::graph_ns::calculate_iterated_dominance_frontiers_...    (IDF -> phi!)
 //   mjz::graph_ns::calculate_strongly_connected_components        (call graph)
 //
@@ -373,7 +373,6 @@
 #define MJZ_HAVE_ISATTY 1
 #endif
 
-
 // CHECK bookkeeping: in the multi-cpp build these are REAL globals defined
 // once in tu/main.cpp, so checks that fire in any TU (the fuzzer runs in
 // its own TU, the demos in another) are counted by the reporting in main.
@@ -398,7 +397,7 @@ static int g_checks = 0, g_fails = 0;
 // ============================================================================
 using val_t = int64_t;
 constexpr uint32_t NONE = ~uint32_t(0); // "no vreg/block/index" sentinel
-struct Rv {                 // result of one arithmetic op
+struct Rv {                             // result of one arithmetic op
   val_t v{};
   bool trap{};
 };
@@ -432,31 +431,35 @@ struct RunOut {
       return {0, true}; // negative size / out of arena memory
     val_t h = (val_t)a_data.size();
     a_data.resize(a_data.size() + (size_t)n, 0);
-    if ((size_t)h >= a_lenv.size()) a_lenv.resize((size_t)h + 1, 0);
+    if ((size_t)h >= a_lenv.size())
+      a_lenv.resize((size_t)h + 1, 0);
     a_lenv[(size_t)h] = n;
     return {h, false};
   }
   constexpr val_t arena_len(val_t h) const {
-    if (h < 0 || (size_t)h >= a_lenv.size()) return 0;
+    if (h < 0 || (size_t)h >= a_lenv.size())
+      return 0;
     return a_lenv[(size_t)h];
   }
   constexpr Rv arena_load(val_t h, val_t i) {
     val_t l = arena_len(h); // bogus handle -> len 0 -> always out of bounds
-    if (i < 0 || i >= l) return {0, true};
+    if (i < 0 || i >= l)
+      return {0, true};
     return {a_data[(size_t)(h + i)], false};
   }
   constexpr bool arena_store(val_t h, val_t i, val_t v) {
     val_t l = arena_len(h);
-    if (i < 0 || i >= l) return false;
+    if (i < 0 || i >= l)
+      return false;
     a_data[(size_t)(h + i)] = v;
     return true;
   }
   constexpr val_t next_input() {
-    if (in_pos < ins.size()) return ins[in_pos++];
+    if (in_pos < ins.size())
+      return ins[in_pos++];
     return 0; // EOF (matches scanf-failure -> 0 in the native backends)
   }
 };
-
 
 constexpr Rv w_add(val_t a, val_t b) {
   return {(val_t)((uint64_t)a + (uint64_t)b), false};
@@ -499,8 +502,7 @@ constexpr Rv w_ashr(val_t a, val_t b) {
   return {(val_t)(a >> (int64_t)w_shamt(b)), false}; // arithmetic (C++20)
 }
 constexpr Rv w_mulhi(val_t a, val_t b) { // high 64 bits of the unsigned prod
-  return {(val_t)((uint64_t)((((unsigned __int128)(uint64_t)a) *
-                              (uint64_t)b) >>
+  return {(val_t)((uint64_t)((((unsigned __int128)(uint64_t)a) * (uint64_t)b) >>
                              64)),
           false};
 }

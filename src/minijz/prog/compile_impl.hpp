@@ -11,10 +11,10 @@
 #include "minijz/ir/destruct.hpp"
 #include "minijz/ir/stats.hpp"
 #include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/analysis/alias.hpp"   // prog_handle_gates
-#include "minijz/opt/driver.hpp"           // optimize_prog (callgraph.hpp)
+#include "minijz/opt/analysis/alias.hpp" // prog_handle_gates
+#include "minijz/opt/driver.hpp"         // optimize_prog (callgraph.hpp)
 #include "minijz/opt/interprocedural/tailrec.hpp" // opt_tailrec body
-#include "minijz/opt/interprocedural/scctco.hpp"   // opt_scc_tailcall body
+#include "minijz/opt/interprocedural/scctco.hpp"  // opt_scc_tailcall body
 #include "minijz/back/stack_alloc.hpp"
 #include "minijz/runtime/astrun.hpp" // assign_slots
 #include "minijz/prog/printers.hpp"
@@ -34,7 +34,11 @@
 MJZ_PIPELINE_FN Program compile(std::string_view src, PassCfg cfg) {
   Program P{};
   P.P = parse(src);
-  if (!P.P.ok) { P.error = P.P.err.what; P.errpos = P.P.err.pos; return P; }
+  if (!P.P.ok) {
+    P.error = P.P.err.what;
+    P.errpos = P.P.err.pos;
+    return P;
+  }
   const Ast &a = P.P.ast;
   // call arity must match the definitions (checked post-parse: definitions
   // may appear anywhere in the file)
@@ -53,7 +57,10 @@ MJZ_PIPELINE_FN Program compile(std::string_view src, PassCfg cfg) {
   {
     Builder B(ssa0[0]);
     B.build_main(a, P.P.root);
-    if (ssa0[0].nblocks() == 0) { P.error = "empty program"; return P; }
+    if (ssa0[0].nblocks() == 0) {
+      P.error = "empty program";
+      return P;
+    }
     An A = analyze(ssa0[0]);
     if (!ssa_construct(ssa0[0], A, sst[0])) {
       P.error = "SSA construction failed (use before def?)";
@@ -76,10 +83,12 @@ MJZ_PIPELINE_FN Program compile(std::string_view src, PassCfg cfg) {
   std::vector<Fn> work = ssa0;
   std::vector<std::string_view> names(nf);
   names[0] = "<main>";
-  for (uint32_t k = 0; k < a.fns.size(); ++k) names[k + 1] = a.fns[k].name;
+  for (uint32_t k = 0; k < a.fns.size(); ++k)
+    names[k + 1] = a.fns[k].name;
   std::vector<OptStats> os(nf);
   std::vector<uint32_t> src_index(nf);
-  for (uint32_t k = 0; k < nf; ++k) src_index[k] = k;
+  for (uint32_t k = 0; k < nf; ++k)
+    src_index[k] = k;
   prog_handle_gates(ssa0, cfg.lift_ok, cfg.stkarr_ok);
   if (cfg.do_opt)
     optimize_prog(work, names, os, cfg, src_index);
@@ -116,15 +125,17 @@ void print_analysis(const An &A, const Fn &fn, const char *tag) {
   std::printf(" | loops:");
   bool first = true;
   for (uint32_t h = 0; h < A.n; ++h) {
-    if (A.inner[h] != h) continue;
+    if (A.inner[h] != h)
+      continue;
     auto row = A.loops.range()[h];
     ++nloops;
-    std::printf("%s{hdr=b%u,depth=%u,size=%u}", first ? "" : ",",
-                (unsigned)h, (unsigned)(A.nest[h] + 1),
+    std::printf("%s{hdr=b%u,depth=%u,size=%u}", first ? "" : ",", (unsigned)h,
+                (unsigned)(A.nest[h] + 1),
                 (unsigned)(row.size() ? (uint32_t)row.size() : 1));
     first = false;
   }
-  if (first) std::printf(" none");
+  if (first)
+    std::printf(" none");
   std::printf("\n");
   (void)fn;
   (void)nloops;

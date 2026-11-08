@@ -21,8 +21,10 @@ struct An {
   uint32_t n{};
 
   constexpr bool dominates(uint32_t d, uint32_t s) const {
-    if (d >= n || s >= n) return false;
-    if (ib[d] == 0 || ib[s] == 0) return false;
+    if (d >= n || s >= n)
+      return false;
+    if (ib[d] == 0 || ib[s] == 0)
+      return false;
     return ib[d] <= ib[s] && ie[d] >= ie[s];
   }
 };
@@ -33,14 +35,18 @@ constexpr An analyze(const Fn &fn) {
   A.adjs.assign(A.n, {});
   A.prs.assign(A.n, {});
   for (uint32_t b = 0; b < A.n; ++b) {
-    if (fn.succ0(b) != NONE) A.adjs[b].push_back(fn.succ0(b));
-    if (fn.succ1(b) != NONE) A.adjs[b].push_back(fn.succ1(b));
-    for (uint32_t p : fn.preds[b]) A.prs[b].push_back(p);
+    if (fn.succ0(b) != NONE)
+      A.adjs[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      A.adjs[b].push_back(fn.succ1(b));
+    for (uint32_t p : fn.preds[b])
+      A.prs[b].push_back(p);
   }
   // -- everything below is mjz_lib doing the heavy lifting --
-  A.fs = gns::make_basic_forest<V>(A.adjs);            // CSR successor graph
-  A.fp = gns::make_basic_inv_forest<V>(A.adjs);        // CSR predecessor graph
-  A.idom = gns::calculate_dominators_from_entry<V>(0, A.fs, A.fp); // Lengauer–Tarjan
+  A.fs = gns::make_basic_forest<V>(A.adjs);     // CSR successor graph
+  A.fp = gns::make_basic_inv_forest<V>(A.adjs); // CSR predecessor graph
+  A.idom =
+      gns::calculate_dominators_from_entry<V>(0, A.fs, A.fp); // Lengauer–Tarjan
   A.dom_tree = gns::make_dominator_forest_given_dominators<V>(A.idom);
   auto iv = gns::calculate_dominance_intervals_given_dominators_and_forest<V>(
       A.dom_tree, A.idom);
@@ -75,20 +81,25 @@ constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
         defs[fn.code[i].dst].push_back(b);
   // parameters are "defined at entry" (block 0): uses before any assignment
   // see the incoming argument; re-assignments get ordinary phi placement
-  for (uint32_t v = 0; v < fn.nparams; ++v) defs[v].push_back(0);
+  for (uint32_t v = 0; v < fn.nparams; ++v)
+    defs[v].push_back(0);
   // ---- 8b. phi insertion at the IDF of each multi-def vreg's def set
   std::vector<std::vector<uint32_t>> phis_at(nb);
   for (uint32_t v = 0; v < fn.nvars; ++v) {
-    if (defs[v].size() < 2) continue;
+    if (defs[v].size() < 2)
+      continue;
     std::vector<ulen> idf =
         gns::calculate_iterated_dominance_frontiers_given_dominance_frontiers<
             V>(A.df, defs[v]);
     for (ulen blk : idf) {
       uint32_t b = (uint32_t)blk;
-      if (b >= nb || fn.preds[b].size() < 2) continue;
+      if (b >= nb || fn.preds[b].size() < 2)
+        continue;
       bool dup = false;
-      for (uint32_t x : phis_at[b]) dup |= (x == v);
-      if (!dup) phis_at[b].push_back(v);
+      for (uint32_t x : phis_at[b])
+        dup |= (x == v);
+      if (!dup)
+        phis_at[b].push_back(v);
     }
   }
   // ---- 8c. rebuild the code vector with phis at block starts
@@ -142,23 +153,27 @@ constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
       // rewrite uses
       if (I.a != NONE && I.a < fn.nvars) {
         auto &s = stacks[I.a];
-        if (s.empty()) return false; // use before def (should not happen)
+        if (s.empty())
+          return false; // use before def (should not happen)
         I.a = s.back();
       }
       if (I.b2 != NONE && I.b2 < fn.nvars) {
         auto &s = stacks[I.b2];
-        if (s.empty()) return false;
+        if (s.empty())
+          return false;
         I.b2 = s.back();
       }
       if (I.c2 != NONE && I.c2 < fn.nvars) { // Store: the stored value
         auto &s = stacks[I.c2];
-        if (s.empty()) return false;
+        if (s.empty())
+          return false;
         I.c2 = s.back();
       }
       for (uint32_t &av : I.args) { // Call arguments
         if (av != NONE && av < fn.nvars) {
           auto &s = stacks[av];
-          if (s.empty()) return false;
+          if (s.empty())
+            return false;
           av = s.back();
         }
       }
@@ -171,25 +186,34 @@ constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
     }
     // seed phi args in successors
     for (uint32_t s : {fn.succ0(b), fn.succ1(b)}) {
-      if (s == NONE) continue;
+      if (s == NONE)
+        continue;
       for (uint32_t i = fn.blocks[s].begin; i < fn.blocks[s].end; ++i) {
         Instr &I = fn.code[i];
-        if (I.k != K::Phi) break;
+        if (I.k != K::Phi)
+          break;
         uint32_t base = (uint32_t)I.c;
         const auto &st_ = stacks[base];
         // find slot of b in preds[s]
         uint32_t slot = NONE;
         for (uint32_t j = 0; j < fn.preds[s].size(); ++j)
-          if (fn.preds[s][j] == b) slot = j;
-        if (slot == NONE) return false;
+          if (fn.preds[s][j] == b)
+            slot = j;
+        if (slot == NONE)
+          return false;
         // Minimal (non-pruned) SSA: a phi arg may be UNDEFINED on an edge
         // (variable not live-in there). Scoping guarantees it is never read
         // on that path, so record the pred with arg NONE; DCE drops the phi.
         uint32_t arg = st_.empty() ? NONE : st_.back();
         // record the pred block id with the arg (t/f unused by Phi) so that
         // later CFG edits can prune phi args by pred identity
-        if (slot == 0) { I.a = arg; I.t = b; }
-        else           { I.b2 = arg; I.f = b; }
+        if (slot == 0) {
+          I.a = arg;
+          I.t = b;
+        } else {
+          I.b2 = arg;
+          I.f = b;
+        }
       }
     }
     return true;
@@ -197,8 +221,7 @@ constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
   auto visit_epilogue = [&](uint32_t b, uint32_t pushed) {
     // pop exactly `pushed` entries (one per def the prologue pushed; the
     // count equals the block's defining instrs — decrement ONLY on pops)
-    for (uint32_t i = fn.blocks[b].begin;
-         i < fn.blocks[b].end && pushed; ++i) {
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && pushed; ++i) {
       const Instr &I = fn.code[i];
       if (I.k == K::Phi) {
         stacks[(uint32_t)I.c].pop_back();
@@ -211,18 +234,18 @@ constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
   };
   {
     uint32_t pushed0 = 0;
-    if (!visit_prologue(0, pushed0)) return false;
+    if (!visit_prologue(0, pushed0))
+      return false;
     stack.push_back({0, 0, pushed0});
-    auto children_of = [&](uint32_t b) {
-      return A.dom_tree.range()[b];
-    };
+    auto children_of = [&](uint32_t b) { return A.dom_tree.range()[b]; };
     while (!stack.empty()) {
       Frame &fr = stack.back();
       auto ch = children_of(fr.block);
       if (fr.child_idx < (uint32_t)ch.size()) {
         uint32_t next = (uint32_t)ch[fr.child_idx++];
         uint32_t pushed = 0;
-        if (!visit_prologue(next, pushed)) return false;
+        if (!visit_prologue(next, pushed))
+          return false;
         stack.push_back({next, 0, pushed});
       } else {
         visit_epilogue(fr.block, fr.pushed);

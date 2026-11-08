@@ -20,9 +20,11 @@
 // become `print(input() & 1)`.
 constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
   const uint32_t nb = fn.nblocks();
-  if (!nb) return false;
+  if (!nb)
+    return false;
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  if (!nv) return false;
+  if (!nv)
+    return false;
   std::vector<char> kc(nv, 0);
   std::vector<val_t> kv(nv, 0);
   for (const Instr &I : fn.code)
@@ -45,7 +47,8 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
   Ranges RA{};
   bool ra_done = false;
   auto ensure_ra = [&]() {
-    if (ra_done) return;
+    if (ra_done)
+      return;
     ra_done = true;
     ARA = analyze(fn);
     RA = range_analyze(fn, ARA);
@@ -53,8 +56,10 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
   bool changed = false;
   for (uint32_t b = 0; b < nb; ++b) {
     const Instr &tm = fn.code[fn.blocks[b].end - 1];
-    if (tm.k != K::Cbr || tm.a == NONE || tm.a >= nv) continue;
-    if (tm.t == NONE || tm.f == NONE || tm.t == tm.f) continue;
+    if (tm.k != K::Cbr || tm.a == NONE || tm.a >= nv)
+      continue;
+    if (tm.t == NONE || tm.f == NONE || tm.t == tm.f)
+      continue;
     // cond range [0,1] AT THE CBR: walk this block's transfers from its
     // entry state (the cond may be defined inside the block, e.g. n & 1)
     Iv cond = {INT64_MIN, INT64_MAX, false};
@@ -67,12 +72,15 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
           iv_transfer(fn, i, RA.nv, st);
       cond = st[tm.a];
     }
-    if (cond.bot || cond.lo < 0 || cond.hi > 1) continue;
+    if (cond.bot || cond.lo < 0 || cond.hi > 1)
+      continue;
     // arms: X_t / X_f: one Const def + br N (same N), no phis at N feeding...
     auto arm = [&](uint32_t xb, val_t &K, uint32_t &nx) -> bool {
-      if (xb >= nb) return false;
+      if (xb >= nb)
+        return false;
       const Instr &at = fn.code[fn.blocks[xb].end - 1];
-      if (at.k != K::Br || at.t == NONE) return false;
+      if (at.k != K::Br || at.t == NONE)
+        return false;
       nx = at.t;
       uint32_t nconst = 0;
       val_t kk = 0;
@@ -84,15 +92,19 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
         } else
           return false;
       }
-      if (nconst != 1) return false;
+      if (nconst != 1)
+        return false;
       K = kk;
       return true;
     };
     val_t Kt = 0, Kf = 0;
     uint32_t nt_ = NONE, nf = NONE;
-    if (!arm(tm.t, Kt, nt_)) continue;
-    if (!arm(tm.f, Kf, nf)) continue;
-    if (nt_ != nf) continue; // must converge immediately
+    if (!arm(tm.t, Kt, nt_))
+      continue;
+    if (!arm(tm.f, Kf, nf))
+      continue;
+    if (nt_ != nf)
+      continue; // must converge immediately
     // SOUNDNESS: each arm block must be reachable ONLY through this select.
     // The convergence phi's args are keyed by the ARM BLOCKS, so any OTHER
     // predecessor of an arm block also contributes to the phi (with the
@@ -104,8 +116,10 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
     {
       const auto &pt_ = fn.preds[tm.t];
       const auto &pf_ = fn.preds[tm.f];
-      if (pt_.size() != 1 || pt_[0] != b) continue;
-      if (pf_.size() != 1 || pf_[0] != b) continue;
+      if (pt_.size() != 1 || pt_[0] != b)
+        continue;
+      if (pf_.size() != 1 || pf_[0] != b)
+        continue;
     }
     const uint32_t N = nt_;
     // N's first phi (if any) must merge EXACTLY the two arm consts — its
@@ -113,33 +127,39 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
     // dead and the branch is pure control: still convertible only if both
     // arms' consts are unused... keep it simple: require the phi.
     uint32_t pi = fn.blocks[N].begin;
-    if (pi >= fn.blocks[N].end || fn.code[pi].k != K::Phi) continue;
+    if (pi >= fn.blocks[N].end || fn.code[pi].k != K::Phi)
+      continue;
     const Instr &P = fn.code[pi];
     // args keyed from the arm blocks
     auto argfrom = [&](uint32_t key) -> uint32_t {
-      if (P.t == key) return P.a;
-      if (P.f == key) return P.b2;
+      if (P.t == key)
+        return P.a;
+      if (P.f == key)
+        return P.b2;
       return NONE;
     };
     uint32_t at_ = argfrom(tm.t), af_ = argfrom(tm.f);
-    if (at_ == NONE || af_ == NONE) continue;
+    if (at_ == NONE || af_ == NONE)
+      continue;
     // the phi args must be exactly the arms' Const vregs
-    if (defi[at_] == NONE || defi[af_] == NONE) continue;
+    if (defi[at_] == NONE || defi[af_] == NONE)
+      continue;
     if (fn.code[defi[at_]].k != K::Const || fn.code[defi[af_]].k != K::Const)
       continue;
     // (defb of the consts must be the arm blocks)
-    if (defb[at_] != tm.t || defb[af_] != tm.f) continue;
+    if (defb[at_] != tm.t || defb[af_] != tm.f)
+      continue;
     // ---- convert: phiDst = Kf + (Kt - Kf) * c ------------------------------
     std::vector<Instr> pre{};
     uint32_t d = P.dst;
     uint32_t kf = new_anon_vreg(fn, 0);
     pre.push_back({.k = K::Const, .dst = kf, .c = Kf});
     uint32_t diff = new_anon_vreg(fn, 0);
-    pre.push_back({.k = K::Const, .dst = diff,
+    pre.push_back({.k = K::Const,
+                   .dst = diff,
                    .c = (val_t)((uint64_t)Kt - (uint64_t)Kf)});
     uint32_t m = new_anon_vreg(fn, 0);
-    pre.push_back(
-        {.k = K::Bin, .b = B::Mul, .dst = m, .a = tm.a, .b2 = diff});
+    pre.push_back({.k = K::Bin, .b = B::Mul, .dst = m, .a = tm.a, .b2 = diff});
     pre.push_back({.k = K::Bin, .b = B::Add, .dst = d, .a = kf, .b2 = m});
     // insert before b's terminator; terminator becomes br N
     uint32_t be = fn.blocks[b].end - 1;
@@ -150,8 +170,10 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
         fn.blocks[xb].end += add;
         continue;
       }
-      if (fn.blocks[xb].begin >= be + 1) fn.blocks[xb].begin += add;
-      if (fn.blocks[xb].end > be) fn.blocks[xb].end += add;
+      if (fn.blocks[xb].begin >= be + 1)
+        fn.blocks[xb].begin += add;
+      if (fn.blocks[xb].end > be)
+        fn.blocks[xb].end += add;
     }
     {
       Instr &bt = fn.code[fn.blocks[b].end - 1];
@@ -174,8 +196,10 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
           fn.blocks[xb].end -= 1;
           continue;
         }
-        if (fn.blocks[xb].begin > del) fn.blocks[xb].begin -= 1;
-        if (fn.blocks[xb].end > del) fn.blocks[xb].end -= 1;
+        if (fn.blocks[xb].begin > del)
+          fn.blocks[xb].begin -= 1;
+        if (fn.blocks[xb].end > del)
+          fn.blocks[xb].end -= 1;
       }
     }
     os.ifconvs++;

@@ -22,12 +22,15 @@ inline constexpr val_t MJZ_STK_ARR_TOTAL_ELEMS = 131072;
 constexpr void analyze_stack_allocs(Fn &fn) {
   fn.stk_arrays.clear();
   const uint32_t nb = fn.nblocks();
-  if (!nb) return;
+  if (!nb)
+    return;
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  if (!nv) return;
+  if (!nv)
+    return;
   std::vector<uint32_t> ndefs(nv, 0);
   for (const Instr &I : fn.code)
-    if (I.dst != NONE && I.dst < nv) ++ndefs[I.dst];
+    if (I.dst != NONE && I.dst < nv)
+      ++ndefs[I.dst];
   std::vector<char> kc(nv, 0);
   std::vector<val_t> kv(nv, 0);
   for (const Instr &I : fn.code)
@@ -39,11 +42,15 @@ constexpr void analyze_stack_allocs(Fn &fn) {
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (I.k != K::Alloc) continue;
-      if (I.a == NONE || I.a >= nv || !kc[I.a]) continue; // runtime length
+      if (I.k != K::Alloc)
+        continue;
+      if (I.a == NONE || I.a >= nv || !kc[I.a])
+        continue; // runtime length
       val_t len = kv[I.a];
-      if (len < 0 || len == 0 || len > MJZ_STK_ARR_MAX_ELEMS) continue;
-      if (total + len > MJZ_STK_ARR_TOTAL_ELEMS) continue;
+      if (len < 0 || len == 0 || len > MJZ_STK_ARR_MAX_ELEMS)
+        continue;
+      if (total + len > MJZ_STK_ARR_TOTAL_ELEMS)
+        continue;
       // alias closure: the alloc dst + transitive Copy destinations
       std::vector<char> ali(nv, 0);
       ali[I.dst] = 1;
@@ -67,27 +74,33 @@ constexpr void analyze_stack_allocs(Fn &fn) {
           case K::Copy: // source: alias extension (ok); dst cannot re-define
             break;
           case K::Load: // handle position ok; the INDEX is a value use
-            if (bad(U.b2)) esc = true;
+            if (bad(U.b2))
+              esc = true;
             break;
           case K::Store: // handle ok; index and stored value are value uses
-            if (bad(U.b2) || bad(U.c2)) esc = true;
+            if (bad(U.b2) || bad(U.c2))
+              esc = true;
             break;
           case K::Len: // handle position ok
             break;
           default: // Bin/Cbr/Print/Call/Ret/Phi/Exit/Input: any alias use
-            if (bad(U.a) || bad(U.b2) || bad(U.c2)) esc = true;
+            if (bad(U.a) || bad(U.b2) || bad(U.c2))
+              esc = true;
             for (uint32_t v : U.args)
-              if (bad(v)) esc = true;
+              if (bad(v))
+                esc = true;
             break;
           }
         }
-      if (esc) continue;
+      if (esc)
+        continue;
       total += len;
       Fn::StkArr sa{};
       sa.root = I.dst;
       sa.len = len;
       for (uint32_t v = 0; v < nv; ++v)
-        if (ali[v]) sa.vregs.push_back(v);
+        if (ali[v])
+          sa.vregs.push_back(v);
       fn.stk_arrays.push_back(std::move(sa));
     }
 }

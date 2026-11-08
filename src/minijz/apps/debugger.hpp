@@ -28,7 +28,8 @@
 static std::string bc_disasm_one(const std::vector<uint8_t> &c, size_t pc,
                                  size_t *next = nullptr) {
   if (pc >= c.size()) {
-    if (next) *next = pc;
+    if (next)
+      *next = pc;
     return "<eof>";
   }
   Bc op = (Bc)c[pc];
@@ -36,8 +37,7 @@ static std::string bc_disasm_one(const std::vector<uint8_t> &c, size_t pc,
   char buf[160];
   switch (op) {
   case Bc::Push:
-    std::snprintf(buf, sizeof buf, "push %lld",
-                  (long long)bc_rd_i64(c, p));
+    std::snprintf(buf, sizeof buf, "push %lld", (long long)bc_rd_i64(c, p));
     p += 8;
     break;
   case Bc::Load:
@@ -63,7 +63,8 @@ static std::string bc_disasm_one(const std::vector<uint8_t> &c, size_t pc,
     std::snprintf(buf, sizeof buf, "%s", bc_name(op));
     break;
   }
-  if (next) *next = p;
+  if (next)
+    *next = p;
   return std::string(buf);
 }
 
@@ -103,8 +104,8 @@ static void dbg_vm_state(DbgVm &D, const Program &P) {
   std::printf("frames=%zu:\n", S.frames.size());
   for (size_t f = 0; f < S.frames.size(); ++f) {
     uint32_t fid = f < S.fr_fn.size() ? S.fr_fn[f] : 0;
-    const char *nm = fid < P.fn_names.size()
-                         ? std::string(P.fn_names[fid]).c_str() : "?";
+    const char *nm =
+        fid < P.fn_names.size() ? std::string(P.fn_names[fid]).c_str() : "?";
     std::printf("  #%-2zu fn%-2u (%s) slots(%zu):", f, fid, nm,
                 S.frames[f].size());
     for (size_t k = 0; k < S.frames[f].size() && k < 24; ++k)
@@ -120,7 +121,8 @@ static void dbg_vm_state(DbgVm &D, const Program &P) {
   // arena: contiguous allocations h=0,4,8... per a_lenv entries
   size_t allocs = 0;
   for (val_t L : S.R.a_lenv)
-    if (L > 0) ++allocs;
+    if (L > 0)
+      ++allocs;
   std::printf("arena: %zu allocs, %zu slots:", allocs, S.R.a_data.size());
   val_t h = 0;
   size_t shown = 0;
@@ -130,7 +132,8 @@ static void dbg_vm_state(DbgVm &D, const Program &P) {
       for (val_t i = 0; i < L && i < 8; ++i)
         std::printf("%s%lld", i ? " " : "",
                     (long long)S.R.a_data[(size_t)(h + i)]);
-      if (L > 8) std::printf(" ...+%lld", (long long)(L - 8));
+      if (L > 8)
+        std::printf(" ...+%lld", (long long)(L - 8));
       std::printf("]");
       if (++shown >= 6) {
         std::printf(" ...(+%zu more)", allocs - shown);
@@ -146,11 +149,13 @@ static void dbg_vm_state(DbgVm &D, const Program &P) {
   std::printf("\noutput (%zu):", S.R.out.size());
   for (size_t k = 0; k < S.R.out.size() && k < 16; ++k)
     std::printf(" %lld", (long long)S.R.out[k]);
-  if (S.R.out.size() > 16) std::printf(" ...(+%zu)", S.R.out.size() - 16);
+  if (S.R.out.size() > 16)
+    std::printf(" ...(+%zu)", S.R.out.size() - 16);
   std::printf("\n");
   if (!D.bps.empty()) {
     std::printf("breakpoints:");
-    for (uint32_t b : D.bps) std::printf(" %u", b);
+    for (uint32_t b : D.bps)
+      std::printf(" %u", b);
     std::printf("\n");
   }
 }
@@ -174,8 +179,7 @@ static void dbg_vm_dis(DbgVm &D, long before, long after) {
   size_t lo_pc = D.S.pc > (size_t)before ? D.S.pc - (size_t)before : 0;
   for (const auto &[at, d] : lines)
     if (at >= lo_pc && at <= hi)
-      std::printf("%s%6zu: %-18s\n", at == D.S.pc ? "->" : "  ", at,
-                  d.c_str());
+      std::printf("%s%6zu: %-18s\n", at == D.S.pc ? "->" : "  ", at, d.c_str());
   std::printf("   (pc=%zu, fn %u)\n", D.S.pc, f);
 }
 
@@ -210,8 +214,8 @@ static void dbg_help() {
 int run_debugger(const Cli &C, const std::string &src) {
   Program P = compile(src, pass_cfg_of(C));
   if (!P.ok) {
-    std::printf("compile error: %s (at byte %u)\n",
-                P.error ? P.error : "?", (unsigned)P.errpos);
+    std::printf("compile error: %s (at byte %u)\n", P.error ? P.error : "?",
+                (unsigned)P.errpos);
     return 1;
   }
   DbgVm D{};
@@ -222,16 +226,16 @@ int run_debugger(const Cli &C, const std::string &src) {
       "=== minijz debugger — %zu fn(s), %zu bytes of bytecode, %llu step "
       "budget ===\n",
       P.fns.size(), D.bc.size(), (unsigned long long)C.steps);
-  std::printf(
-      "program uses input(): %s (%s); type `help` for commands\n",
-      P.uses_input ? "yes" : "no",
-      C.stdin_path.empty() ? "no --stdin tape, input() reads 0" :
-                             ("tape: " + C.stdin_path).c_str());
+  std::printf("program uses input(): %s (%s); type `help` for commands\n",
+              P.uses_input ? "yes" : "no",
+              C.stdin_path.empty() ? "no --stdin tape, input() reads 0"
+                                   : ("tape: " + C.stdin_path).c_str());
   char line[4096];
   for (;;) {
     std::printf("dbg> ");
     std::fflush(stdout);
-    if (!std::fgets(line, sizeof line, stdin)) break;
+    if (!std::fgets(line, sizeof line, stdin))
+      break;
     std::string t(line);
     while (!t.empty() && (t.back() == '\n' || t.back() == '\r' ||
                           t.back() == ' ' || t.back() == '\t'))
@@ -242,25 +246,30 @@ int run_debugger(const Cli &C, const std::string &src) {
       std::string cur{};
       for (char ch : t) {
         if (ch == ' ' || ch == '\t') {
-          if (!cur.empty()) tok.push_back(cur);
+          if (!cur.empty())
+            tok.push_back(cur);
           cur.clear();
         } else {
           cur += ch;
         }
       }
-      if (!cur.empty()) tok.push_back(cur);
+      if (!cur.empty())
+        tok.push_back(cur);
     }
-    if (tok.empty()) continue;
+    if (tok.empty())
+      continue;
     const std::string &cmd = tok[0];
     auto num = [&](size_t i, long dflt) -> long {
       return i < tok.size() ? atol(tok[i].c_str()) : dflt;
     };
-    if (cmd == "quit" || cmd == "q" || cmd == ":q") break;
+    if (cmd == "quit" || cmd == "q" || cmd == ":q")
+      break;
     if (cmd == "help" || cmd == "h" || cmd == "?") {
       dbg_help();
     } else if (cmd == "src") {
       std::printf("%s", src.c_str());
-      if (!src.empty() && src.back() != '\n') std::printf("\n");
+      if (!src.empty() && src.back() != '\n')
+        std::printf("\n");
     } else if (cmd == "fns") {
       std::printf("%zu fn(s):\n", P.fns.size());
       for (size_t f = 0; f < P.fns.size(); ++f) {
@@ -283,28 +292,36 @@ int run_debugger(const Cli &C, const std::string &src) {
                       std::string(P.fn_names[fi]).c_str());
         std::snprintf(t3, sizeof t3, "destroyed [%s]",
                       std::string(P.fn_names[fi]).c_str());
-        if (stage == "ssa" || all_stages) print_fn(U.ssa, t1);
-        if (stage == "opt" || all_stages) print_fn(U.opt, t2);
-        if (stage == "dst" || all_stages) print_fn(U.destroyed, t3);
+        if (stage == "ssa" || all_stages)
+          print_fn(U.ssa, t1);
+        if (stage == "opt" || all_stages)
+          print_fn(U.opt, t2);
+        if (stage == "dst" || all_stages)
+          print_fn(U.destroyed, t3);
       };
       if (f < 0 || f >= (long)P.fns.size())
-        for (size_t fi = 0; fi < P.fns.size(); ++fi) dump(fi);
+        for (size_t fi = 0; fi < P.fns.size(); ++fi)
+          dump(fi);
       else
         dump((size_t)f);
     } else if (cmd == "cfg") {
       long f = num(1, 0);
-      if (f < 0 || f >= (long)P.fns.size()) f = 0;
+      if (f < 0 || f >= (long)P.fns.size())
+        f = 0;
       const Fn &F = P.fns[f].ssa;
       if (f == 0)
         print_pre_main_analysis(P); // dominators/loops of pre-opt main
       for (uint32_t b = 0; b < F.nblocks(); ++b) {
         std::printf("  b%u: [i%u..i%u) succ:", b, F.blocks[b].begin,
                     F.blocks[b].end);
-        if (F.succ0(b) != NONE) std::printf(" b%u", F.succ0(b));
-        if (F.succ1(b) != NONE) std::printf(" b%u", F.succ1(b));
+        if (F.succ0(b) != NONE)
+          std::printf(" b%u", F.succ0(b));
+        if (F.succ1(b) != NONE)
+          std::printf(" b%u", F.succ1(b));
         if (!F.preds.empty() && !F.preds[b].empty()) {
           std::printf(" ; preds:");
-          for (uint32_t p : F.preds[b]) std::printf(" b%u", p);
+          for (uint32_t p : F.preds[b])
+            std::printf(" b%u", p);
         }
         std::printf("\n");
       }
@@ -316,12 +333,12 @@ int run_debugger(const Cli &C, const std::string &src) {
                   P.fns.size(), (unsigned)os.inlines, (unsigned)os.unrolls,
                   (unsigned)os.dce, (unsigned)os.hoisted,
                   (unsigned)os.mem2reg_lifts, (unsigned)os.constcalls,
-                  (unsigned)os.tces, (unsigned)os.scctco,
-                  (unsigned)os.cdfolds, (unsigned)os.ifconvs,
-                  (unsigned)os.traps_killed);
+                  (unsigned)os.tces, (unsigned)os.scctco, (unsigned)os.cdfolds,
+                  (unsigned)os.ifconvs, (unsigned)os.traps_killed);
     } else if (cmd == "plan") {
       long f = num(1, 0);
-      if (f < 0 || f >= (long)P.fns.size()) f = 0;
+      if (f < 0 || f >= (long)P.fns.size())
+        f = 0;
       const Fn &F = P.fns[f].destroyed;
       EmitPlan PL = make_emit_plan(F);
       std::printf("== fn %ld [%s] ==\norder:", f,
@@ -360,7 +377,8 @@ int run_debugger(const Cli &C, const std::string &src) {
       }
     } else if (cmd == "opt") {
       long f = num(1, 0);
-      if (f < 0 || f >= (long)P.fns.size()) f = 0;
+      if (f < 0 || f >= (long)P.fns.size())
+        f = 0;
       Fn live = P.fns[f].ssa; // fresh copy: the pipeline runs on the copy
       OptStats os{};
       PassCfg cfg = pass_cfg_of(C);
@@ -393,12 +411,15 @@ int run_debugger(const Cli &C, const std::string &src) {
       if (sub == "reset") {
         dbg_vm_reset(D, C.steps, C.inputs);
         std::printf("machine reset: pc=%zu, %u fn(s), %zu slots in main\n",
-                    D.S.pc, D.S.nfns(), D.S.frames.empty() ? 0 : D.S.frames[0].size());
+                    D.S.pc, D.S.nfns(),
+                    D.S.frames.empty() ? 0 : D.S.frames[0].size());
       } else if (sub == "step") {
         long n = num(2, 1);
-        if (n < 1) n = 1;
+        if (n < 1)
+          n = 1;
         for (long k = 0; k < n; ++k) {
-          if (D.S.halted || D.S.trapped || D.S.timeout) break;
+          if (D.S.halted || D.S.trapped || D.S.timeout)
+            break;
           size_t at = D.S.pc;
           std::string d = bc_disasm_one(D.bc, at);
           bool alive = vm_step_op(D.S);
@@ -407,13 +428,16 @@ int run_debugger(const Cli &C, const std::string &src) {
           if (!D.S.st.empty())
             std::printf(" top=%lld", (long long)D.S.st.back());
           std::printf("\n");
-          if (!alive) break;
+          if (!alive)
+            break;
         }
         if (D.S.halted)
           std::printf("  HALTED after %llu steps\n",
                       (unsigned long long)D.S.steps);
-        if (D.S.trapped) std::printf("  TRAPPED at pc=%zu\n", D.S.pc);
-        if (D.S.timeout) std::printf("  TIMEOUT (step limit)\n");
+        if (D.S.trapped)
+          std::printf("  TRAPPED at pc=%zu\n", D.S.pc);
+        if (D.S.timeout)
+          std::printf("  TIMEOUT (step limit)\n");
       } else if (sub == "run" || sub == "continue") {
         long maxops = num(2, 1000000000L);
         uint64_t ops = 0;
@@ -427,16 +451,18 @@ int run_debugger(const Cli &C, const std::string &src) {
               bp_hit = true;
               break;
             }
-          if (bp_hit) break;
+          if (bp_hit)
+            break;
         }
-        std::printf(
-            "%llu ops executed: pc=%zu steps=%llu%s%s%s\n",
-            (unsigned long long)ops, D.S.pc, (unsigned long long)D.S.steps,
-            D.S.halted ? " HALTED" : "", D.S.trapped ? " TRAPPED" : "",
-            D.S.timeout ? " TIMEOUT" : "");
+        std::printf("%llu ops executed: pc=%zu steps=%llu%s%s%s\n",
+                    (unsigned long long)ops, D.S.pc,
+                    (unsigned long long)D.S.steps, D.S.halted ? " HALTED" : "",
+                    D.S.trapped ? " TRAPPED" : "",
+                    D.S.timeout ? " TIMEOUT" : "");
         if (sub == "run") {
           std::printf("output (%zu):", D.S.R.out.size());
-          for (val_t v : D.S.R.out) std::printf(" %lld", (long long)v);
+          for (val_t v : D.S.R.out)
+            std::printf(" %lld", (long long)v);
           std::printf("\n");
         }
       } else if (sub == "until") {
@@ -447,14 +473,15 @@ int run_debugger(const Cli &C, const std::string &src) {
           uint64_t ops = 0;
           while (vm_step_op(D.S)) {
             ++ops;
-            if (D.S.pc == (size_t)target) break;
-            if (D.S.halted || D.S.trapped || D.S.timeout) break;
+            if (D.S.pc == (size_t)target)
+              break;
+            if (D.S.halted || D.S.trapped || D.S.timeout)
+              break;
           }
-          std::printf("stopped at pc=%zu (target %ld) after %llu ops%s%s%s\n",
-                      D.S.pc, target, (unsigned long long)ops,
-                      D.S.halted ? " HALTED" : "",
-                      D.S.trapped ? " TRAPPED" : "",
-                      D.S.timeout ? " TIMEOUT" : "");
+          std::printf(
+              "stopped at pc=%zu (target %ld) after %llu ops%s%s%s\n", D.S.pc,
+              target, (unsigned long long)ops, D.S.halted ? " HALTED" : "",
+              D.S.trapped ? " TRAPPED" : "", D.S.timeout ? " TIMEOUT" : "");
         }
       } else if (sub == "break") {
         long target = num(2, -1);
@@ -478,7 +505,8 @@ int run_debugger(const Cli &C, const std::string &src) {
             }
         }
       } else if (sub == "breaks") {
-        if (D.bps.empty()) std::printf("no breakpoints\n");
+        if (D.bps.empty())
+          std::printf("no breakpoints\n");
         for (uint32_t bp : D.bps)
           std::printf("  %u: %s\n", bp, bc_disasm_one(D.bc, bp).c_str());
       } else if (sub == "state") {

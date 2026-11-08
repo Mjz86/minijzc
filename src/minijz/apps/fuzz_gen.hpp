@@ -15,8 +15,8 @@ struct GenCtx {
     std::string name;
     int nparams;
     int arr_param{-1}; // >= 0: that arg position takes an array handle
-    bool rec{false}; // recursive: call sites must keep tiny constants
-    bool rt{false}; // recursive BUT trip-guard bounded: runtime args safe
+    bool rec{false};   // recursive: call sites must keep tiny constants
+    bool rt{false};    // recursive BUT trip-guard bounded: runtime args safe
   };
   std::mt19937 rng;
   int counter_id{};
@@ -68,14 +68,16 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
     if (leaf == 2) { // flat array load: three index flavors
       std::vector<int> flat{};
       for (int i = 0; i < (int)arrays.size(); ++i)
-        if (arrays[i].inner == 0) flat.push_back(i);
+        if (arrays[i].inner == 0)
+          flat.push_back(i);
       if (!flat.empty()) {
         const Arr &A = arrays[flat[pick(0, (int)flat.size() - 1)]];
         int flavor = pick(0, 5);
         if (allow_rti && flavor == 1) { // runtime index: counters >= 0
           std::vector<int> cs{};
           for (int k = 0; k < (int)vars.size(); ++k)
-            if (vars[k][0] == 'c') cs.push_back(k);
+            if (vars[k][0] == 'c')
+              cs.push_back(k);
           if (!cs.empty()) {
             out += A.name + "[" + vars[cs[pick(0, (int)cs.size() - 1)]] +
                    " % " + std::to_string(A.len) + "]";
@@ -88,7 +90,8 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
           return;
         }
         int i = pick(0, A.len - 1); // else constant index (bait: OOB)
-        if (bait && !pure && pick(0, 11) == 0) i = A.len + pick(0, 2);
+        if (bait && !pure && pick(0, 11) == 0)
+          i = A.len + pick(0, 2);
         out += A.name + "[" + std::to_string(i) + "]";
         return;
       }
@@ -108,10 +111,12 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
     if ((leaf == 5 || leaf == 9) && !fns.empty() && !pure) { // fn call
       std::vector<int> flat{};
       for (int i = 0; i < (int)arrays.size(); ++i)
-        if (arrays[i].inner == 0) flat.push_back(i);
+        if (arrays[i].inner == 0)
+          flat.push_back(i);
       std::vector<int> call{};
       for (int i = 0; i < (int)fns.size(); ++i)
-        if (fns[i].arr_param < 0 || !flat.empty()) call.push_back(i);
+        if (fns[i].arr_param < 0 || !flat.empty())
+          call.push_back(i);
       if (!call.empty()) {
         const FnG &F = fns[call[pick(0, (int)call.size() - 1)]];
         // recursive fns take runtime arguments only when every internal
@@ -121,14 +126,16 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
         bool expr_args = F.rec ? F.rt : true;
         out += F.name + "(";
         for (int k = 0; k < F.nparams; ++k) {
-          if (k) out += ", ";
+          if (k)
+            out += ", ";
           if (F.arr_param >= 0 && k == F.arr_param) { // the array handle
             const Arr &A = arrays[flat[pick(0, (int)flat.size() - 1)]];
             out += A.name;
           } else if (F.arr_param >= 0 && k == F.arr_param + 1) {
             const Arr &A = arrays[flat[pick(0, (int)flat.size() - 1)]];
             int i = pick(0, A.len - 1); // its index (bait: OOB)
-            if (bait && pick(0, 11) == 0) i = A.len + pick(0, 2);
+            if (bait && pick(0, 11) == 0)
+              i = A.len + pick(0, 2);
             out += std::to_string(i);
           } else if (expr_args && pick(0, 4) == 0) { // pure expression arg
             std::string e;
@@ -150,7 +157,8 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
     if (leaf == 6) { // 2-D load (constant in-bounds indices)
       std::vector<int> mats{};
       for (int i = 0; i < (int)arrays.size(); ++i)
-        if (arrays[i].inner > 0) mats.push_back(i);
+        if (arrays[i].inner > 0)
+          mats.push_back(i);
       if (!mats.empty()) {
         const Arr &A = arrays[mats[pick(0, (int)mats.size() - 1)]];
         out += A.name + "[" + std::to_string(pick(0, A.len - 1)) + "][" +
@@ -170,64 +178,118 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
       std::string rhs = std::to_string(pick(-3, 3));
       bool trap = bait && !pure && pick(0, 2) == 0; // 1/3: guard inverted
       if (pick(0, 1))
-        out += "(" + v + (trap ? " == 0 && " : " != 0 && ") + K + " / " +
-               v + cmp + rhs + ")";
+        out += "(" + v + (trap ? " == 0 && " : " != 0 && ") + K + " / " + v +
+               cmp + rhs + ")";
       else
-        out += "(" + v + (trap ? " != 0 || " : " == 0 || ") + K + " / " +
-               v + cmp + rhs + ")";
+        out += "(" + v + (trap ? " != 0 || " : " == 0 || ") + K + " / " + v +
+               cmp + rhs + ")";
       return;
     }
     int r = pick(0, 3); // constants: widen the range sometimes
-    if (r == 0) out += std::to_string(pick(-99, 99));
-    else if (r == 1) out += std::to_string(pick(-99999, 99999));
-    else out += std::to_string(pick(-9, 9));
+    if (r == 0)
+      out += std::to_string(pick(-99, 99));
+    else if (r == 1)
+      out += std::to_string(pick(-99999, 99999));
+    else
+      out += std::to_string(pick(-9, 9));
     return;
   }
   switch (pick(0, 11)) {
-  case 0: out += "("; gen_expr(out, depth - 1); out += " + ";
-          gen_expr(out, depth - 1); out += ")"; break;
-  case 1: out += "("; gen_expr(out, depth - 1); out += " - ";
-          gen_expr(out, depth - 1); out += ")"; break;
-  case 2: out += "("; gen_expr(out, depth - 1); out += " * ";
-          gen_expr(out, depth - 1); out += ")"; break;
-  case 3: out += "("; gen_expr(out, depth - 1); out +=
-           pick(0, 1) ? " < " : " > "; // both directions: canon bait
-           gen_expr(out, depth - 1); out += ")"; break;
-  case 4: out += "("; gen_expr(out, depth - 1); out +=
-           pick(0, 3) == 0 ? " == " : // canon: >= -> <=, != -> !x == y
-           pick(0, 2) == 0 ? " >= " :
-           pick(0, 1) ? " <= " : " != ";
-           gen_expr(out, depth - 1); out += ")"; break;
-  case 5: out += pick(0, 1) ? "-(" : "!("; // negation or logical not
-           gen_expr(out, depth - 1); out += ")"; break;
-  case 6: out += "("; gen_expr(out, depth - 1); out += " && ";
-          gen_expr(out, depth - 1); out += ")"; break;
-  case 7: out += "("; gen_expr(out, depth - 1); out += " || ";
-          gen_expr(out, depth - 1); out += ")"; break;
+  case 0:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += " + ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 1:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += " - ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 2:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += " * ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 3:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += pick(0, 1) ? " < " : " > "; // both directions: canon bait
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 4:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += pick(0, 3) == 0 ? " == " : // canon: >= -> <=, != -> !x == y
+               pick(0, 2) == 0 ? " >= "
+           : pick(0, 1)        ? " <= "
+                               : " != ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 5:
+    out += pick(0, 1) ? "-(" : "!("; // negation or logical not
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 6:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += " && ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 7:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += " || ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
   case 8: { // divide by a constant (bait: deliberate /0 trap)
     int d = pick(2, 12);
-    if (pick(0, 1)) d = -d; // negative divisors: signed divmagic bait
-    if (bait && !pure && pick(0, 11) == 0) d = 0;
+    if (pick(0, 1))
+      d = -d; // negative divisors: signed divmagic bait
+    if (bait && !pure && pick(0, 11) == 0)
+      d = 0;
     has_div = true;
-    out += "("; gen_expr(out, depth - 1);
+    out += "(";
+    gen_expr(out, depth - 1);
     out += " / " + std::to_string(d) + ")";
     break;
   }
   case 9: { // modulo by a constant (ditto)
     int d = pick(2, 12);
-    if (pick(0, 1)) d = -d;
-    if (bait && !pure && pick(0, 11) == 0) d = 0;
+    if (pick(0, 1))
+      d = -d;
+    if (bait && !pure && pick(0, 11) == 0)
+      d = 0;
     has_div = true;
-    out += "("; gen_expr(out, depth - 1);
+    out += "(";
+    gen_expr(out, depth - 1);
     out += " % " + std::to_string(d) + ")";
     break;
   }
-  case 10: out += "("; gen_expr(out, depth - 1); out +=
-            pick(0, 1) ? " + " : " - ";
-            gen_expr(out, depth - 1); out += ")"; break;
-  case 11: out += "("; gen_expr(out, depth - 1); out +=
-            pick(0, 1) ? " < " : " > ";
-            gen_expr(out, depth - 1); out += ")"; break;
+  case 10:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += pick(0, 1) ? " + " : " - ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
+  case 11:
+    out += "(";
+    gen_expr(out, depth - 1);
+    out += pick(0, 1) ? " < " : " > ";
+    gen_expr(out, depth - 1);
+    out += ")";
+    break;
   }
 }
 
@@ -241,8 +303,7 @@ inline void GenCtx::gen_stmt(int depth) {
   if (loop_depth > 0 && pick(0, 11) == 0) {
     std::string c;
     gen_expr(c, 2);
-    src += "if (" + c + ") { " + (pick(0, 1) ? "break" : "continue") +
-           "; }\n";
+    src += "if (" + c + ") { " + (pick(0, 1) ? "break" : "continue") + "; }\n";
     has_brk_cont = true;
     return;
   }
@@ -253,7 +314,8 @@ inline void GenCtx::gen_stmt(int depth) {
     if (leaf <= 1) { // flat array store: constant / runtime index
       std::vector<int> flat{};
       for (int i = 0; i < (int)arrays.size(); ++i)
-        if (arrays[i].inner == 0) flat.push_back(i);
+        if (arrays[i].inner == 0)
+          flat.push_back(i);
       if (!flat.empty()) {
         const Arr &A = arrays[flat[pick(0, (int)flat.size() - 1)]];
         std::string idx{};
@@ -261,7 +323,8 @@ inline void GenCtx::gen_stmt(int depth) {
         if (allow_rti && flavor == 1) { // runtime index: counters >= 0
           std::vector<int> cs{};
           for (int k = 0; k < (int)vars.size(); ++k)
-            if (vars[k][0] == 'c') cs.push_back(k);
+            if (vars[k][0] == 'c')
+              cs.push_back(k);
           if (!cs.empty())
             idx = vars[cs[pick(0, (int)cs.size() - 1)]] + " % " +
                   std::to_string(A.len);
@@ -273,7 +336,8 @@ inline void GenCtx::gen_stmt(int depth) {
         int i = pick(0, A.len - 1); // else constant index
         if (idx.empty() && bait && pick(0, 9) == 0)
           i = A.len + pick(0, 2); // trap-parity bait
-        if (idx.empty()) idx = std::to_string(i);
+        if (idx.empty())
+          idx = std::to_string(i);
         std::string e;
         gen_expr(e, 3);
         src += A.name + "[" + idx + "] = " + e + ";\n";
@@ -283,7 +347,8 @@ inline void GenCtx::gen_stmt(int depth) {
     if (leaf == 2) { // 2-D store (constant in-bounds indices)
       std::vector<int> mats{};
       for (int i = 0; i < (int)arrays.size(); ++i)
-        if (arrays[i].inner > 0) mats.push_back(i);
+        if (arrays[i].inner > 0)
+          mats.push_back(i);
       if (!mats.empty()) {
         const Arr &A = arrays[mats[pick(0, (int)mats.size() - 1)]];
         std::string e;
@@ -296,7 +361,8 @@ inline void GenCtx::gen_stmt(int depth) {
     if (leaf == 3 && !vars.empty()) { // assignment (never loop counters)
       std::vector<int> idx{};
       for (int i = 0; i < (int)vars.size(); ++i)
-        if (vars[i][0] != 'c') idx.push_back(i);
+        if (vars[i][0] != 'c')
+          idx.push_back(i);
       if (idx.empty()) { // only counters in scope: print instead
         std::string e;
         gen_expr(e, 3);
@@ -391,8 +457,8 @@ inline void GenCtx::gen_stmt(int depth) {
       int ol = pick(2, 3), il = pick(1, 4);
       src += "let " + n + " = array(" + std::to_string(ol) + ");\n";
       for (int k = 0; k < ol; ++k)
-        src += n + "[" + std::to_string(k) + "] = array(" +
-               std::to_string(il) + ");\n";
+        src += n + "[" + std::to_string(k) + "] = array(" + std::to_string(il) +
+               ");\n";
       arrays.push_back({n, ol, il});
       has_mat = true;
       return;
@@ -404,8 +470,8 @@ inline void GenCtx::gen_stmt(int depth) {
       arrays.push_back({n, len});
       return;
     }
-    std::string n = std::string(VAR_NAMES[pick(0, 7)]) +
-                    std::to_string(counter_id++);
+    std::string n =
+        std::string(VAR_NAMES[pick(0, 7)]) + std::to_string(counter_id++);
     std::string e;
     if (vars.empty())
       e = std::to_string(pick(-9, 9));
@@ -416,7 +482,8 @@ inline void GenCtx::gen_stmt(int depth) {
   }
 }
 inline void GenCtx::gen_stmts(int count, int depth) {
-  for (int i = 0; i < count; ++i) gen_stmt(depth);
+  for (int i = 0; i < count; ++i)
+    gen_stmt(depth);
 }
 
 // generate 0-3 plain functions (params, body stmts, 1-2 returns) plus,
@@ -426,7 +493,8 @@ inline void GenCtx::gen_stmts(int count, int depth) {
 // constant arguments so recursion depth stays far below the 512-frame trap.
 inline void GenCtx::gen_fn_defs() {
   int n = pick(0, 2);
-  if (pick(0, 1)) ++n;
+  if (pick(0, 1))
+    ++n;
   for (int f = 0; f < n; ++f) {
     int np = pick(0, 3);
     std::string name = "h" + std::to_string(counter_id++);
@@ -436,7 +504,8 @@ inline void GenCtx::gen_fn_defs() {
     vars.clear();
     arrays.clear();
     for (int p = 0; p < np; ++p) {
-      if (p) src += ", ";
+      if (p)
+        src += ", ";
       std::string pn = "p" + std::to_string(p);
       src += pn;
       vars.push_back(pn);
@@ -510,14 +579,15 @@ inline void GenCtx::gen_fn_defs() {
 
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
-  g.use_input = (seed & 1) != 0; // half the programs read stdin
+  g.use_input = (seed & 1) != 0;        // half the programs read stdin
   g.allow_mat = ((seed >> 2) & 7) == 0; // 1/8 of programs grow 2-D arrays
-  g.bait = ((seed >> 5) & 3) == 0; // 1/4 carry deliberate trap bait; the
+  g.bait = ((seed >> 5) & 3) == 0;      // 1/4 carry deliberate trap bait; the
   // rest run to completion so the deep optimizer paths stay covered
   g.allow_rti = ((seed >> 8) & 3) == 0; // 1/4 use runtime array indices; the
   // rest keep every index constant, so lifting / dead-array / const-call
   // coverage stays as strong as the narrower original vocabulary
-  for (int i = 0; i < 16; ++i) g.ins.push_back(g.pick(-40, 40));
+  for (int i = 0; i < 16; ++i)
+    g.ins.push_back(g.pick(-40, 40));
   g.gen_fn_defs(); // functions first (hoisting makes order irrelevant)
   g.gen_stmts(g.pick(2, 4), 4); // leading lets mostly
   g.gen_stmts(g.pick(4, 12), 4);

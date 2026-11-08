@@ -5,14 +5,16 @@
 #include "minijz/ir/instr.hpp"
 #include "minijz/back/vm.hpp"
 
-// ---- 13.5c. bytecode listing (disassembly) -----------------------------------
+// ---- 13.5c. bytecode listing (disassembly)
+// -----------------------------------
 static std::string emit_bc_listing(const std::vector<uint8_t> &c) {
   std::string s{};
   char buf[160];
-  if (c.size() < 4) return s;
+  if (c.size() < 4)
+    return s;
   const uint32_t nfns = bc_rd_u32(c, 0);
-  std::snprintf(buf, sizeof buf, "; %zu bytes, %u fn(s)\n",
-                (size_t)c.size(), (unsigned)nfns);
+  std::snprintf(buf, sizeof buf, "; %zu bytes, %u fn(s)\n", (size_t)c.size(),
+                (unsigned)nfns);
   s += buf;
   for (uint32_t f = 0; f < nfns && c.size() >= 4 + (size_t)8 * (f + 1); ++f) {
     uint32_t fo = bc_rd_u32(c, 4 + (size_t)8 * f);
@@ -29,22 +31,19 @@ static std::string emit_bc_listing(const std::vector<uint8_t> &c) {
       ++pc;
       switch (op) {
       case Bc::Push:
-        std::snprintf(buf, sizeof buf, " %lld\n",
-                      (long long)bc_rd_i64(c, pc));
+        std::snprintf(buf, sizeof buf, " %lld\n", (long long)bc_rd_i64(c, pc));
         s += buf;
         pc += 8;
         break;
       case Bc::Load:
       case Bc::Store:
-        std::snprintf(buf, sizeof buf, " v%u\n",
-                      (unsigned)bc_rd_u32(c, pc));
+        std::snprintf(buf, sizeof buf, " v%u\n", (unsigned)bc_rd_u32(c, pc));
         s += buf;
         pc += 4;
         break;
       case Bc::Jmp:
       case Bc::Jz:
-        std::snprintf(buf, sizeof buf, " %u\n",
-                      (unsigned)bc_rd_u32(c, pc));
+        std::snprintf(buf, sizeof buf, " %u\n", (unsigned)bc_rd_u32(c, pc));
         s += buf;
         pc += 4;
         break;
@@ -55,11 +54,14 @@ static std::string emit_bc_listing(const std::vector<uint8_t> &c) {
         s += buf;
         pc += 8;
         break;
-      default: s += "\n"; break;
+      default:
+        s += "\n";
+        break;
       }
     }
   }
   return s;
 }
 
-// ---- 13.5d. native build & run harness ----------------------------------------
+// ---- 13.5d. native build & run harness
+// ----------------------------------------

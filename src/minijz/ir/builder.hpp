@@ -6,19 +6,30 @@
 #include "minijz/ir/instr.hpp"
 #include "minijz/ir/pred_norm.hpp"
 
-constexpr B ir_op(Bk b) {   // AST binop -> IR binop (identical enumerators)
+constexpr B ir_op(Bk b) { // AST binop -> IR binop (identical enumerators)
   switch (b) {
-  case Bk::Add: return B::Add;
-  case Bk::Sub: return B::Sub;
-  case Bk::Mul: return B::Mul;
-  case Bk::Div: return B::Div;
-  case Bk::Mod: return B::Mod;
-  case Bk::Lt: return B::Lt;
-  case Bk::Le: return B::Le;
-  case Bk::Gt: return B::Gt;
-  case Bk::Ge: return B::Ge;
-  case Bk::Eq: return B::Eq;
-  case Bk::Ne: return B::Ne;
+  case Bk::Add:
+    return B::Add;
+  case Bk::Sub:
+    return B::Sub;
+  case Bk::Mul:
+    return B::Mul;
+  case Bk::Div:
+    return B::Div;
+  case Bk::Mod:
+    return B::Mod;
+  case Bk::Lt:
+    return B::Lt;
+  case Bk::Le:
+    return B::Le;
+  case Bk::Gt:
+    return B::Gt;
+  case Bk::Ge:
+    return B::Ge;
+  case Bk::Eq:
+    return B::Eq;
+  case Bk::Ne:
+    return B::Ne;
   }
   return B::Add;
 }
@@ -88,7 +99,8 @@ struct Builder {
     finish(NONE, NONE);
   }
   constexpr void ensure_open() {
-    if (cur == NONE) cur = new_block();
+    if (cur == NONE)
+      cur = new_block();
   }
   constexpr uint32_t const_val(val_t v) {
     uint32_t d = fresh_temp();
@@ -100,12 +112,14 @@ struct Builder {
   constexpr uint32_t ex(uint32_t ei, const Ast &a) {
     const Expr &e = a.es[ei];
     switch (e.k) {
-    case Ek::Num: return const_val(e.num);
+    case Ek::Num:
+      return const_val(e.num);
     case Ek::Var:
       // A use with no local mapping yet happens for `let x = ... x ...`
       // (the initializer sees the NEW binding, C-style). Storage is
       // zero-initialized, exactly like the AST oracle's env -- read 0.
-      if (vmap[e.var] == NONE) return const_val(0);
+      if (vmap[e.var] == NONE)
+        return const_val(0);
       return vmap[e.var];
     case Ek::Neg: {
       uint32_t x = ex(e.l, a);
@@ -154,7 +168,8 @@ struct Builder {
     }
     case Ek::Call: { // d = f_k(a0, ..): args evaluated left to right
       std::vector<uint32_t> argv{};
-      for (uint32_t ke : a.seq_kids[e.l]) argv.push_back(ex(ke, a));
+      for (uint32_t ke : a.seq_kids[e.l])
+        argv.push_back(ex(ke, a));
       uint32_t d = fresh_temp();
       Instr ci{.k = K::Call, .dst = d, .c = (int64_t)e.var + 1};
       ci.args = std::move(argv);
@@ -171,8 +186,12 @@ struct Builder {
       cur = rb;
       uint32_t r = ex(e.r, a);
       close_cbr(r, tt, ff);
-      cur = tt; emit({.k = K::Const, .dst = res, .c = 1}); close_br(mm);
-      cur = ff; emit({.k = K::Const, .dst = res, .c = 0}); close_br(mm);
+      cur = tt;
+      emit({.k = K::Const, .dst = res, .c = 1});
+      close_br(mm);
+      cur = ff;
+      emit({.k = K::Const, .dst = res, .c = 0});
+      close_br(mm);
       cur = mm;
       return res;
     }
@@ -181,12 +200,16 @@ struct Builder {
       uint32_t l = ex(e.l, a);
       uint32_t rb = new_block(), tt = new_block(), ff = new_block(),
                mm = new_block();
-      close_cbr(l, tt, rb);        // true short-circuits
+      close_cbr(l, tt, rb); // true short-circuits
       cur = rb;
       uint32_t r = ex(e.r, a);
       close_cbr(r, tt, ff);
-      cur = tt; emit({.k = K::Const, .dst = res, .c = 1}); close_br(mm);
-      cur = ff; emit({.k = K::Const, .dst = res, .c = 0}); close_br(mm);
+      cur = tt;
+      emit({.k = K::Const, .dst = res, .c = 1});
+      close_br(mm);
+      cur = ff;
+      emit({.k = K::Const, .dst = res, .c = 0});
+      close_br(mm);
       cur = mm;
       return res;
     }
@@ -217,23 +240,25 @@ struct Builder {
       finish(NONE, NONE);
       break;
     }
-    case Sk::StoreA: { // a[i1]...[ik] = value:  loads for k-1 indices, then Store
+    case Sk::StoreA: { // a[i1]...[ik] = value:  loads for k-1 indices, then
+                       // Store
       ensure_open();
       const auto &idx = a.seq_kids[s.a];
-      uint32_t h = vmap[s.var];         // base array variable (a handle vreg)
+      uint32_t h = vmap[s.var]; // base array variable (a handle vreg)
       for (size_t j = 0; j + 1 < idx.size(); ++j) {
-        uint32_t i = ex(idx[j], a);     // index exprs left-to-right,
-        uint32_t t = fresh_temp();      // intermediate handle loads
+        uint32_t i = ex(idx[j], a); // index exprs left-to-right,
+        uint32_t t = fresh_temp();  // intermediate handle loads
         emit({.k = K::Load, .dst = t, .a = h, .b2 = i});
         h = t;
       }
       uint32_t last = ex(idx.back(), a);
-      uint32_t v = ex(s.b, a);          // value evaluated last (oracle order)
+      uint32_t v = ex(s.b, a); // value evaluated last (oracle order)
       emit({.k = K::Store, .a = h, .b2 = last, .c2 = v});
       break;
     }
     case Sk::Seq:
-      for (uint32_t x : a.seq_kids[s.a]) st(x, a);
+      for (uint32_t x : a.seq_kids[s.a])
+        st(x, a);
       break;
     case Sk::If: {
       ensure_open();
@@ -264,7 +289,7 @@ struct Builder {
     case Sk::While: {
       ensure_open();
       uint32_t h = new_block(), body = new_block(), after = new_block();
-      close_br(h);                       // preheader -> header
+      close_br(h); // preheader -> header
       cur = h;
       uint32_t c = ex(s.e, a);
       close_cbr(c, body, after);
@@ -273,7 +298,7 @@ struct Builder {
       st(s.a, a);
       loop_stack.pop_back();
       ensure_open();
-      close_br(h);                       // back edge
+      close_br(h); // back edge
       cur = after;
       break;
     }

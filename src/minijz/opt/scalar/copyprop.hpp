@@ -6,11 +6,12 @@
 #include "minijz/ir/instr.hpp"
 #include "minijz/opt/analysis/an.hpp"
 
-// --- 9a2. copy propagation ----------------------------------------------------
-// `d = s` (Copy): every use of d becomes s and the copy dies. SSA gives each
-// vreg exactly one def, and the copy's source dominates the copy, hence the
-// source dominates every replaced use — always sound. This is the pass that
-// cleans up phi-to-copy degenerations and lets CSE see canonical names.
+// --- 9a2. copy propagation
+// ---------------------------------------------------- `d = s` (Copy): every
+// use of d becomes s and the copy dies. SSA gives each vreg exactly one def,
+// and the copy's source dominates the copy, hence the source dominates every
+// replaced use — always sound. This is the pass that cleans up phi-to-copy
+// degenerations and lets CSE see canonical names.
 //
 // The dominance argument does NOT hold for CROSSED phi-degenerate copies:
 // around a loop, degeneration can materialize `t473 = t496` and
@@ -30,7 +31,8 @@ constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
       // belt-and-braces: ren stays acyclic by construction (single write per
       // dst + the self-loop guard below); the cap keeps any future
       // multi-def IR from resurrecting the infinite walk
-      if (++steps > nv) break;
+      if (++steps > nv)
+        break;
     }
     return v;
   };
@@ -45,7 +47,8 @@ constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
         had = true;
       }
     }
-  if (!had) return false;
+  if (!had)
+    return false;
   bool changed = false;
   std::vector<char> drop(fn.code.size(), 0);
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
@@ -54,7 +57,8 @@ constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
       if (I.k == K::Copy && I.dst != NONE &&
           (I.a == I.dst || ren[I.dst] != NONE)) { // self copy or propagated
         drop[i] = 1;
-        if (I.a != I.dst) os.copyprops++;
+        if (I.a != I.dst)
+          os.copyprops++;
         changed = true;
         continue;
       }
@@ -86,7 +90,8 @@ constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
       uint32_t ob = fn.blocks[b].begin, oe = fn.blocks[b].end;
       fn.blocks[b].begin = (uint32_t)nc.size();
       for (uint32_t i = ob; i < oe; ++i)
-        if (!drop[i]) nc.push_back(fn.code[i]);
+        if (!drop[i])
+          nc.push_back(fn.code[i]);
       fn.blocks[b].end = (uint32_t)nc.size();
     }
     fn.code = std::move(nc);
@@ -94,4 +99,5 @@ constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
   return changed;
 }
 
-// --- 9a4. canonicalization ----------------------------------------------------
+// --- 9a4. canonicalization
+// ----------------------------------------------------

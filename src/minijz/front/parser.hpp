@@ -22,22 +22,32 @@ struct Parser {
       : L(L_), src(s), a(a_) {}
 
   constexpr void fail(uint32_t pos, const char *w) {
-    if (ok) { ok = false; err = {pos, w}; }
+    if (ok) {
+      ok = false;
+      err = {pos, w};
+    }
   }
   constexpr const Tok &peek() const { return L.toks[ti]; }
   constexpr const Tok &eat() { return L.toks[ti++]; }
   constexpr bool accept(Tk k) {
-    if (peek().k == k) { ++ti; return true; }
+    if (peek().k == k) {
+      ++ti;
+      return true;
+    }
     return false;
   }
   constexpr bool expect(Tk k, const char *w) {
-    if (!accept(k)) { fail(peek().pos, w); return false; }
+    if (!accept(k)) {
+      fail(peek().pos, w);
+      return false;
+    }
     return true;
   }
 
   constexpr uint32_t find_var(std::string_view n, uint32_t pos) {
     for (auto it = a.scope.rbegin(); it != a.scope.rend(); ++it)
-      if (it->name == n) return it->id;
+      if (it->name == n)
+        return it->id;
     fail(pos, "use of undeclared variable");
     return 0xFFFF'FFFF;
   }
@@ -45,42 +55,61 @@ struct Parser {
   // expr := logic
   constexpr uint32_t expr() {
     uint32_t lhs = rel();
-    if (!ok) return 0;
+    if (!ok)
+      return 0;
     for (;;) {
       if (peek().k == Tk::AndAnd) {
         ++ti;
         uint32_t rhs = rel();
-        if (!ok) return 0;
+        if (!ok)
+          return 0;
         uint32_t idx = (uint32_t)a.es.size();
         a.es.push_back({Ek::And, {}, 0, 0, lhs, rhs});
         lhs = idx;
       } else if (peek().k == Tk::OrOr) {
         ++ti;
         uint32_t rhs = rel();
-        if (!ok) return 0;
+        if (!ok)
+          return 0;
         uint32_t idx = (uint32_t)a.es.size();
         a.es.push_back({Ek::Or, {}, 0, 0, lhs, rhs});
         lhs = idx;
-      } else return lhs;
+      } else
+        return lhs;
     }
   }
   // rel := add (cmp add)?
   constexpr uint32_t rel() {
     uint32_t lhs = add();
-    if (!ok) return 0;
+    if (!ok)
+      return 0;
     Bk b{};
     switch (peek().k) {
-    case Tk::Lt: b = Bk::Lt; break;
-    case Tk::Le: b = Bk::Le; break;
-    case Tk::Gt: b = Bk::Gt; break;
-    case Tk::Ge: b = Bk::Ge; break;
-    case Tk::EqEq: b = Bk::Eq; break;
-    case Tk::Ne: b = Bk::Ne; break;
-    default: return lhs;
+    case Tk::Lt:
+      b = Bk::Lt;
+      break;
+    case Tk::Le:
+      b = Bk::Le;
+      break;
+    case Tk::Gt:
+      b = Bk::Gt;
+      break;
+    case Tk::Ge:
+      b = Bk::Ge;
+      break;
+    case Tk::EqEq:
+      b = Bk::Eq;
+      break;
+    case Tk::Ne:
+      b = Bk::Ne;
+      break;
+    default:
+      return lhs;
     }
     ++ti;
     uint32_t rhs = add();
-    if (!ok) return 0;
+    if (!ok)
+      return 0;
     uint32_t i = (uint32_t)a.es.size();
     a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs});
     return i;
@@ -88,15 +117,20 @@ struct Parser {
   // add := mul (('+'|'-') mul)*
   constexpr uint32_t add() {
     uint32_t lhs = mul();
-    if (!ok) return 0;
+    if (!ok)
+      return 0;
     for (;;) {
       Bk b{};
-      if (peek().k == Tk::Plus) b = Bk::Add;
-      else if (peek().k == Tk::Minus) b = Bk::Sub;
-      else return lhs;
+      if (peek().k == Tk::Plus)
+        b = Bk::Add;
+      else if (peek().k == Tk::Minus)
+        b = Bk::Sub;
+      else
+        return lhs;
       ++ti;
       uint32_t rhs = mul();
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       uint32_t idx = (uint32_t)a.es.size();
       a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs});
       lhs = idx;
@@ -105,16 +139,22 @@ struct Parser {
   // mul := unary (('*'|'/'|'%') unary)*
   constexpr uint32_t mul() {
     uint32_t lhs = unary();
-    if (!ok) return 0;
+    if (!ok)
+      return 0;
     for (;;) {
       Bk b{};
-      if (peek().k == Tk::Star) b = Bk::Mul;
-      else if (peek().k == Tk::Slash) b = Bk::Div;
-      else if (peek().k == Tk::Percent) b = Bk::Mod;
-      else return lhs;
+      if (peek().k == Tk::Star)
+        b = Bk::Mul;
+      else if (peek().k == Tk::Slash)
+        b = Bk::Div;
+      else if (peek().k == Tk::Percent)
+        b = Bk::Mod;
+      else
+        return lhs;
       ++ti;
       uint32_t rhs = unary();
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       uint32_t idx = (uint32_t)a.es.size();
       a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs});
       lhs = idx;
@@ -142,8 +182,10 @@ struct Parser {
     while (peek().k == Tk::LBr) {
       ++ti;
       uint32_t ix = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::RBr, "expected ']'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::RBr, "expected ']'"))
+        return 0;
       uint32_t i = (uint32_t)a.es.size();
       a.es.push_back({Ek::Load, {}, 0, 0, lhs, ix});
       lhs = i;
@@ -165,8 +207,10 @@ struct Parser {
       if (w == "array" && peek().k == Tk::LP) { // array(size)
         ++ti;
         uint32_t sz = expr();
-        if (!ok) return 0;
-        if (!expect(Tk::RP, "expected ')' after array size")) return 0;
+        if (!ok)
+          return 0;
+        if (!expect(Tk::RP, "expected ')' after array size"))
+          return 0;
         uint32_t i = (uint32_t)a.es.size();
         a.es.push_back({Ek::Alloc, {}, 0, 0, sz, 0});
         return postfix(i);
@@ -174,15 +218,18 @@ struct Parser {
       if (w == "len" && peek().k == Tk::LP) { // len(handle)
         ++ti;
         uint32_t h = expr();
-        if (!ok) return 0;
-        if (!expect(Tk::RP, "expected ')' after len argument")) return 0;
+        if (!ok)
+          return 0;
+        if (!expect(Tk::RP, "expected ')' after len argument"))
+          return 0;
         uint32_t i = (uint32_t)a.es.size();
         a.es.push_back({Ek::Len, {}, 0, 0, h, 0});
         return postfix(i);
       }
       if (w == "input" && peek().k == Tk::LP) { // input()
         ++ti;
-        if (!expect(Tk::RP, "expected '()'")) return 0;
+        if (!expect(Tk::RP, "expected '()'"))
+          return 0;
         uint32_t i = (uint32_t)a.es.size();
         a.es.push_back({Ek::Input, {}, 0, 0, 0, 0});
         return postfix(i);
@@ -195,26 +242,30 @@ struct Parser {
           if (peek().k != Tk::RP) {
             for (;;) {
               uint32_t ae = expr();
-              if (!ok) return 0;
+              if (!ok)
+                return 0;
               kids.push_back(ae);
-              if (accept(Tk::Comma)) continue;
+              if (accept(Tk::Comma))
+                continue;
               break;
             }
           }
-          if (!expect(Tk::RP, "expected ')' after arguments")) return 0;
+          if (!expect(Tk::RP, "expected ')' after arguments"))
+            return 0;
           if (kids.size() > 6) {
             fail(t.pos, "too many arguments (max 6: SysV integer regs)");
             return 0;
           }
           a.seq_kids.push_back(std::move(kids));
           uint32_t i = (uint32_t)a.es.size();
-          a.es.push_back({Ek::Call, {}, 0, fi,
-                          (uint32_t)(a.seq_kids.size() - 1), 0});
+          a.es.push_back(
+              {Ek::Call, {}, 0, fi, (uint32_t)(a.seq_kids.size() - 1), 0});
           return postfix(i);
         }
       }
       uint32_t v = find_var(w, t.pos);
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       if (peek().k == Tk::LP && v != 0xFFFF'FFFF) {
         fail(t.pos, "not a function (variables cannot be called)");
         return 0;
@@ -225,8 +276,10 @@ struct Parser {
     }
     if (accept(Tk::LP)) {
       uint32_t e = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::RP, "expected ')'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::RP, "expected ')'"))
+        return 0;
       return postfix(e);
     }
     fail(peek().pos, "expected expression");
@@ -235,26 +288,29 @@ struct Parser {
 
   // block := '{' stmt* '}'  (child Seq)
   constexpr uint32_t block() {
-    if (!expect(Tk::LB, "expected '{'")) return 0;
+    if (!expect(Tk::LB, "expected '{'"))
+      return 0;
     a.scope_marks.push_back((uint32_t)a.scope.size());
     uint32_t s = stmts_until_rb();
     a.scope.resize(a.scope_marks.back());
     a.scope_marks.pop_back();
-    if (!ok) return 0;
-    if (!expect(Tk::RB, "expected '}'")) return 0;
+    if (!ok)
+      return 0;
+    if (!expect(Tk::RB, "expected '}'"))
+      return 0;
     return s;
   }
   constexpr uint32_t stmts_until_rb() {
     std::vector<uint32_t> kids{};
     while (peek().k != Tk::RB && peek().k != Tk::End && ok) {
       uint32_t s = stmt();
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       kids.push_back(s);
     }
     a.seq_kids.push_back(std::move(kids));
     uint32_t i = (uint32_t)a.ss.size();
-    a.ss.push_back(
-        {Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
+    a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
     return i;
   }
   constexpr uint32_t stmt() {
@@ -266,23 +322,34 @@ struct Parser {
         return 0;
       }
       uint32_t e = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::Semi, "expected ';'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::Semi, "expected ';'"))
+        return 0;
       uint32_t i = (uint32_t)a.ss.size();
       a.ss.push_back({Sk::Ret, 0, e, 0, 0});
       return i;
     }
     case Tk::KwLet: {
       ++ti;
-      if (peek().k != Tk::Id) { fail(peek().pos, "expected name after let"); return 0; }
+      if (peek().k != Tk::Id) {
+        fail(peek().pos, "expected name after let");
+        return 0;
+      }
       Tok t = eat();
       std::string_view n = src.substr(t.lo, t.hi - t.lo);
       uint32_t id = a.new_var(n);
-      if (id == 0xDEAD'FFFF) { fail(t.pos, "duplicate declaration"); return 0; }
-      if (!expect(Tk::Assign, "expected '='")) return 0;
+      if (id == 0xDEAD'FFFF) {
+        fail(t.pos, "duplicate declaration");
+        return 0;
+      }
+      if (!expect(Tk::Assign, "expected '='"))
+        return 0;
       uint32_t e = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::Semi, "expected ';'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::Semi, "expected ';'"))
+        return 0;
       uint32_t i = (uint32_t)a.ss.size();
       a.ss.push_back({Sk::Let, id, e, 0, 0});
       return i;
@@ -290,30 +357,36 @@ struct Parser {
     case Tk::KwPrint: {
       ++ti;
       uint32_t e = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::Semi, "expected ';'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::Semi, "expected ';'"))
+        return 0;
       uint32_t i = (uint32_t)a.ss.size();
       a.ss.push_back({Sk::Print, 0, e, 0, 0});
       return i;
     }
     case Tk::KwIf: {
       ++ti;
-      if (!expect(Tk::LP, "expected '('")) return 0;
+      if (!expect(Tk::LP, "expected '('"))
+        return 0;
       uint32_t c = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::RP, "expected ')'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::RP, "expected ')'"))
+        return 0;
       uint32_t then = block();
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       uint32_t els = 0;
       if (accept(Tk::KwElse)) {
         els = block();
-        if (!ok) return 0;
+        if (!ok)
+          return 0;
       } else {
         // no else clause: an EMPTY Seq arm (must not alias the then arm!)
         a.seq_kids.push_back({});
         els = (uint32_t)a.ss.size();
-        a.ss.push_back(
-            {Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
+        a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
       }
       uint32_t i = (uint32_t)a.ss.size();
       a.ss.push_back({Sk::If, 0, c, then, els});
@@ -328,21 +401,26 @@ struct Parser {
                                   : "'continue' outside of a loop");
         return 0;
       }
-      if (!expect(Tk::Semi, "expected ';'")) return 0;
+      if (!expect(Tk::Semi, "expected ';'"))
+        return 0;
       uint32_t i = (uint32_t)a.ss.size();
       a.ss.push_back({is_break ? Sk::Brk : Sk::Cont, 0, 0, 0, 0});
       return i;
     }
     case Tk::KwWhile: {
       ++ti;
-      if (!expect(Tk::LP, "expected '('")) return 0;
+      if (!expect(Tk::LP, "expected '('"))
+        return 0;
       uint32_t c = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::RP, "expected ')'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::RP, "expected ')'"))
+        return 0;
       ++loop_depth;
       uint32_t body = block();
       --loop_depth;
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       uint32_t i = (uint32_t)a.ss.size();
       a.ss.push_back({Sk::While, 0, c, body, 0});
       return i;
@@ -353,19 +431,25 @@ struct Parser {
       Tok t = eat();
       std::string_view w = src.substr(t.lo, t.hi - t.lo);
       uint32_t v = find_var(w, t.pos);
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       if (peek().k == Tk::LBr) { // array store: a[i]...[k] = expr;
         std::vector<uint32_t> idx{};
         while (accept(Tk::LBr)) {
           uint32_t e = expr();
-          if (!ok) return 0;
-          if (!expect(Tk::RBr, "expected ']'")) return 0;
+          if (!ok)
+            return 0;
+          if (!expect(Tk::RBr, "expected ']'"))
+            return 0;
           idx.push_back(e);
         }
-        if (!expect(Tk::Assign, "expected '=' in array store")) return 0;
+        if (!expect(Tk::Assign, "expected '=' in array store"))
+          return 0;
         uint32_t val = expr();
-        if (!ok) return 0;
-        if (!expect(Tk::Semi, "expected ';'")) return 0;
+        if (!ok)
+          return 0;
+        if (!expect(Tk::Semi, "expected ';'"))
+          return 0;
         a.seq_kids.push_back(std::move(idx));
         uint32_t i = (uint32_t)a.ss.size();
         // var = base array var; a = seq_kids slot of index exprs; b = value
@@ -373,10 +457,13 @@ struct Parser {
             {Sk::StoreA, v, 0, (uint32_t)(a.seq_kids.size() - 1), val});
         return i;
       }
-      if (!expect(Tk::Assign, "expected '=' in assignment")) return 0;
+      if (!expect(Tk::Assign, "expected '=' in assignment"))
+        return 0;
       uint32_t e = expr();
-      if (!ok) return 0;
-      if (!expect(Tk::Semi, "expected ';'")) return 0;
+      if (!ok)
+        return 0;
+      if (!expect(Tk::Semi, "expected ';'"))
+        return 0;
       uint32_t i = (uint32_t)a.ss.size();
       a.ss.push_back({Sk::Assign, v, e, 0, 0});
       return i;
@@ -393,14 +480,19 @@ struct Parser {
     uint32_t depth = 0;
     for (size_t k = 0; k < L.toks.size(); ++k) {
       Tk t = L.toks[k].k;
-      if (t == Tk::LB) ++depth;
-      else if (t == Tk::RB && depth) --depth;
+      if (t == Tk::LB)
+        ++depth;
+      else if (t == Tk::RB && depth)
+        --depth;
       else if (t == Tk::KwFn && depth == 0) {
         if (k + 1 < L.toks.size() && L.toks[k + 1].k == Tk::Id) {
           const Tok &nt = L.toks[k + 1];
           std::string_view n = src.substr(nt.lo, nt.hi - nt.lo);
           for (const auto &h : a.hoisted_fns)
-            if (h == n) { fail(nt.pos, "duplicate function name"); return; }
+            if (h == n) {
+              fail(nt.pos, "duplicate function name");
+              return;
+            }
           a.hoisted_fns.push_back(n);
         }
       }
@@ -408,7 +500,8 @@ struct Parser {
   }
   constexpr uint32_t find_hoisted(std::string_view n) const {
     for (size_t i = 0; i < a.hoisted_fns.size(); ++i)
-      if (a.hoisted_fns[i] == n) return (uint32_t)i;
+      if (a.hoisted_fns[i] == n)
+        return (uint32_t)i;
     return NONE;
   }
   // fn name(params) { body } -- params form one scope level (body may shadow)
@@ -421,12 +514,16 @@ struct Parser {
     Tok t = eat();
     std::string_view n = src.substr(t.lo, t.hi - t.lo);
     uint32_t idx = find_hoisted(n);
-    if (idx == NONE) { fail(t.pos, "internal: fn not hoisted"); return false; }
+    if (idx == NONE) {
+      fail(t.pos, "internal: fn not hoisted");
+      return false;
+    }
     if (a.fns[idx].defined) {
       fail(t.pos, "duplicate function definition");
       return false;
     }
-    if (!expect(Tk::LP, "expected '(' after function name")) return false;
+    if (!expect(Tk::LP, "expected '(' after function name"))
+      return false;
     std::vector<uint32_t> params{};
     a.scope_marks.push_back((uint32_t)a.scope.size());
     if (!accept(Tk::RP)) {
@@ -443,10 +540,12 @@ struct Parser {
           return false;
         }
         params.push_back(id);
-        if (accept(Tk::Comma)) continue;
+        if (accept(Tk::Comma))
+          continue;
         break;
       }
-      if (!expect(Tk::RP, "expected ')' after parameters")) return false;
+      if (!expect(Tk::RP, "expected ')' after parameters"))
+        return false;
     }
     bool saved = in_fn;
     in_fn = true;
@@ -454,32 +553,42 @@ struct Parser {
     in_fn = saved;
     a.scope.resize(a.scope_marks.back());
     a.scope_marks.pop_back();
-    if (!ok) return false;
+    if (!ok)
+      return false;
     a.fns[idx] = FnDef{n, params, body, true};
     return true;
   }
   constexpr uint32_t program() {
     hoist_fns();
-    if (!ok) return 0;
+    if (!ok)
+      return 0;
     a.fns.assign(a.hoisted_fns.size(), FnDef{});
     std::vector<uint32_t> kids{};
     while (peek().k != Tk::End && ok) {
       if (peek().k == Tk::KwFn) {
-        if (!parse_fn()) return 0;
+        if (!parse_fn())
+          return 0;
         continue;
       }
       uint32_t s = stmt();
-      if (!ok) return 0;
+      if (!ok)
+        return 0;
       kids.push_back(s);
     }
-    if (!ok) return 0;
+    if (!ok)
+      return 0;
     for (const FnDef &f : a.fns)
-      if (!f.defined) { fail(0, "internal: hoisted fn never defined"); return 0; }
-    if (peek().k != Tk::End) { fail(peek().pos, "unexpected token"); return 0; }
+      if (!f.defined) {
+        fail(0, "internal: hoisted fn never defined");
+        return 0;
+      }
+    if (peek().k != Tk::End) {
+      fail(peek().pos, "unexpected token");
+      return 0;
+    }
     a.seq_kids.push_back(std::move(kids));
     uint32_t i = (uint32_t)a.ss.size();
-    a.ss.push_back(
-        {Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
+    a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
     return i;
   }
 };
@@ -487,16 +596,25 @@ struct Parser {
 constexpr Parsed parse(std::string_view src) {
   Lexed L = lex(src);
   Parsed P{};
-  if (!L.ok) { P.err = {L.err.pos, L.err.what}; return P; }
+  if (!L.ok) {
+    P.err = {L.err.pos, L.err.what};
+    return P;
+  }
   P.ast = Ast{};
   Parser ps(L, src, P.ast);
   P.ok = ps.ok;
   P.root = ps.program();
-  if (!ps.ok) { P.ok = false; P.err = ps.err; }
+  if (!ps.ok) {
+    P.ok = false;
+    P.err = ps.err;
+  }
   if (P.ast.names.empty() && P.ok) {
     // no variables at all is fine (print-only programs)
   }
   for (const Expr &e : P.ast.es)
-    if (e.k == Ek::Input) { P.uses_input = true; break; }
+    if (e.k == Ek::Input) {
+      P.uses_input = true;
+      break;
+    }
   return P;
 }

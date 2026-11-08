@@ -4,7 +4,7 @@
 // simulator/vocabulary tours used by --selftest and the cx build.
 
 #include "minijz/opt/analysis/an.hpp" // analyze() for the tour checks
-#include "minijz/runtime/astrun.hpp"    // run_ast (the oracle)
+#include "minijz/runtime/astrun.hpp"  // run_ast (the oracle)
 #include "minijz/prog/program.hpp"
 #include "minijz/prog/runners.hpp"
 #include "minijz/apps/fuzz_gen.hpp"
@@ -35,14 +35,17 @@ constexpr bool cx_tour() { // branches, unrolling, short-circuit, folding
       "if (d != 0 && 100 / d > 1) { print 1; } else { print 2; }\n"
       "print 40 + 2;\n";
   Program P = compile(src);
-  if (!P.ok) return false;
+  if (!P.ok)
+    return false;
   RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
   RunOut plain = run_prog(fns_of(P, 0), 1000000, {});
   RunOut opt = run_prog(fns_of(P, 1), 1000000, {});
   RunOut lowered = run_prog(fns_of(P, 2), 1000000, {});
   RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
-  if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
-  if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
+  if (!same_run(oracle, plain) || !same_run(oracle, opt))
+    return false;
+  if (!same_run(oracle, lowered) || !same_run(oracle, vm))
+    return false;
   return oracle.out.size() == 4 && oracle.out[0] == 20 && // even sum
          oracle.out[1] == 9 && oracle.out[2] == 2 &&      // loop exit, sc
          oracle.out[3] == 42;                             // folded
@@ -63,21 +66,25 @@ constexpr bool cx_arrays() { // arena, lifting, len, handle-chained 2-D
       "m[0][1] = 40;\n"
       "print m[0][1] + 2;\n";
   Program P = compile(src);
-  if (!P.ok) return false;
+  if (!P.ok)
+    return false;
   // the mjz_lib analyses really ran: a loop with nesting info
   bool loop_ok = false;
   An A = analyze(P.ssa_all[0]); // pre-opt main analysis (was Program member)
   for (uint32_t h = 0; h < A.n; ++h)
     if (A.inner[h] == h && A.nest[h] == 0)
       loop_ok = true;
-  if (!loop_ok) return false;
+  if (!loop_ok)
+    return false;
   RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
   RunOut plain = run_prog(fns_of(P, 0), 1000000, {});
   RunOut opt = run_prog(fns_of(P, 1), 1000000, {});
   RunOut lowered = run_prog(fns_of(P, 2), 1000000, {});
   RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
-  if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
-  if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
+  if (!same_run(oracle, plain) || !same_run(oracle, opt))
+    return false;
+  if (!same_run(oracle, lowered) || !same_run(oracle, vm))
+    return false;
   return oracle.out.size() == 3 && oracle.out[0] == 14 && // 0+1+4+9
          oracle.out[1] == 4 &&                            // len(a)
          oracle.out[2] == 42;                             // m[0][1]+2
@@ -94,14 +101,17 @@ constexpr bool cx_fns() { // inlining, recursion, const-call evaluation
       "print is_even(9);\n"
       "print fact(10);\n";
   Program P = compile(src);
-  if (!P.ok) return false;
+  if (!P.ok)
+    return false;
   RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
   RunOut plain = run_prog(fns_of(P, 0), 1000000, {});
   RunOut opt = run_prog(fns_of(P, 1), 1000000, {});
   RunOut lowered = run_prog(fns_of(P, 2), 1000000, {});
   RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
-  if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
-  if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
+  if (!same_run(oracle, plain) || !same_run(oracle, opt))
+    return false;
+  if (!same_run(oracle, lowered) || !same_run(oracle, vm))
+    return false;
   return oracle.out.size() == 4 && oracle.out[0] == 40 && // inlined+folded
          oracle.out[1] == 1 && oracle.out[2] == 0 &&      // mutual recursion
          oracle.out[3] == 3628800;                        // const-called fact
@@ -125,14 +135,17 @@ constexpr bool cx_series() { // unroll, closed forms, divmagic, input()
       "print dd % 7;\n"; // divmagic lowering, runtime dividend
   std::vector<val_t> tape{19, 23, 1000003};
   Program P = compile(src);
-  if (!P.ok || !P.uses_input) return false;
+  if (!P.ok || !P.uses_input)
+    return false;
   RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, tape);
   RunOut plain = run_prog(fns_of(P, 0), 1000000, tape);
   RunOut opt = run_prog(fns_of(P, 1), 1000000, tape);
   RunOut lowered = run_prog(fns_of(P, 2), 1000000, tape);
   RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 10000000, tape);
-  if (!same_run(oracle, plain) || !same_run(oracle, opt)) return false;
-  if (!same_run(oracle, lowered) || !same_run(oracle, vm)) return false;
+  if (!same_run(oracle, plain) || !same_run(oracle, opt))
+    return false;
+  if (!same_run(oracle, lowered) || !same_run(oracle, vm))
+    return false;
   return oracle.out.size() == 5 && oracle.out[0] == 42 && // 19+23
          oracle.out[1] == 3 &&                            // unrolled + folded
          oracle.out[2] == 514727830236622ll &&            // closed form
@@ -144,28 +157,31 @@ constexpr bool cx_series() { // unroll, closed forms, divmagic, input()
 // (regression checks for the 2026-11 bug-hunt, kept as compile-time proofs)
 constexpr bool cx_rings() { // the bug-3 repro family through the DEFAULT engine
   constexpr std::string_view src =
-      "fn fa(n) { if (n == 0) { return 0; } if (n % 4 == 1) { return fa(n / 4); } return fb(n / 4); }\n"
-      "fn fb(n) { if (n == 0) { return 1; } if (n % 4 == 1) { return fa(n / 4); } return fb(n / 4); }\n"
-      "print fa(8);\n"       // 1: the last hop is fb->fb, a back edge into
-                              // the sibling copy that does not re-execute
-                              // the root edge's defining block -- exactly
-                              // the 2026-11 bug-3 shape (fa(8) used to TRAP)
-      "print fa(10);\n"      // 1
-      "print fa(9);\n";      // 1
+      "fn fa(n) { if (n == 0) { return 0; } if (n % 4 == 1) { return fa(n / "
+      "4); } return fb(n / 4); }\n"
+      "fn fb(n) { if (n == 0) { return 1; } if (n % 4 == 1) { return fa(n / "
+      "4); } return fb(n / 4); }\n"
+      "print fa(8);\n"  // 1: the last hop is fb->fb, a back edge into
+                        // the sibling copy that does not re-execute
+                        // the root edge's defining block -- exactly
+                        // the 2026-11 bug-3 shape (fa(8) used to TRAP)
+      "print fa(10);\n" // 1
+      "print fa(9);\n"; // 1
   // ONE compile, ONE run (g++ retains the constant expression's whole
   // state until end-of-TU). The tailrec/tce_merge engine cannot run in a
   // static proof on this hardware (its constexpr state exceeds 4 GiB);
   // it is covered by the RUNTIME battery (cx_pipeline via --selftest, the
   // unit tests, and the differential fuzzer's pass rotations).
   Program P = compile(src); // default: the scctco engine
-  if (!P.ok) return false;
+  if (!P.ok)
+    return false;
   RunOut t = run_prog(fns_of(P, 1), 1000000, {});
   return t.out.size() == 3 && t.out[0] == 1 && t.out[1] == 1 && t.out[2] == 1;
 }
 constexpr bool cx_notcanon() { // comparison negation at the equality points
   constexpr std::string_view src =
       "let z = 0;\n"
-      "print !(!(0 < 0));\n"   // bug4 class: NOT(a>=b) must be a<b, not a<=b
+      "print !(!(0 < 0));\n" // bug4 class: NOT(a>=b) must be a<b, not a<=b
       "print !(!(0 < 1));\n"
       "print !(!(1 < 0));\n"
       "print !(!(0 > 0));\n"
@@ -177,15 +193,16 @@ constexpr bool cx_notcanon() { // comparison negation at the equality points
       "print !(!(input() < z));\n";
   std::vector<val_t> tape{0, -5}; // 0<0 -> 0; -5<0 -> 1 (transient cx alloc)
   Program P = compile(src);
-  if (!P.ok) return false;
+  if (!P.ok)
+    return false;
   RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, tape);
   RunOut opt = run_prog(fns_of(P, 1), 1000000, tape);
   RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, tape);
-  if (!same_run(oracle, opt) || !same_run(oracle, vm)) return false;
-  return oracle.out.size() == 10 &&
-         oracle.out[0] == 0 && oracle.out[1] == 1 && oracle.out[2] == 0 &&
-         oracle.out[3] == 0 && oracle.out[4] == 1 && oracle.out[5] == 1 &&
-         oracle.out[6] == 1 && oracle.out[7] == 0 &&
+  if (!same_run(oracle, opt) || !same_run(oracle, vm))
+    return false;
+  return oracle.out.size() == 10 && oracle.out[0] == 0 && oracle.out[1] == 1 &&
+         oracle.out[2] == 0 && oracle.out[3] == 0 && oracle.out[4] == 1 &&
+         oracle.out[5] == 1 && oracle.out[6] == 1 && oracle.out[7] == 0 &&
          oracle.out[8] == 0 && oracle.out[9] == 1;
 }
 
@@ -199,12 +216,14 @@ constexpr bool cx_pipeline() {
 // in 4 GiB); --selftest always runs the FULL battery (all four programs)
 // at runtime.
 #ifdef MJZ_CX_ASSERT
-static_assert(cx_arrays(),
-              "MiniJZ pipeline (arena arrays + lib loop analyses) at compile time");
+static_assert(
+    cx_arrays(),
+    "MiniJZ pipeline (arena arrays + lib loop analyses) at compile time");
 static_assert(cx_fns(),
               "MiniJZ pipeline (recursion/inline/const-call) at compile time");
-static_assert(cx_series(),
-              "MiniJZ pipeline (unroll/closed forms/divmagic/VM) at compile time");
+static_assert(
+    cx_series(),
+    "MiniJZ pipeline (unroll/closed forms/divmagic/VM) at compile time");
 #endif
 
 // runtime entry for the app layer: constexpr/inline functions are only

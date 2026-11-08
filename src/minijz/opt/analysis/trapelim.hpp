@@ -8,20 +8,23 @@
 #include "minijz/opt/analysis/an.hpp"
 #include "minijz/opt/analysis/intervals.hpp"
 
-// --- 9d3c. trap elimination ----------------------------------------------------
-// A Div/Mod whose divisor provably excludes 0 (and excludes -1, or whose
-// dividend provably excludes INT64_MIN) can never trap: mark it `nt` so
-// every backend drops the guard, DCE/LICM may treat it as pure, and the
-// closed-form/simulation loop passes may delete the loop computing it.
-// A Load/Store whose handle provably names ONE constant-length allocation
-// with a constant in-range index can never trap either.
+// --- 9d3c. trap elimination
+// ---------------------------------------------------- A Div/Mod whose divisor
+// provably excludes 0 (and excludes -1, or whose dividend provably excludes
+// INT64_MIN) can never trap: mark it `nt` so every backend drops the guard,
+// DCE/LICM may treat it as pure, and the closed-form/simulation loop passes may
+// delete the loop computing it. A Load/Store whose handle provably names ONE
+// constant-length allocation with a constant in-range index can never trap
+// either.
 constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
   Ranges RA = range_analyze(fn, A);
-  if (!RA.ok) return false;
+  if (!RA.ok)
+    return false;
   AliasInfo AI = alias_analyze(fn);
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  if (!nv) return false;
+  if (!nv)
+    return false;
   std::vector<uint32_t> defi(nv, NONE);
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
@@ -40,10 +43,12 @@ constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
   bool changed = false;
   std::vector<Iv> st(nv);
   for (uint32_t b = 0; b < nb; ++b) {
-    for (uint32_t v = 0; v < nv; ++v) st[v] = RA.entry[(size_t)b * nv + v];
+    for (uint32_t v = 0; v < nv; ++v)
+      st[v] = RA.entry[(size_t)b * nv + v];
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       Instr &I = fn.code[i];
-      if (I.k == K::Phi) continue; // entry rule already covered phis
+      if (I.k == K::Phi)
+        continue; // entry rule already covered phis
       if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) && !I.nt) {
         Iv dv = (I.b2 != NONE && I.b2 < nv) ? st[I.b2] : Iv{};
         Iv dd = (I.a != NONE && I.a < nv) ? st[I.a] : Iv{};

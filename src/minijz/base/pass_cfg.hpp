@@ -37,11 +37,11 @@
 //   0 silent; 1 one line per pass invocation; 2 + the IR after each pass
 //   that changed something; 3 reserved for analysis dumps.
 struct PassCfg {
-  uint32_t level{3};   // -O0..-O3 preset
-  uint32_t unroll{16}; // full-unroll constant-trip loops with N <= this
+  uint32_t level{3};     // -O0..-O3 preset
+  uint32_t unroll{16};   // full-unroll constant-trip loops with N <= this
   uint32_t fp_limit{24}; // fixpoint round cap for every tier loop
-  uint8_t debug{0};    // dump level (0..3)
-  bool regalloc{true}; // C/bytecode register allocation (coloring)
+  uint8_t debug{0};      // dump level (0..3)
+  bool regalloc{true};   // C/bytecode register allocation (coloring)
   // tier 0
   bool p_fold{true}, p_copyprop{true}, p_canon{true}, p_cse{true},
       p_unreach{true}, p_splice{true}, p_dce{true};
@@ -82,33 +82,73 @@ struct PassCfg {
 // set_named_pass, which covers the same set plus 'inline'.)
 inline constexpr uint32_t PASS_TOGGLE_COUNT = 20;
 inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
-    "fold",   "copyprop", "canon",    "cse",     "unreach", "splice",
-    "dce",    "mem2reg",  "trapelim", "licm",    "divmagic", "reassoc",
-    "unroll", "lcf",      "constcall", "scctco", "tailrec", "cdfold",
-    "ifconv", "inline"};
+    "fold",      "copyprop", "canon",   "cse",      "unreach", "splice", "dce",
+    "mem2reg",   "trapelim", "licm",    "divmagic", "reassoc", "unroll", "lcf",
+    "constcall", "scctco",   "tailrec", "cdfold",   "ifconv",  "inline"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
-  case 0: p.p_fold = on; return true;
-  case 1: p.p_copyprop = on; return true;
-  case 2: p.p_canon = on; return true;
-  case 3: p.p_cse = on; return true;
-  case 4: p.p_unreach = on; return true;
-  case 5: p.p_splice = on; return true;
-  case 6: p.p_dce = on; return true;
-  case 7: p.p_mem2reg = on; return true;
-  case 8: p.p_trapelim = on; return true;
-  case 9: p.p_licm = on; return true;
-  case 10: p.p_divmagic = on; return true;
-  case 11: p.p_reassoc = on; return true;
-  case 12: p.p_unroll = on; return true;
-  case 13: p.p_lcf = on; return true;
-  case 14: p.p_constcall = on; return true;
-  case 15: p.p_scctco = on; return true;
-  case 16: p.p_tailrec = on; return true;
-  case 17: p.p_cdfold = on; return true;
-  case 18: p.p_ifconv = on; return true;
-  case 19: p.do_inline = on; return true;
-  default: return false;
+  case 0:
+    p.p_fold = on;
+    return true;
+  case 1:
+    p.p_copyprop = on;
+    return true;
+  case 2:
+    p.p_canon = on;
+    return true;
+  case 3:
+    p.p_cse = on;
+    return true;
+  case 4:
+    p.p_unreach = on;
+    return true;
+  case 5:
+    p.p_splice = on;
+    return true;
+  case 6:
+    p.p_dce = on;
+    return true;
+  case 7:
+    p.p_mem2reg = on;
+    return true;
+  case 8:
+    p.p_trapelim = on;
+    return true;
+  case 9:
+    p.p_licm = on;
+    return true;
+  case 10:
+    p.p_divmagic = on;
+    return true;
+  case 11:
+    p.p_reassoc = on;
+    return true;
+  case 12:
+    p.p_unroll = on;
+    return true;
+  case 13:
+    p.p_lcf = on;
+    return true;
+  case 14:
+    p.p_constcall = on;
+    return true;
+  case 15:
+    p.p_scctco = on;
+    return true;
+  case 16:
+    p.p_tailrec = on;
+    return true;
+  case 17:
+    p.p_cdfold = on;
+    return true;
+  case 18:
+    p.p_ifconv = on;
+    return true;
+  case 19:
+    p.do_inline = on;
+    return true;
+  default:
+    return false;
   }
 }
 // one-line description for reports/failure .flags files (runtime-only)
@@ -118,56 +158,61 @@ static std::string describe_cfg(const PassCfg &p) {
   std::string off{};
   // (explicit field reads in PASS_TOGGLE_NAMES order)
   const bool states[PASS_TOGGLE_COUNT] = {
-      p.p_fold,     p.p_copyprop, p.p_canon,     p.p_cse,
-      p.p_unreach,  p.p_splice,   p.p_dce,       p.p_mem2reg,
-      p.p_trapelim, p.p_licm,     p.p_divmagic,  p.p_reassoc,
-      p.p_unroll,   p.p_lcf,      p.p_constcall, p.p_scctco,
-      p.p_tailrec,  p.p_cdfold,   p.p_ifconv,    p.do_inline};
+      p.p_fold,     p.p_copyprop, p.p_canon,   p.p_cse,      p.p_unreach,
+      p.p_splice,   p.p_dce,      p.p_mem2reg, p.p_trapelim, p.p_licm,
+      p.p_divmagic, p.p_reassoc,  p.p_unroll,  p.p_lcf,      p.p_constcall,
+      p.p_scctco,   p.p_tailrec,  p.p_cdfold,  p.p_ifconv,   p.do_inline};
   for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
     if (!states[i]) {
-      if (!off.empty()) off += ",";
+      if (!off.empty())
+        off += ",";
       off += PASS_TOGGLE_NAMES[i];
     }
-  if (!off.empty()) r += " --disable=" + off;
-  if (p.fp_limit != 24) r += " --fp-limit=" + std::to_string(p.fp_limit);
-  if (!p.regalloc) r += " --no-regalloc";
+  if (!off.empty())
+    r += " --disable=" + off;
+  if (p.fp_limit != 24)
+    r += " --fp-limit=" + std::to_string(p.fp_limit);
+  if (!p.regalloc)
+    r += " --no-regalloc";
   return r;
 }
 
 struct OptStats {
-  uint32_t folds{};      // instrs turned into Const
-  uint32_t copies{};     // instrs turned into Copy
-  uint32_t brs_folded{}; // Cbr turned into Br
-  uint32_t blocks_gone{};// unreachable blocks removed
-  uint32_t dce{};        // dead instrs removed
-  uint32_t hoisted{};    // LICM hoists
-  uint32_t copyprops{};  // copies propagated away (uses rewritten to source)
-  uint32_t cses{};       // recomputations replaced by dominating defs
-  uint32_t splices{};    // single-pred/succ block pairs merged
-  uint32_t cbr_same{};   // Cbr with identical arms turned into Br
+  uint32_t folds{};       // instrs turned into Const
+  uint32_t copies{};      // instrs turned into Copy
+  uint32_t brs_folded{};  // Cbr turned into Br
+  uint32_t blocks_gone{}; // unreachable blocks removed
+  uint32_t dce{};         // dead instrs removed
+  uint32_t hoisted{};     // LICM hoists
+  uint32_t copyprops{};   // copies propagated away (uses rewritten to source)
+  uint32_t cses{};        // recomputations replaced by dominating defs
+  uint32_t splices{};     // single-pred/succ block pairs merged
+  uint32_t cbr_same{};    // Cbr with identical arms turned into Br
   uint32_t phi_degens{}; // phis reduced to Copy/Const (dead pred / single pred)
   uint32_t canon_swaps{}; // commutative ops put in canonical operand order
   uint32_t canon_cmps{};  // >/>= comparisons rewritten to the </<= direction
-  uint32_t inlines{};    // call sites inlined (callee body spliced into caller)
-  uint32_t unrolls{};    // loops fully unrolled (constant trip count)
-  uint32_t iters{};      // fixpoint iterations of the pass pipeline
-  uint32_t reassocs{};   // +/-/*c chains reassociated to canonical forms
+  uint32_t inlines{};  // call sites inlined (callee body spliced into caller)
+  uint32_t unrolls{};  // loops fully unrolled (constant trip count)
+  uint32_t iters{};    // fixpoint iterations of the pass pipeline
+  uint32_t reassocs{}; // +/-/*c chains reassociated to canonical forms
   uint32_t reassoc_gone{}; // instructions removed by reassociation
-  uint32_t lcf_loops{};  // loops replaced by closed-form series evaluation
-  uint32_t lcf_sims{};   // loops replaced by compile-time simulation
-  uint32_t lcf_rt{};     // loops replaced by RUNTIME-trip-count closed forms
-  uint32_t divmagics{};  // div/mod-by-const -> mulhi/shift/bitops lowerings
-  uint32_t notcombs{};   // !(cmp) / (cmp)==0 / (cmp)!=1 compare negations folded
-  uint32_t traps_killed{}; // div/mod/load/store traps PROVEN impossible (nt)
+  uint32_t lcf_loops{};    // loops replaced by closed-form series evaluation
+  uint32_t lcf_sims{};     // loops replaced by compile-time simulation
+  uint32_t lcf_rt{};       // loops replaced by RUNTIME-trip-count closed forms
+  uint32_t divmagics{};    // div/mod-by-const -> mulhi/shift/bitops lowerings
+  uint32_t notcombs{}; // !(cmp) / (cmp)==0 / (cmp)!=1 compare negations folded
+  uint32_t traps_killed{};  // div/mod/load/store traps PROVEN impossible (nt)
   uint32_t mem2reg_lifts{}; // arrays lifted to SSA vregs (registers)
   uint32_t mem2reg_dses{};  // stores deleted for never-read (dead) arrays
-  uint32_t lcf_gensims{};  // loops folded by the general (any-condition) simulator
-  uint32_t constcalls{};  // pure constant-argument calls evaluated at compile time
-  uint32_t deadallocs{};  // unused Allocs deleted (arrays read by no one)
-  uint32_t scctco{};      // SCC members whose inner-SCC tail calls collapsed
+  uint32_t
+      lcf_gensims{}; // loops folded by the general (any-condition) simulator
+  uint32_t
+      constcalls{}; // pure constant-argument calls evaluated at compile time
+  uint32_t deadallocs{};   // unused Allocs deleted (arrays read by no one)
+  uint32_t scctco{};       // SCC members whose inner-SCC tail calls collapsed
   uint32_t scctco_folds{}; // collapsed count-down loops folded to & (c-1)
-  uint32_t tces{};        // tail-recursion eliminated (recursion -> loops)
-  uint32_t tce_merges{};  // pure-tail SCCs merged into one sel-dispatched fn
-  uint32_t cdfolds{};     // countdown loops replaced by exact closed forms
-  uint32_t ifconvs{};     // cbrs with provably-binary conds if-converted
+  uint32_t tces{};         // tail-recursion eliminated (recursion -> loops)
+  uint32_t tce_merges{};   // pure-tail SCCs merged into one sel-dispatched fn
+  uint32_t cdfolds{};      // countdown loops replaced by exact closed forms
+  uint32_t ifconvs{};      // cbrs with provably-binary conds if-converted
 };

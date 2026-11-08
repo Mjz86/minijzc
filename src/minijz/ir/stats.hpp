@@ -12,10 +12,10 @@ struct SsaStats {
   uint32_t versions{}; // fresh SSA versions minted
 };
 struct DestrStats {
-  uint32_t edges_split{};  // critical edges split
-  uint32_t copies{};       // sequentialized edge copies emitted
-  uint32_t zeros{};        // undef phi args materialized as Const 0
-  uint32_t self_copies{};  // d<-d no-ops skipped
-  uint32_t cycles_broken{};// swap cycles broken with a temp
-  uint32_t fused{};        // post-destruction copies folded into their source
+  uint32_t edges_split{};   // critical edges split
+  uint32_t copies{};        // sequentialized edge copies emitted
+  uint32_t zeros{};         // undef phi args materialized as Const 0
+  uint32_t self_copies{};   // d<-d no-ops skipped
+  uint32_t cycles_broken{}; // swap cycles broken with a temp
+  uint32_t fused{};         // post-destruction copies folded into their source
 };

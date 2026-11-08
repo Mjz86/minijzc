@@ -45,21 +45,25 @@
 // which the optimizer already treats as an observable, unfoldable, may-trap
 // root. After the transformation the loop passes (unroll, cdfold) can see
 // the recursion as the loop it always was.
-constexpr uint32_t MJZ_TCE_MAX_MEMBERS = 5;   // sel dispatch chain depth
-constexpr uint32_t MJZ_TCE_MAX_SITES = 8;     // tail sites per merge
-constexpr uint32_t MJZ_TCE_MAX_ARITY = 5;     // 1+M params must fit SysV's 6
-constexpr uint32_t MJZ_TCE_MAX_FNSIZE = 400;  // members stay mergeable
+constexpr uint32_t MJZ_TCE_MAX_MEMBERS = 5;  // sel dispatch chain depth
+constexpr uint32_t MJZ_TCE_MAX_SITES = 8;    // tail sites per merge
+constexpr uint32_t MJZ_TCE_MAX_ARITY = 5;    // 1+M params must fit SysV's 6
+constexpr uint32_t MJZ_TCE_MAX_FNSIZE = 400; // members stay mergeable
 
 // is the Call at index ci in block b of fn a tail call? (dst used exactly
 // once, by the block's terminating Ret, after the call)
 constexpr bool is_tail_call(const Fn &fn, uint32_t b, uint32_t ci,
                             const std::vector<uint32_t> &uses) {
   const Instr &I = fn.code[ci];
-  if (I.k != K::Call || I.dst == NONE) return false;
-  if (I.dst >= uses.size() || uses[I.dst] != 1) return false;
+  if (I.k != K::Call || I.dst == NONE)
+    return false;
+  if (I.dst >= uses.size() || uses[I.dst] != 1)
+    return false;
   const uint32_t end = fn.blocks[b].end;
-  if (end == 0 || fn.code[end - 1].k != K::Ret) return false;
-  if (fn.code[end - 1].a != I.dst) return false;
+  if (end == 0 || fn.code[end - 1].k != K::Ret)
+    return false;
+  if (fn.code[end - 1].a != I.dst)
+    return false;
   return ci + 1 < end; // the call precedes the ret
 }
 
@@ -77,8 +81,8 @@ constexpr uint32_t tce_emit_budget_init(Fn &fn, std::vector<Instr> &out) {
 // append the per-site budget check + decrement into `out`; bL/eq are the
 // (pre-created) destination vregs -- pre-creation matters because header
 // phis reference bL BEFORE the site block is emitted
-constexpr void tce_emit_site_check(Fn &fn, std::vector<Instr> &out,
-                                    uint32_t bH, uint32_t bL, uint32_t eq) {
+constexpr void tce_emit_site_check(Fn &fn, std::vector<Instr> &out, uint32_t bH,
+                                   uint32_t bL, uint32_t eq) {
   uint32_t one = new_anon_vreg(fn, 0);
   out.push_back({.k = K::Const, .dst = one, .c = 1});
   out.push_back({.k = K::Bin, .b = B::Sub, .dst = bL, .a = bH, .b2 = one});
@@ -102,7 +106,8 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
   const uint32_t nb = fn.nblocks();
   const uint32_t P = fn.nparams;
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  if (!nb || !nv) return false;
+  if (!nb || !nv)
+    return false;
   // collect tail sites (self calls in tail position)
   struct Site {
     uint32_t b, ci;             // block + call instr index
@@ -111,27 +116,34 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
   std::vector<uint32_t> uses(nv, 0);
   for (const Instr &I : fn.code) {
     auto bump = [&](uint32_t v) {
-      if (v != NONE && v < nv) ++uses[v];
+      if (v != NONE && v < nv)
+        ++uses[v];
     };
     bump(I.a);
     bump(I.b2);
     bump(I.c2);
-    for (uint32_t v : I.args) bump(v);
+    for (uint32_t v : I.args)
+      bump(v);
   }
   std::vector<Site> sites;
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      if (fn.code[i].k != K::Call) continue;
-      if ((uint32_t)fn.code[i].c != self_idx) continue; // not a self call
-      if (fn.code[i].args.size() != P) return false;
-      if (!is_tail_call(fn, b, i, uses)) return false;
+      if (fn.code[i].k != K::Call)
+        continue;
+      if ((uint32_t)fn.code[i].c != self_idx)
+        continue; // not a self call
+      if (fn.code[i].args.size() != P)
+        return false;
+      if (!is_tail_call(fn, b, i, uses))
+        return false;
       Site s;
       s.b = b;
       s.ci = i;
       s.args = fn.code[i].args;
       sites.push_back(std::move(s));
     }
-  if (sites.empty() || sites.size() > MJZ_TCE_MAX_SITES) return false;
+  if (sites.empty() || sites.size() > MJZ_TCE_MAX_SITES)
+    return false;
   const uint32_t k = (uint32_t)sites.size();
   // ---- new block ids -------------------------------------------------------
   //   0        = P0 (the new entry preheader)
@@ -143,7 +155,8 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
   // M_{j-1} / H, so the header keeps exactly ONE latch pred.
   const uint32_t H = 1;
   std::vector<uint32_t> Mb(k + 1, NONE); // M_j block id, 1-based
-  for (uint32_t j = 1; j < k; ++j) Mb[j] = nb + j;
+  for (uint32_t j = 1; j < k; ++j)
+    Mb[j] = nb + j;
   const uint32_t T = (k > 1) ? nb + k : nb + 1;
   const uint32_t latch = (k == 1) ? (sites[0].b + 1) : Mb[1];
   // ---- pre-create every fresh vreg id (blocks reference each other) --------
@@ -152,12 +165,11 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
     pHv[p] = new_anon_vreg(fn, fn.base_of(p));
   const uint32_t bHv = new_anon_vreg(fn, 0); // header phi: the budget
   std::vector<uint32_t> siteBL(k, NONE), siteEQ(k, NONE);
-  for (uint32_t j = 0; j < k; ++j) { // PRE-create: the H phis reference
+  for (uint32_t j = 0; j < k; ++j) {  // PRE-create: the H phis reference
     siteBL[j] = new_anon_vreg(fn, 0); // siteBL[0] before the site is emitted
     siteEQ[j] = new_anon_vreg(fn, 0);
   }
-  std::vector<std::vector<uint32_t>> Mp(k + 1,
-                                        std::vector<uint32_t>(P, NONE));
+  std::vector<std::vector<uint32_t>> Mp(k + 1, std::vector<uint32_t>(P, NONE));
   std::vector<uint32_t> Mbv(k + 1, NONE);
   for (uint32_t j = 1; j < k; ++j) {
     for (uint32_t p = 0; p < P; ++p)
@@ -179,7 +191,8 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
   }
   // param-use rewrite: any use of param vreg p becomes the header phi pHv[p]
   auto rw = [&](uint32_t v) -> uint32_t {
-    if (v != NONE && v < P) return pHv[v];
+    if (v != NONE && v < P)
+      return pHv[v];
     return v;
   };
   // original blocks (ids shifted +1)
@@ -193,12 +206,23 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
       // iteration (the same rotation scctco needed; found by the merged
       // fuzzer's rgcd vocabulary at --disable=scctco)
       for (uint32_t p = 0; p < P; ++p)
-        nc.push_back({.k = K::Phi, .dst = pHv[p], .a = p, .b2 = (k == 1 ? rw(sites[0].args[p]) : Mp[1][p]), .t = 0, .f = latch});
-      nc.push_back({.k = K::Phi, .dst = bHv, .a = bInitV, .b2 = (k == 1 ? siteBL[0] : Mbv[1]), .t = 0, .f = latch});
+        nc.push_back({.k = K::Phi,
+                      .dst = pHv[p],
+                      .a = p,
+                      .b2 = (k == 1 ? rw(sites[0].args[p]) : Mp[1][p]),
+                      .t = 0,
+                      .f = latch});
+      nc.push_back({.k = K::Phi,
+                    .dst = bHv,
+                    .a = bInitV,
+                    .b2 = (k == 1 ? siteBL[0] : Mbv[1]),
+                    .t = 0,
+                    .f = latch});
     }
     int sidx = -1; // which site lives in this block (>= 0: the tail site)
     for (uint32_t j = 0; j < k; ++j)
-      if (sites[j].b == ob) sidx = (int)j;
+      if (sites[j].b == ob)
+        sidx = (int)j;
     for (uint32_t i = fn.blocks[ob].begin; i < fn.blocks[ob].end; ++i) {
       const Instr &I = fn.code[i];
       if (sidx >= 0 && i == sites[(uint32_t)sidx].ci)
@@ -209,22 +233,27 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
                             siteEQ[(uint32_t)sidx]);
         (void)0;
         uint32_t next =
-            (k == 1) ? H
-                     : ((uint32_t)sidx + 1 < k ? Mb[(uint32_t)sidx + 1]
-                                               : Mb[k - 1]);
-        nc.push_back({.k = K::Cbr, .a = siteEQ[(uint32_t)sidx], .t = T,
-                      .f = next});
+            (k == 1)
+                ? H
+                : ((uint32_t)sidx + 1 < k ? Mb[(uint32_t)sidx + 1] : Mb[k - 1]);
+        nc.push_back(
+            {.k = K::Cbr, .a = siteEQ[(uint32_t)sidx], .t = T, .f = next});
         continue;
       }
       Instr c = I;
       c.a = rw(c.a);
       c.b2 = rw(c.b2);
-      if (c.c2 != NONE) c.c2 = rw(c.c2);
-      for (uint32_t &av : c.args) av = rw(av);
-      if (c.dst != NONE && c.dst < P) c.dst = pHv[c.dst];
+      if (c.c2 != NONE)
+        c.c2 = rw(c.c2);
+      for (uint32_t &av : c.args)
+        av = rw(av);
+      if (c.dst != NONE && c.dst < P)
+        c.dst = pHv[c.dst];
       if (c.k == K::Br || c.k == K::Cbr || c.k == K::Phi) {
-        if (c.t != NONE && c.t < nb) c.t = c.t + 1;
-        if (c.f != NONE && c.f < nb) c.f = c.f + 1;
+        if (c.t != NONE && c.t < nb)
+          c.t = c.t + 1;
+        if (c.f != NONE && c.f < nb)
+          c.f = c.f + 1;
       }
       nc.push_back(c);
     }
@@ -244,8 +273,18 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
     uint32_t pa = sites[j - 1].b + 1; // site j (1-based) edge
     uint32_t pb = (j == k - 1) ? (sites[j].b + 1) : Mb[j + 1];
     for (uint32_t p = 0; p < P; ++p)
-      nc.push_back({.k = K::Phi, .dst = Mp[j][p], .a = rw(sites[j - 1].args[p]), .b2 = (j == k - 1 ? rw(sites[j].args[p]) : Mp[j + 1][p]), .t = pa, .f = pb});
-    nc.push_back({.k = K::Phi, .dst = Mbv[j], .a = siteBL[j - 1], .b2 = (j == k - 1 ? siteBL[j] : Mbv[j + 1]), .t = pa, .f = pb});
+      nc.push_back({.k = K::Phi,
+                    .dst = Mp[j][p],
+                    .a = rw(sites[j - 1].args[p]),
+                    .b2 = (j == k - 1 ? rw(sites[j].args[p]) : Mp[j + 1][p]),
+                    .t = pa,
+                    .f = pb});
+    nc.push_back({.k = K::Phi,
+                  .dst = Mbv[j],
+                  .a = siteBL[j - 1],
+                  .b2 = (j == k - 1 ? siteBL[j] : Mbv[j + 1]),
+                  .t = pa,
+                  .f = pb});
     nc.push_back({.k = K::Br, .t = (j == 1 ? H : Mb[j - 1])});
     nbl.push_back({base, (uint32_t)nc.size()});
   }
@@ -255,7 +294,8 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
     tce_emit_trap(fn, nc);
     nbl.push_back({base, (uint32_t)nc.size()});
   }
-  // ---- commit ----------------------------------------------------------------
+  // ---- commit
+  // ----------------------------------------------------------------
   fn.code = std::move(nc);
   fn.blocks = std::move(nbl);
   fn.succ.assign(2 * fn.nblocks(), NONE);
@@ -264,7 +304,8 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
       continue; // empty/tombstone: reading code[end-1] would steal the
                 // PREVIOUS block's terminator and forge ghost edges
     const Instr &term = fn.code[fn.blocks[b].end - 1];
-    if (term.k == K::Br) fn.succ[2 * b] = term.t;
+    if (term.k == K::Br)
+      fn.succ[2 * b] = term.t;
     else if (term.k == K::Cbr) {
       fn.succ[2 * b] = term.t;
       fn.succ[2 * b + 1] = term.f;
@@ -284,9 +325,9 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
 // (a tail caller returned the callee's value directly, so the merged fn
 // returning it is exactly the original semantics).
 struct TceSite {
-  uint32_t m, b, ci;           // member, block (member-local id), call idx
-  uint32_t callee;             // member index of the sibling callee
-  std::vector<uint32_t> args;  // call args (MEMBER vreg space)
+  uint32_t m, b, ci;          // member, block (member-local id), call idx
+  uint32_t callee;            // member index of the sibling callee
+  std::vector<uint32_t> args; // call args (MEMBER vreg space)
 };
 constexpr bool tce_merge(std::vector<Fn> &fns,
                          std::vector<std::string_view> &names,
@@ -294,11 +335,13 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
                          std::vector<uint32_t> &src_index,
                          const std::vector<uint32_t> &members) {
   const uint32_t k = (uint32_t)members.size();
-  if (k < 2 || k > MJZ_TCE_MAX_MEMBERS) return false;
+  if (k < 2 || k > MJZ_TCE_MAX_MEMBERS)
+    return false;
   uint32_t M = 0;
   for (uint32_t mi : members)
     M = M > fns[mi].nparams ? M : fns[mi].nparams;
-  if (M > MJZ_TCE_MAX_ARITY) return false;
+  if (M > MJZ_TCE_MAX_ARITY)
+    return false;
   // collect the intra-SCC tail sites (args in member vreg space)
   std::vector<TceSite> sites;
   for (uint32_t x = 0; x < k; ++x) {
@@ -307,33 +350,41 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
     std::vector<uint32_t> uses(nvx, 0);
     for (const Instr &I : F.code) {
       auto bump = [&](uint32_t v) {
-        if (v != NONE && v < nvx) ++uses[v];
+        if (v != NONE && v < nvx)
+          ++uses[v];
       };
       bump(I.a);
       bump(I.b2);
       bump(I.c2);
-      for (uint32_t v : I.args) bump(v);
+      for (uint32_t v : I.args)
+        bump(v);
     }
     for (uint32_t b = 0; b < F.nblocks(); ++b)
       for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
-        if (F.code[i].k != K::Call) continue;
+        if (F.code[i].k != K::Call)
+          continue;
         uint32_t callee = (uint32_t)F.code[i].c;
         bool intra = false;
-        for (uint32_t y : members) intra |= (y == callee);
-        if (!intra) continue; // call out of the SCC: copied as a real call
-        if (!is_tail_call(F, b, i, uses)) return false; // mixed SCC: bail
+        for (uint32_t y : members)
+          intra |= (y == callee);
+        if (!intra)
+          continue; // call out of the SCC: copied as a real call
+        if (!is_tail_call(F, b, i, uses))
+          return false; // mixed SCC: bail
         TceSite s;
         s.m = x;
         s.b = b;
         s.ci = i;
         s.callee = NONE;
         for (uint32_t y = 0; y < k; ++y)
-          if (members[y] == callee) s.callee = y;
+          if (members[y] == callee)
+            s.callee = y;
         s.args = F.code[i].args;
         sites.push_back(std::move(s));
       }
   }
-  if (sites.size() < 2 || sites.size() > MJZ_TCE_MAX_SITES) return false;
+  if (sites.size() < 2 || sites.size() > MJZ_TCE_MAX_SITES)
+    return false;
   const uint32_t ks = (uint32_t)sites.size();
   // (a k>=2-member cycle has >= k >= 2 tail sites: every member needs an
   // outgoing intra-SCC edge, so the latch chain always exists)
@@ -342,7 +393,8 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
   Fm.nparams = 1 + M;
   Fm.nvars = 1 + M;
   Fm.var_names.push_back("sel");
-  for (uint32_t j = 0; j < M; ++j) Fm.var_names.push_back("a");
+  for (uint32_t j = 0; j < M; ++j)
+    Fm.var_names.push_back("a");
   // per-member vreg map: param p -> the aH phi output; others -> fresh
   std::vector<std::vector<uint32_t>> vmap(k);
   for (uint32_t x = 0; x < k; ++x) {
@@ -359,22 +411,22 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
     next_blk += fns[members[x]].nblocks();
   }
   std::vector<uint32_t> Mb(ks + 1, NONE); // latch chain M_j (1-based)
-  for (uint32_t j = 1; j < ks; ++j) Mb[j] = next_blk++;
+  for (uint32_t j = 1; j < ks; ++j)
+    Mb[j] = next_blk++;
   const uint32_t T = next_blk++;
   const uint32_t latch = Mb[1];
   // ---- pre-create vreg ids --------------------------------------------------
   const uint32_t selHv = new_anon_vreg(Fm, 0);
   std::vector<uint32_t> aHv(M, NONE);
-  for (uint32_t j = 0; j < M; ++j) aHv[j] = new_anon_vreg(Fm, 0);
+  for (uint32_t j = 0; j < M; ++j)
+    aHv[j] = new_anon_vreg(Fm, 0);
   const uint32_t bHv = new_anon_vreg(Fm, 0);
   // member vmaps (params AFTER the aH ids exist)
   for (uint32_t x = 0; x < k; ++x) {
     const Fn &F = fns[members[x]];
     const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
     for (uint32_t v = 0; v < nvx; ++v)
-      vmap[x][v] = (v < F.nparams)
-                       ? aHv[v]
-                       : new_anon_vreg(Fm, F.base_of(v));
+      vmap[x][v] = (v < F.nparams) ? aHv[v] : new_anon_vreg(Fm, F.base_of(v));
   }
   // per-site emitted vregs (sel const, budget-1, eq) — in Fm space
   std::vector<uint32_t> siteSEL(ks, NONE), siteBL(ks, NONE), siteEQ(ks, NONE);
@@ -383,11 +435,12 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
     siteEQ[j] = new_anon_vreg(Fm, 0);
   }
   // latch chain outputs: phis for [sel, a_0..a_{M-1}, budget]
-  std::vector<std::vector<uint32_t>> Mp(
-      ks + 1, std::vector<uint32_t>(1 + M, NONE));
+  std::vector<std::vector<uint32_t>> Mp(ks + 1,
+                                        std::vector<uint32_t>(1 + M, NONE));
   std::vector<uint32_t> Mbv(ks + 1, NONE);
   for (uint32_t j = 1; j < ks; ++j) {
-    for (uint32_t q = 0; q <= M; ++q) Mp[j][q] = new_anon_vreg(Fm, 0);
+    for (uint32_t q = 0; q <= M; ++q)
+      Mp[j][q] = new_anon_vreg(Fm, 0);
     Mbv[j] = new_anon_vreg(Fm, 0);
   }
   // ---- build the code -------------------------------------------------------
@@ -407,21 +460,32 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
   // H: phis + the dispatch terminator
   {
     uint32_t base = (uint32_t)nc.size();
-    nc.push_back({.k = K::Phi, .dst = selHv, .a = 0,
-                  .b2 = Mp[1][0], .t = 0, .f = latch});
+    nc.push_back({.k = K::Phi,
+                  .dst = selHv,
+                  .a = 0,
+                  .b2 = Mp[1][0],
+                  .t = 0,
+                  .f = latch});
     for (uint32_t j = 0; j < M; ++j)
-      nc.push_back({.k = K::Phi, .dst = aHv[j], .a = 1 + j,
-                    .b2 = Mp[1][1 + j], .t = 0, .f = latch});
-    nc.push_back({.k = K::Phi, .dst = bHv, .a = bInitV,
-                  .b2 = Mbv[1], .t = 0, .f = latch});
+      nc.push_back({.k = K::Phi,
+                    .dst = aHv[j],
+                    .a = 1 + j,
+                    .b2 = Mp[1][1 + j],
+                    .t = 0,
+                    .f = latch});
+    nc.push_back({.k = K::Phi,
+                  .dst = bHv,
+                  .a = bInitV,
+                  .b2 = Mbv[1],
+                  .t = 0,
+                  .f = latch});
     // dispatch: sel == x -> member x's entry. k==2: right here.
     // k>2: a chain of dispatch blocks 2..k-1
     auto emit_dispatch = [&](uint32_t from_blk) {
       uint32_t eqv = new_anon_vreg(Fm, 0);
       uint32_t cv = new_anon_vreg(Fm, 0);
       nc.push_back({.k = K::Const, .dst = cv, .c = (val_t)from_blk});
-      nc.push_back({.k = K::Bin, .b = B::Eq, .dst = eqv, .a = selHv,
-                    .b2 = cv});
+      nc.push_back({.k = K::Bin, .b = B::Eq, .dst = eqv, .a = selHv, .b2 = cv});
       uint32_t tt = bmap_base[from_blk];
       // BUGFIX (bug #2, mutual-recursion ring dispatch): the false arm
       // used to be (from_blk+1 <= k-2) ? (from_blk+2) : bmap_base[0],
@@ -432,8 +496,7 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
       // which is the block that checks sel==(from_blk+1) -- block id
       // from_blk+1 in the D_i layout (block i checks sel==i) -- while
       // k==2 (no chain) still falls to member 0's entry.
-      uint32_t ff = (from_blk + 1 <= k - 1) ? (from_blk + 1)
-                                            : bmap_base[0];
+      uint32_t ff = (from_blk + 1 <= k - 1) ? (from_blk + 1) : bmap_base[0];
       // D_i at block id i+1: compares sel == i+1; false -> D_{i+1} / E_0
       nc.push_back({.k = K::Cbr, .a = eqv, .t = tt, .f = ff});
     };
@@ -451,7 +514,9 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
     uint32_t cv = new_anon_vreg(Fm, 0);
     nc.push_back({.k = K::Const, .dst = cv, .c = (val_t)i});
     nc.push_back({.k = K::Bin, .b = B::Eq, .dst = eqv, .a = selHv, .b2 = cv});
-    nc.push_back({.k = K::Cbr, .a = eqv, .t = bmap_base[i],
+    nc.push_back({.k = K::Cbr,
+                  .a = eqv,
+                  .t = bmap_base[i],
                   .f = (i < k - 1) ? (i + 1) : bmap_base[0]});
     setblock(i, base);
   }
@@ -460,14 +525,16 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
     const Fn &F = fns[members[x]];
     const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
     auto mapv = [&](uint32_t v) -> uint32_t {
-      if (v == NONE || v >= nvx) return v;
+      if (v == NONE || v >= nvx)
+        return v;
       return vmap[x][v] != NONE ? vmap[x][v] : v;
     };
     for (uint32_t b = 0; b < F.nblocks(); ++b) {
       uint32_t base = (uint32_t)nc.size();
       int sidx = -1;
       for (uint32_t j = 0; j < ks; ++j)
-        if (sites[j].m == x && sites[j].b == b) sidx = (int)j;
+        if (sites[j].m == x && sites[j].b == b)
+          sidx = (int)j;
       for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
         const Instr &I = F.code[i];
         if (sidx >= 0 && i == sites[(uint32_t)sidx].ci) {
@@ -478,7 +545,8 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
           // sel' = Const(callee); pads; budget check; cbr T : chain-next
           TceSite &s = sites[(uint32_t)sidx];
           siteSEL[(uint32_t)sidx] = new_anon_vreg(Fm, 0);
-          nc.push_back({.k = K::Const, .dst = siteSEL[(uint32_t)sidx],
+          nc.push_back({.k = K::Const,
+                        .dst = siteSEL[(uint32_t)sidx],
                         .c = (val_t)s.callee});
           uint32_t zp = NONE;
           for (uint32_t q = s.args.size(); q < M; ++q) { // pad unused args
@@ -490,18 +558,21 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
           }
           tce_emit_site_check(Fm, nc, bHv, siteBL[(uint32_t)sidx],
                               siteEQ[(uint32_t)sidx]);
-          uint32_t next = ((uint32_t)sidx + 1 < ks) ? Mb[(uint32_t)sidx + 1]
-                                                    : Mb[ks - 1];
-          nc.push_back({.k = K::Cbr, .a = siteEQ[(uint32_t)sidx], .t = T,
-                        .f = next});
+          uint32_t next =
+              ((uint32_t)sidx + 1 < ks) ? Mb[(uint32_t)sidx + 1] : Mb[ks - 1];
+          nc.push_back(
+              {.k = K::Cbr, .a = siteEQ[(uint32_t)sidx], .t = T, .f = next});
           continue;
         }
         Instr c = I;
-        if (c.dst != NONE) c.dst = mapv(c.dst);
+        if (c.dst != NONE)
+          c.dst = mapv(c.dst);
         c.a = mapv(c.a);
         c.b2 = mapv(c.b2);
-        if (c.c2 != NONE) c.c2 = mapv(c.c2);
-        for (uint32_t &av : c.args) av = mapv(av);
+        if (c.c2 != NONE)
+          c.c2 = mapv(c.c2);
+        for (uint32_t &av : c.args)
+          av = mapv(av);
         if (c.k == K::Br || c.k == K::Cbr || c.k == K::Phi) {
           if (c.t != NONE && c.t < F.nblocks())
             c.t = bmap_base[x] + c.t;
@@ -518,21 +589,36 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
     uint32_t base = (uint32_t)nc.size();
     const TceSite &sa = sites[j - 1];
     uint32_t pa = bmap_base[sa.m] + sa.b;
-    uint32_t pb = (j == ks - 1) ? (bmap_base[sites[j].m] + sites[j].b)
-                                : Mb[j + 1];
+    uint32_t pb =
+        (j == ks - 1) ? (bmap_base[sites[j].m] + sites[j].b) : Mb[j + 1];
     // arg list of site j-1 in Fm space: [sel'] + args (mapped)
     auto sitearg = [&](const TceSite &s, uint32_t q) -> uint32_t {
       const Fn &SF = fns[members[s.m]];
       const uint32_t nvx = SF.nvars + (uint32_t)SF.version_base.size();
-      if (q == 0) return siteSEL[(uint32_t)(&s - &sites[0])];
+      if (q == 0)
+        return siteSEL[(uint32_t)(&s - &sites[0])];
       uint32_t v = s.args[q - 1];
       return (v != NONE && v < nvx) ? vmap[s.m][v] : v;
     };
-    nc.push_back({.k = K::Phi, .dst = Mp[j][0], .a = sitearg(sites[j - 1], 0), .b2 = (j == ks - 1 ? sitearg(sites[j], 0) : Mp[j + 1][0]), .t = pa, .f = pb});
+    nc.push_back({.k = K::Phi,
+                  .dst = Mp[j][0],
+                  .a = sitearg(sites[j - 1], 0),
+                  .b2 = (j == ks - 1 ? sitearg(sites[j], 0) : Mp[j + 1][0]),
+                  .t = pa,
+                  .f = pb});
     for (uint32_t q = 1; q <= M; ++q)
-      nc.push_back({.k = K::Phi, .dst = Mp[j][q], .a = sitearg(sites[j - 1], q), .b2 = (j == ks - 1 ? sitearg(sites[j], q)
-                                       : Mp[j + 1][q]), .t = pa, .f = pb});
-    nc.push_back({.k = K::Phi, .dst = Mbv[j], .a = siteBL[j - 1], .b2 = (j == ks - 1 ? siteBL[j] : Mbv[j + 1]), .t = pa, .f = pb});
+      nc.push_back({.k = K::Phi,
+                    .dst = Mp[j][q],
+                    .a = sitearg(sites[j - 1], q),
+                    .b2 = (j == ks - 1 ? sitearg(sites[j], q) : Mp[j + 1][q]),
+                    .t = pa,
+                    .f = pb});
+    nc.push_back({.k = K::Phi,
+                  .dst = Mbv[j],
+                  .a = siteBL[j - 1],
+                  .b2 = (j == ks - 1 ? siteBL[j] : Mbv[j + 1]),
+                  .t = pa,
+                  .f = pb});
     nc.push_back({.k = K::Br, .t = (j == 1 ? 1 : Mb[j - 1])});
     setblock(Mb[j], base);
   }
@@ -549,7 +635,8 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
     if (Fm.blocks[b].begin >= Fm.blocks[b].end)
       continue; // empty/tombstone: never read code[end-1] of an empty range
     const Instr &term = Fm.code[Fm.blocks[b].end - 1];
-    if (term.k == K::Br) Fm.succ[2 * b] = term.t;
+    if (term.k == K::Br)
+      Fm.succ[2 * b] = term.t;
     else if (term.k == K::Cbr) {
       Fm.succ[2 * b] = term.t;
       Fm.succ[2 * b + 1] = term.f;
@@ -561,19 +648,24 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
   const uint32_t FmIdx = (uint32_t)fns.size();
   for (uint32_t xf = 0; xf < fns.size(); ++xf) {
     bool is_member = false;
-    for (uint32_t mi : members) is_member |= (mi == xf);
-    if (is_member) continue;
+    for (uint32_t mi : members)
+      is_member |= (mi == xf);
+    if (is_member)
+      continue;
     Fn &X = fns[xf];
     bool touched = false;
     for (uint32_t b = 0; b < X.nblocks(); ++b)
       for (uint32_t i = X.blocks[b].begin; i < X.blocks[b].end; ++i) {
         Instr &I = X.code[i];
-        if (I.k != K::Call) continue;
+        if (I.k != K::Call)
+          continue;
         uint32_t callee = (uint32_t)I.c;
         int m = -1;
         for (uint32_t y = 0; y < k; ++y)
-          if (members[y] == callee) m = (int)y;
-        if (m < 0) continue;
+          if (members[y] == callee)
+            m = (int)y;
+        if (m < 0)
+          continue;
         // insert sel const (+ pads) right before the call, then redirect
         std::vector<Instr> pre{};
         uint32_t sv = new_anon_vreg(X, 0);
@@ -596,15 +688,18 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
             X.blocks[xb].end += add;
             continue;
           }
-          if (X.blocks[xb].begin > i) X.blocks[xb].begin += add;
-          if (X.blocks[xb].end > i) X.blocks[xb].end += add;
+          if (X.blocks[xb].begin > i)
+            X.blocks[xb].begin += add;
+          if (X.blocks[xb].end > i)
+            X.blocks[xb].end += add;
         }
         i += add; // skip the inserted prefix; the call is next
         touched = true;
       }
     (void)touched;
   }
-  // ---- append Fm; bookkeeping ------------------------------------------------
+  // ---- append Fm; bookkeeping
+  // ------------------------------------------------
   fns.push_back(std::move(Fm));
   names.push_back("tce_merged");
   ostats.push_back(OptStats{});
@@ -620,34 +715,42 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
   return true;
 }
 
-// ---- the pass driver ----------------------------------------------------------
+// ---- the pass driver
+// ----------------------------------------------------------
 constexpr bool opt_tailrec(std::vector<Fn> &fns,
                            std::vector<std::string_view> &names,
                            std::vector<OptStats> &ostats,
                            std::vector<uint32_t> &src_index) {
-  if (fns.size() < 2) return false;
+  if (fns.size() < 2)
+    return false;
   bool changed = false;
   CallGraph G = build_callgraph(fns);
   for (uint32_t s = 0; s < G.nscc; ++s) {
-    uint32_t e = (s + 1 < G.nscc) ? G.scc_begin[s + 1]
-                                  : (uint32_t)G.members.size();
+    uint32_t e =
+        (s + 1 < G.nscc) ? G.scc_begin[s + 1] : (uint32_t)G.members.size();
     std::vector<uint32_t> members(G.members.begin() + G.scc_begin[s],
                                   G.members.begin() + e);
-    if (members.empty()) continue;
+    if (members.empty())
+      continue;
     bool has_main = false;
-    for (uint32_t m : members) has_main |= (m == 0);
-    if (has_main) continue; // main is never a callee
+    for (uint32_t m : members)
+      has_main |= (m == 0);
+    if (has_main)
+      continue; // main is never a callee
     // must actually recurse: an intra-SCC edge
     bool intra = false;
     for (uint32_t m : members)
       for (const Instr &I : fns[m].code)
         if (I.k == K::Call) {
           uint32_t c = (uint32_t)I.c;
-          for (uint32_t m2 : members) intra |= (m2 == c);
+          for (uint32_t m2 : members)
+            intra |= (m2 == c);
         }
-    if (!intra) continue;
+    if (!intra)
+      continue;
     if (members.size() == 1) {
-      if (fns[members[0]].code.size() > MJZ_TCE_MAX_FNSIZE) continue;
+      if (fns[members[0]].code.size() > MJZ_TCE_MAX_FNSIZE)
+        continue;
       if (tce_self(fns[members[0]], ostats[members[0]], members[0]))
         changed = true;
       continue;
@@ -655,8 +758,10 @@ constexpr bool opt_tailrec(std::vector<Fn> &fns,
     bool big = false;
     for (uint32_t m : members)
       big |= fns[m].code.size() > MJZ_TCE_MAX_FNSIZE;
-    if (big) continue;
-    if (tce_merge(fns, names, ostats, src_index, members)) changed = true;
+    if (big)
+      continue;
+    if (tce_merge(fns, names, ostats, src_index, members))
+      changed = true;
   }
   return changed;
 }

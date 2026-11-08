@@ -27,24 +27,27 @@ int run_shrink(const Cli &C, const std::string &path) {
   std::vector<val_t> ins{}; // an optional sibling tape (fuzzer saves .in)
   {
     size_t dot = path.find_last_of('.');
-    std::string stem =
-        dot == std::string::npos ? path : path.substr(0, dot);
+    std::string stem = dot == std::string::npos ? path : path.substr(0, dot);
     std::string tape = slurp_file(stem + ".in");
-    if (!tape.empty()) ins = parse_inputs(tape);
+    if (!tape.empty())
+      ins = parse_inputs(tape);
   }
   const std::string cc = find_cc();
   std::string tape_path{};
   if (!ins.empty()) {
     tape_path = "./" + path + ".shrink.in";
     std::string t{};
-    for (val_t v : ins) t += std::to_string(v) + "\n";
+    for (val_t v : ins)
+      t += std::to_string(v) + "\n";
     write_file(tape_path, t);
   }
   auto fails = [&](const std::string &s) -> bool {
     Program P = compile(s, cfg);
-    if (!P.ok) return false; // deletions must keep the program compiling
+    if (!P.ok)
+      return false; // deletions must keep the program compiling
     RunOut oracle = run_ast(P.P.ast, P.P.root, 200000, ins);
-    if (oracle.timeout) return false;
+    if (oracle.timeout)
+      return false;
     RunOut plain = run_prog(fns_of(P, 0), 200000, ins);
     RunOut optimized = run_prog(fns_of(P, 1), 200000, ins);
     RunOut lowered = run_prog(fns_of(P, 2), 200000, ins);
@@ -55,7 +58,8 @@ int run_shrink(const Cli &C, const std::string &path) {
       return true;
     // native parity too: backend-only bugs (asm codegen, emission plan)
     // are exactly what shrinking exists for
-    if (cc.empty()) return false;
+    if (cc.empty())
+      return false;
     // NOTE: exe paths must contain a '/', else execvp (via timeout) will
     // NOT find them in the current directory and the run silently "fails"
     std::string stem = "./" + path + ".shrink";
@@ -66,15 +70,14 @@ int run_shrink(const Cli &C, const std::string &path) {
     for (int ti = 0; ti < 2 && !bad; ++ti) {
       std::string srcp = ti ? stem + ".s" : stem + ".c";
       std::string exe = stem + (ti ? ".a.exe" : ".c.exe");
-      if (std::system(("timeout 60 " + cc + " -w -O0 " + srcp + " -o " +
-                       exe + " 2>/dev/null")
+      if (std::system(("timeout 60 " + cc + " -w -O0 " + srcp + " -o " + exe +
+                       " 2>/dev/null")
                           .c_str()) != 0)
         continue;
       std::string out_text{};
-      int rc = run_capture("timeout 10 " + exe, out_text, stem + ".out",
-                           tape_path);
-      if (rc != 0 &&
-          (((unsigned)rc >> 8) == 124 || ((unsigned)rc >> 8) == 137))
+      int rc =
+          run_capture("timeout 10 " + exe, out_text, stem + ".out", tape_path);
+      if (rc != 0 && (((unsigned)rc >> 8) == 124 || ((unsigned)rc >> 8) == 137))
         out_text += "TIMEOUT\n";
       bad |= (out_text != ref);
       std::remove(exe.c_str());
@@ -99,7 +102,8 @@ int run_shrink(const Cli &C, const std::string &path) {
       } else
         cur += c;
     }
-    if (!cur.empty()) lines.push_back(cur);
+    if (!cur.empty())
+      lines.push_back(cur);
   }
   size_t original = lines.size();
   auto join = [&](const std::vector<std::string> &ls) {
@@ -114,8 +118,7 @@ int run_shrink(const Cli &C, const std::string &path) {
     for (bool again = true; again;) {
       again = false;
       for (size_t i = 0; i + chunk <= lines.size();) {
-        std::vector<std::string> trial(lines.begin(),
-                                       lines.begin() + (long)i);
+        std::vector<std::string> trial(lines.begin(), lines.begin() + (long)i);
         trial.insert(trial.end(), lines.begin() + (long)(i + chunk),
                      lines.end());
         if (fails(join(trial))) {
@@ -127,7 +130,8 @@ int run_shrink(const Cli &C, const std::string &path) {
         }
       }
     }
-    if (chunk == 1) break;
+    if (chunk == 1)
+      break;
   }
   std::string small = join(lines);
   std::string out = path + ".small.mjz";

@@ -16,7 +16,7 @@
 #define MJZ_EMIT_FN // runtime-only (string building): plain in both modes
 
 MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
-                            bool multi_fn) {
+                                  bool multi_fn) {
   EmitPlan P = make_emit_plan(fn);
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   // def index (for the unsigned-compare pretty-printer below)
@@ -29,33 +29,41 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
     for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0) {
       for (uint32_t o : {fn.code[i0].a, fn.code[i0].b2, fn.code[i0].c2})
-        if (o != NONE && o < nv) ++nuse[o];
+        if (o != NONE && o < nv)
+          ++nuse[o];
       for (uint32_t o : fn.code[i0].args)
-        if (o != NONE && o < nv) ++nuse[o];
+        if (o != NONE && o < nv)
+          ++nuse[o];
     }
   std::vector<char> elide(fn.code.size(), 0); // xor elided by the pretty form
   { // pre-pass: every fused Cbr whose compare matches the (v^MIN vs const)
     // unsigned pattern and whose xor operand has this compare as its ONLY
     // use -> the xor assignment is elided (the if reads v directly)
     auto xorbase = [&](uint32_t o) -> uint32_t {
-      if (o == NONE || o >= nv || cdefi[o] == NONE) return NONE;
+      if (o == NONE || o >= nv || cdefi[o] == NONE)
+        return NONE;
       const Instr &X = fn.code[cdefi[o]];
-      if (X.k != K::Bin || X.b != B::Xor) return NONE;
+      if (X.k != K::Bin || X.b != B::Xor)
+        return NONE;
       if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
         return NONE;
-      if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN) return X.a;
-      if (P.kc[X.a] && P.kv[X.a] == INT64_MIN) return X.b2;
+      if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN)
+        return X.a;
+      if (P.kc[X.a] && P.kv[X.a] == INT64_MIN)
+        return X.b2;
       return NONE;
     };
     for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
       for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0) {
         const Instr &C = fn.code[i0];
-        if (C.k != K::Cbr || P.fuse[i0] == NONE) continue;
+        if (C.k != K::Cbr || P.fuse[i0] == NONE)
+          continue;
         const Instr &D = fn.code[P.fuse[i0]];
         uint32_t xv = xorbase(D.a), yv = xorbase(D.b2);
         bool left = xv != NONE && yv == NONE && D.b2 < nv && P.kc[D.b2];
         bool right = yv != NONE && xv == NONE && D.a < nv && P.kc[D.a];
-        if (!left && !right) continue;
+        if (!left && !right)
+          continue;
         uint32_t xo = left ? D.a : D.b2;
         if (xo < nv && nuse[xo] == 1 && cdefi[xo] != NONE)
           elide[cdefi[xo]] = 1;
@@ -67,8 +75,10 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   // v%u (one local per vreg, "SSA-like") with --no-regalloc / -O0
   const bool ra = !fn.slot_of.empty();
   auto D = [&](uint32_t v) -> std::string { // home of a DEF/write (vreg id)
-    if (ra) std::snprintf(buf, sizeof buf, "r%u", (unsigned)slot_id(fn, v));
-    else std::snprintf(buf, sizeof buf, "v%u", (unsigned)v);
+    if (ra)
+      std::snprintf(buf, sizeof buf, "r%u", (unsigned)slot_id(fn, v));
+    else
+      std::snprintf(buf, sizeof buf, "v%u", (unsigned)v);
     return std::string(buf);
   };
   auto SN = [&](uint32_t slot) -> std::string { // name of a SLOT index
@@ -79,13 +89,15 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   std::vector<int32_t> arr_of(nv, -1);
   for (size_t k = 0; k < fn.stk_arrays.size(); ++k)
     for (uint32_t v : fn.stk_arrays[k].vregs)
-      if (v < nv) arr_of[v] = (int32_t)k;
+      if (v < nv)
+        arr_of[v] = (int32_t)k;
   auto arr_name = [&](size_t k) -> std::string {
     return "mjz_s" + std::to_string(fn.stk_arrays[k].root);
   };
   // operand text: inlined literal or variable (consts are always inlined)
   auto V = [&](uint32_t v) -> std::string {
-    if (v == NONE) return "0";
+    if (v == NONE)
+      return "0";
     if (v < nv && P.kc[v]) {
       val_t c = P.kv[v];
       if (c >= -2147483647 && c <= 2147483647)
@@ -99,12 +111,18 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   };
   auto cmp_txt = [](B b) -> const char * {
     switch (b) {
-    case B::Lt: return "<";
-    case B::Le: return "<=";
-    case B::Gt: return ">";
-    case B::Ge: return ">=";
-    case B::Eq: return "==";
-    default: return "!=";
+    case B::Lt:
+      return "<";
+    case B::Le:
+      return "<=";
+    case B::Gt:
+      return ">";
+    case B::Ge:
+      return ">=";
+    case B::Eq:
+      return "==";
+    default:
+      return "!=";
     }
   };
   // negation of a comparison (for branches that fall through on the true
@@ -112,12 +130,18 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   // a compare is trivially combinable into the compare itself
   auto neg_txt = [](B b) -> const char * {
     switch (b) {
-    case B::Lt: return ">=";
-    case B::Le: return ">";
-    case B::Gt: return "<=";
-    case B::Ge: return "<";
-    case B::Eq: return "!=";
-    default: return "==";
+    case B::Lt:
+      return ">=";
+    case B::Le:
+      return ">";
+    case B::Gt:
+      return "<=";
+    case B::Ge:
+      return "<";
+    case B::Eq:
+      return "!=";
+    default:
+      return "==";
     }
   };
   // signature (non-main: parameters are the first vregs, v0..vP-1)
@@ -144,12 +168,15 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
     std::vector<char> written(ns, 0);
     for (uint32_t b : P.order)
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-        if (P.dead[i]) continue;
+        if (P.dead[i])
+          continue;
         uint32_t dst = fn.code[i].dst;
-        if (dst != NONE && dst < nv) written[slot_id(fn, dst)] = 1;
+        if (dst != NONE && dst < nv)
+          written[slot_id(fn, dst)] = 1;
       }
     for (uint32_t sl = fn.nparams; sl < ns; ++sl) {
-      if (!written[sl]) continue;
+      if (!written[sl])
+        continue;
       std::snprintf(buf, sizeof buf, "  int64_t %s;\n", SN(sl).c_str());
       s += buf;
     }
@@ -165,12 +192,15 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   for (uint32_t b : P.order)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (P.dead[i]) continue;
-      if (I.k == K::Br && I.t != P.next[b]) refd[I.t] = 1;
+      if (P.dead[i])
+        continue;
+      if (I.k == K::Br && I.t != P.next[b])
+        refd[I.t] = 1;
       if (I.k == K::Cbr) {
         if (P.fuse[i] == NONE && I.a < nv && P.kc[I.a]) {
           uint32_t tgt = (P.kv[I.a] != 0) ? I.t : I.f; // constant condition
-          if (tgt != P.next[b]) refd[tgt] = 1;
+          if (tgt != P.next[b])
+            refd[tgt] = 1;
         } else if (I.f == P.next[b]) {
           refd[I.t] = 1; // `if (cond) goto L_t;` false arm falls through
         } else if (I.t == P.next[b]) {
@@ -190,7 +220,8 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
     }
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (P.dead[i] || elide[i]) continue;
+      if (P.dead[i] || elide[i])
+        continue;
       switch (I.k) {
       case K::Phi:
         break; // destroyed input has none
@@ -202,8 +233,7 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                           (long long)c);
           else
             std::snprintf(buf, sizeof buf, "  %s = UINT64_C(0x%016llx);\n",
-                          D(I.dst).c_str(),
-                          (unsigned long long)(uint64_t)c);
+                          D(I.dst).c_str(), (unsigned long long)(uint64_t)c);
           s += buf;
         }
         break; // dead ones are inlined at their uses
@@ -227,15 +257,13 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
           val_t bv = bc ? P.kv[I.b2] : 0;
           bool ac = I.a < nv && P.kc[I.a];
           val_t av = ac ? P.kv[I.a] : 0;
-          bool always =
-              bc && (bv == 0 || (bv == -1 && ac && av == INT64_MIN));
+          bool always = bc && (bv == 0 || (bv == -1 && ac && av == INT64_MIN));
           // a trap must abort the WHOLE program. `return 1` only does that
           // from main; inside a callee it would hand control back to the
           // caller, which would keep running past the trap (the arena and
           // stack-array guards below already use exit(1) -- these three
           // div/mod sites must too)
-          const std::string trap_stmt =
-              is_main ? "return 1" : "exit(1)";
+          const std::string trap_stmt = is_main ? "return 1" : "exit(1)";
           if (always) {
             s += "  printf(\"TRAP\\n\"); " + trap_stmt + ";\n";
             break;
@@ -251,8 +279,8 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
             s += "  if (" + V(I.b2) + " == 0 || (" + V(I.a) +
                  " == INT64_MIN && " + V(I.b2) +
                  " == -1)) { printf(\"TRAP\\n\"); " + trap_stmt + "; }\n";
-          std::snprintf(buf, sizeof buf, "  %s = %s %s %s;\n",
-                        D(I.dst).c_str(), V(I.a).c_str(), op, V(I.b2).c_str());
+          std::snprintf(buf, sizeof buf, "  %s = %s %s %s;\n", D(I.dst).c_str(),
+                        V(I.a).c_str(), op, V(I.b2).c_str());
           s += buf;
         } else if (I.b == B::And || I.b == B::Or || I.b == B::Xor) {
           const char *op = I.b == B::And ? "&" : (I.b == B::Or ? "|" : "^");
@@ -269,13 +297,15 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
         } else if (I.b == B::Shl || I.b == B::LShr || I.b == B::AShr) {
           // amounts masked to 6 bits, matching the interpreters/VM exactly
           if (I.b == B::Shl)
-            std::snprintf(buf, sizeof buf,
-                          "  %s = (int64_t)((uint64_t)%s << ((uint64_t)%s & 63));\n",
-                          D(I.dst).c_str(), V(I.a).c_str(), V(I.b2).c_str());
+            std::snprintf(
+                buf, sizeof buf,
+                "  %s = (int64_t)((uint64_t)%s << ((uint64_t)%s & 63));\n",
+                D(I.dst).c_str(), V(I.a).c_str(), V(I.b2).c_str());
           else if (I.b == B::LShr)
-            std::snprintf(buf, sizeof buf,
-                          "  %s = (int64_t)((uint64_t)%s >> ((uint64_t)%s & 63));\n",
-                          D(I.dst).c_str(), V(I.a).c_str(), V(I.b2).c_str());
+            std::snprintf(
+                buf, sizeof buf,
+                "  %s = (int64_t)((uint64_t)%s >> ((uint64_t)%s & 63));\n",
+                D(I.dst).c_str(), V(I.a).c_str(), V(I.b2).c_str());
           else
             std::snprintf(buf, sizeof buf,
                           "  %s = %s >> (int64_t)((uint64_t)%s & 63);\n",
@@ -299,29 +329,39 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
         uint32_t tgt = NONE;
         if (P.fuse[i] != NONE) { // fused: branch on the comparison itself;
           // when the TRUE arm is the fallthrough, the NOT of the compare is
-          // folded INTO the compare: `if (!(a<b)) goto L;` -> `if (a>=b) goto L;`
+          // folded INTO the compare: `if (!(a<b)) goto L;` -> `if (a>=b) goto
+          // L;`
           const Instr &D = fn.code[P.fuse[i]];
           std::string pos, neg;
           { // unsigned-compare pretty-printer: (v ^ INT64_MIN) < (K ^ MIN)
             // as SIGNED compare on the xor'd values is exactly the UNSIGNED
             // compare v < K — emit it in that readable form
             auto xorbase = [&](uint32_t o) -> uint32_t {
-              if (o == NONE || o >= nv || cdefi[o] == NONE) return NONE;
+              if (o == NONE || o >= nv || cdefi[o] == NONE)
+                return NONE;
               const Instr &X = fn.code[cdefi[o]];
-              if (X.k != K::Bin || X.b != B::Xor) return NONE;
+              if (X.k != K::Bin || X.b != B::Xor)
+                return NONE;
               if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
                 return NONE;
-              if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN) return X.a;
-              if (P.kc[X.a] && P.kv[X.a] == INT64_MIN) return X.b2;
+              if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN)
+                return X.a;
+              if (P.kc[X.a] && P.kv[X.a] == INT64_MIN)
+                return X.b2;
               return NONE;
             };
             auto flip = [](B o) -> B {
               switch (o) {
-              case B::Lt: return B::Gt;
-              case B::Le: return B::Ge;
-              case B::Gt: return B::Lt;
-              case B::Ge: return B::Le;
-              default: return o;
+              case B::Lt:
+                return B::Gt;
+              case B::Le:
+                return B::Ge;
+              case B::Gt:
+                return B::Lt;
+              case B::Ge:
+                return B::Le;
+              default:
+                return o;
               }
             };
             uint32_t xv = xorbase(D.a), yv = xorbase(D.b2);
@@ -339,10 +379,8 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
               else
                 std::snprintf(btxt, sizeof btxt, "UINT64_C(0x%016llx)",
                               (unsigned long long)(uint64_t)bound);
-              pos = "((uint64_t)" + V(v) + " " + cmp_txt(op) + " " + btxt +
-                    ")";
-              neg = "((uint64_t)" + V(v) + " " + neg_txt(op) + " " + btxt +
-                    ")";
+              pos = "((uint64_t)" + V(v) + " " + cmp_txt(op) + " " + btxt + ")";
+              neg = "((uint64_t)" + V(v) + " " + neg_txt(op) + " " + btxt + ")";
             } else {
               pos = "(" + V(D.a) + " " + cmp_txt(D.b) + " " + V(D.b2) + ")";
               neg = "(" + V(D.a) + " " + neg_txt(D.b) + " " + V(D.b2) + ")";
@@ -402,7 +440,8 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
         s += "  return 0;\n";
         break;
       case K::Alloc:
-        if (I.dst < nv && arr_of[I.dst] >= 0) { // local: zero-fill a stack array
+        if (I.dst < nv &&
+            arr_of[I.dst] >= 0) { // local: zero-fill a stack array
           std::snprintf(buf, sizeof buf, "  memset(%s, 0, sizeof %s);\n",
                         arr_name(arr_of[I.dst]).c_str(),
                         arr_name(arr_of[I.dst]).c_str());
@@ -412,9 +451,11 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                         D(I.dst).c_str(), V(I.a).c_str());
           s += buf;
         }
-        break;      case K::Load:
-        if (I.a < nv && arr_of[I.a] >= 0) { // local array: direct + bounds check
-          if (!I.nt) { // nt: index PROVEN in range (alias analysis)
+        break;
+      case K::Load:
+        if (I.a < nv &&
+            arr_of[I.a] >= 0) { // local array: direct + bounds check
+          if (!I.nt) {          // nt: index PROVEN in range (alias analysis)
             std::snprintf(buf, sizeof buf,
                           "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
                           "exit(1); }\n",
@@ -434,9 +475,11 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                         D(I.dst).c_str(), V(I.a).c_str(), V(I.b2).c_str());
           s += buf;
         }
-        break;      case K::Store:
-        if (I.a < nv && arr_of[I.a] >= 0) { // local array: direct + bounds check
-          if (!I.nt) { // nt: index PROVEN in range (alias analysis)
+        break;
+      case K::Store:
+        if (I.a < nv &&
+            arr_of[I.a] >= 0) { // local array: direct + bounds check
+          if (!I.nt) {          // nt: index PROVEN in range (alias analysis)
             std::snprintf(buf, sizeof buf,
                           "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
                           "exit(1); }\n",
@@ -508,7 +551,8 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   if (!P.order.empty()) {
     uint32_t lb = P.order.back();
     for (uint32_t i = fn.blocks[lb].end; i-- > fn.blocks[lb].begin;) {
-      if (P.dead[i]) continue;
+      if (P.dead[i])
+        continue;
       ends_ret = (fn.code[i].k == K::Ret);
       break;
     }
@@ -517,7 +561,7 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
     s += saw_exit ? "}\n" : "  return 0;\n}\n";
   else if (ends_ret)
     s += "}\n"; // every emitted path returned: nothing can fall through
-  else           // unreachable-fallthrough safety for non-void fns
+  else          // unreachable-fallthrough safety for non-void fns
     s += "  --mjz_depth; return 0;\n}\n";
   return s;
 }
@@ -525,26 +569,29 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
 // whole-program C: shared helpers, prototypes (mutual recursion is legal),
 // callee bodies first, then main.
 MJZ_EMIT_FN std::string emit_c(const std::vector<Fn> &fns,
-                          const std::vector<std::string_view> &names) {
+                               const std::vector<std::string_view> &names) {
   (void)names;
   std::string s{};
   bool use_arr = false, use_in = false, use_stk = false;
   auto stk_arr_of = [](const Fn &fn, uint32_t v) -> int {
     for (size_t k = 0; k < fn.stk_arrays.size(); ++k)
       for (uint32_t u : fn.stk_arrays[k].vregs)
-        if (u == v) return (int)k;
+        if (u == v)
+          return (int)k;
     return -1;
   };
   for (const Fn &fn : fns) {
-    if (!fn.stk_arrays.empty()) use_stk = true;
+    if (!fn.stk_arrays.empty())
+      use_stk = true;
     for (const Instr &I : fn.code) {
-      const uint32_t nv =
-          fn.nvars + (uint32_t)fn.version_base.size();
+      const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
       if (I.k == K::Alloc) {
-        if (I.dst < nv && stk_arr_of(fn, I.dst) >= 0) continue; // stack
+        if (I.dst < nv && stk_arr_of(fn, I.dst) >= 0)
+          continue; // stack
         use_arr = true;
       } else if (I.k == K::Load || I.k == K::Store || I.k == K::Len) {
-        if (I.a < nv && stk_arr_of(fn, I.a) >= 0) continue; // stack
+        if (I.a < nv && stk_arr_of(fn, I.a) >= 0)
+          continue; // stack
         use_arr = true;
       } else if (I.k == K::Input)
         use_in = true;
@@ -555,7 +602,8 @@ MJZ_EMIT_FN std::string emit_c(const std::vector<Fn> &fns,
   s += "#include <stdio.h>\n#include <stdint.h>\n";
   s += "#include <stdlib.h>\n"; // exit(): div/mod traps can fire anywhere,
   //                              including single-fn programs without arrays
-  if (use_stk) s += "#include <string.h>\n";                    // memset()
+  if (use_stk)
+    s += "#include <string.h>\n"; // memset()
   if (use_arr) {
     // bump arena, bit-identical to the interpreters/VM/asm backends:
     // handle = index of first element; len[] is 0 for non-handles
@@ -565,7 +613,8 @@ MJZ_EMIT_FN std::string emit_c(const std::vector<Fn> &fns,
     s += "static int64_t mjz_atop = 0;\n";
     s += "static int64_t mjz_alloc(int64_t n) {\n";
     s += "  if (n < 0 || n > MJZ_ARENA_CAP ||\n";
-    s += "      mjz_atop > MJZ_ARENA_CAP - n) { printf(\"TRAP\\n\"); exit(1); }\n";
+    s += "      mjz_atop > MJZ_ARENA_CAP - n) { printf(\"TRAP\\n\"); exit(1); "
+         "}\n";
     s += "  int64_t h = mjz_atop;\n";
     s += "  mjz_atop += n;\n";
     s += "  mjz_alen[h] = n;\n";
@@ -605,13 +654,16 @@ MJZ_EMIT_FN std::string emit_c(const std::vector<Fn> &fns,
     s += "static int64_t mjz_f" + std::to_string(f) + "(";
     for (uint32_t p = 0; p < fn.nparams; ++p) {
       char pb[32];
-      if (ra) std::snprintf(pb, sizeof pb, "r%u", (unsigned)slot_id(fn, p));
-      else std::snprintf(pb, sizeof pb, "v%u", (unsigned)p);
+      if (ra)
+        std::snprintf(pb, sizeof pb, "r%u", (unsigned)slot_id(fn, p));
+      else
+        std::snprintf(pb, sizeof pb, "v%u", (unsigned)p);
       s += p ? ", int64_t " + std::string(pb) : "int64_t " + std::string(pb);
     }
     s += ");\n";
   }
-  if (fns.size() > 1) s += "\n";
+  if (fns.size() > 1)
+    s += "\n";
   for (uint32_t f = 1; f < fns.size(); ++f) // callees first, main last
     s += emit_c_fn(fns[f], f, false, multi);
   s += emit_c_fn(fns[0], 0, true, multi);

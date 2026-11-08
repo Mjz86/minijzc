@@ -27,9 +27,9 @@
 #include "minijz/opt/interprocedural/cdfold.hpp"
 
 struct Optimized {
-  Fn fn{};         // SSA after optimization
+  Fn fn{}; // SSA after optimization
   OptStats os{};
-  An an{};         // final analysis (post-opt)
+  An an{}; // final analysis (post-opt)
 };
 constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
   if (!cfg.do_opt || cfg.level == 0) { // -O0: untouched IR, fresh analysis
@@ -100,7 +100,8 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       }
       normalize_phis(fn);
       os.iters = it + 1;
-      if (!ch) break;
+      if (!ch)
+        break;
       ch_any = true;
     }
     return ch_any;
@@ -163,7 +164,8 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         ch |= c;
         normalize_phis(fn);
       }
-      if (!ch) break;
+      if (!ch)
+        break;
       any = true;
       tier0();
     }
@@ -185,7 +187,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #endif
 #ifndef MJZ_DBG_NO_LCF
       if (cfg.p_lcf) {
-        An A2 = analyze(fn); // unrolling may have reshaped the CFG
+        An A2 = analyze(fn);          // unrolling may have reshaped the CFG
         bool c = opt_lcf(fn, A2, os); // closed forms / simulators
         dbg_pass(cfg.debug, fn, "lcf", c);
         ch |= c;
@@ -199,7 +201,8 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         ch |= c;
         normalize_phis(fn);
       }
-      if (!ch) break;
+      if (!ch)
+        break;
       any = true;
       tier0();
       // one tier-1 round: restructuring exposes new opportunities

@@ -29,9 +29,11 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
                            bool delalloc_ok) {
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  if (!nb || !nv) return false;
+  if (!nb || !nv)
+    return false;
   AliasInfo AI = alias_analyze(fn);
-  if (!AI.nallocs) return false;
+  if (!AI.nallocs)
+    return false;
   // ---- dead allocations --------------------------------------------------
   // With every Load/Store/Len of an array gone (lifted here, dead-store
   // deleted here, or never present at all) nothing reads the allocation
@@ -44,7 +46,8 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
   // `int64_t mjz_sN[len]; memset(...)` pair for arrays that folding has
   // already turned into constants.
   auto sweep_dead_allocs = [&]() -> bool {
-    if (!delalloc_ok) return false;
+    if (!delalloc_ok)
+      return false;
     std::vector<char> used(AI.nallocs, 0);
     for (uint32_t b = 0; b < fn.nblocks(); ++b)
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
@@ -52,18 +55,23 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
         uint32_t dst_id =
             (I.dst != NONE && I.dst < nv) ? AI.single[I.dst] : NONE;
         auto use = [&](uint32_t v) {
-          if (v == NONE || v >= nv) return;
+          if (v == NONE || v >= nv)
+            return;
           uint32_t id = AI.single[v];
-          if (id != NONE && id != dst_id) used[id] = 1;
+          if (id != NONE && id != dst_id)
+            used[id] = 1;
         };
         use(I.a);
         use(I.b2);
         use(I.c2);
-        for (uint32_t v : I.args) use(v);
+        for (uint32_t v : I.args)
+          use(v);
       }
     bool any = false;
-    for (uint32_t id = 0; id < AI.nallocs; ++id) any |= used[id] == 0;
-    if (!any) return false;
+    for (uint32_t id = 0; id < AI.nallocs; ++id)
+      any |= used[id] == 0;
+    if (!any)
+      return false;
     std::vector<Instr> nc{};
     nc.reserve(fn.code.size());
     for (uint32_t b = 0; b < fn.nblocks(); ++b) {
@@ -85,10 +93,12 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
     fn.code = std::move(nc);
     return true;
   };
-  if (!lift_ok) return sweep_dead_allocs();
+  if (!lift_ok)
+    return sweep_dead_allocs();
   std::vector<uint32_t> ndefs(nv, 0);
   for (const Instr &I : fn.code)
-    if (I.dst != NONE && I.dst < nv) ++ndefs[I.dst];
+    if (I.dst != NONE && I.dst < nv)
+      ++ndefs[I.dst];
   std::vector<char> kc(nv, 0);
   std::vector<val_t> kv(nv, 0);
   for (const Instr &I : fn.code)
@@ -122,7 +132,8 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
         uint32_t id = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
         if (I.k == K::Alloc && I.dst != NONE && I.dst < nv &&
             AI.single[I.dst] != NONE) {
-          if (id == NONE) id = AI.single[I.dst];
+          if (id == NONE)
+            id = AI.single[I.dst];
           if (I.a != NONE && I.a < nv && kc[I.a] && kv[I.a] >= 0) {
             cls[id].len = kv[I.a];
             alloc_instr[id] = i;
@@ -131,11 +142,13 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
           }
           continue;
         }
-        if (id == NONE) continue;
+        if (id == NONE)
+          continue;
         if (I.k == K::Load || I.k == K::Store) {
           bool idx_ok = I.b2 != NONE && I.b2 < nv && kc[I.b2] &&
                         kv[I.b2] >= 0 && kv[I.b2] < cls[id].len;
-          if (!idx_ok) bad[id] = 1; // slot machinery needs compile-time elems
+          if (!idx_ok)
+            bad[id] = 1; // slot machinery needs compile-time elems
           if (I.k == K::Load) {
             has_load[id] = 1;
           } else {
@@ -147,7 +160,8 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
       }
     uint32_t budget = MJZ_MEM2REG_MAX_SLOTS;
     for (uint32_t id = 0; id < AI.nallocs; ++id) {
-      if (cls[id].len < 0 || alloc_instr[id] == NONE) continue;
+      if (cls[id].len < 0 || alloc_instr[id] == NONE)
+        continue;
       if (has_load[id] && !bad[id] && cls[id].len <= MJZ_MEM2REG_MAX_ELEMS &&
           budget >= (uint32_t)cls[id].len) {
         cls[id].lift = true;
@@ -162,7 +176,8 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
     any_lift |= c.lift;
     any_dead |= c.dead;
   }
-  if (!any_lift && !any_dead) return sweep_dead_allocs();
+  if (!any_lift && !any_dead)
+    return sweep_dead_allocs();
   // ---- defensive pre-check (before ANY mutation): every access of a ------
   // lifted array must be dominated by the allocation's block, and ordered
   // after the allocation when both share a block. SSA's "def dominates use"
@@ -183,22 +198,26 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
     for (uint32_t b = 0; b < nb; ++b)
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
         const Instr &I = fn.code[i];
-        if (I.k != K::Load && I.k != K::Store) continue;
+        if (I.k != K::Load && I.k != K::Store)
+          continue;
         uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
-        if (h == NONE || !cls[h].lift) continue;
+        if (h == NONE || !cls[h].lift)
+          continue;
         uint32_t ab = alloc_blk[h];
-        if (ab == NONE || !A.dominates(ab, b) ||
-            (ab == b && i < alloc_idx[h]))
+        if (ab == NONE || !A.dominates(ab, b) || (ab == b && i < alloc_idx[h]))
           cls[h].lift = false;
       }
     any_lift = false;
-    for (const Cls &c : cls) any_lift |= c.lift;
-    if (!any_lift && !any_dead) return sweep_dead_allocs();
+    for (const Cls &c : cls)
+      any_lift |= c.lift;
+    if (!any_lift && !any_dead)
+      return sweep_dead_allocs();
   }
   // ---- lifted arrays: slot bookkeeping --------------------------------------
   uint32_t total_slots = 0;
   for (const Cls &c : cls)
-    if (c.lift) total_slots += (uint32_t)c.len;
+    if (c.lift)
+      total_slots += (uint32_t)c.len;
   // slot id = slot_base[id] + element index
   std::vector<uint32_t> slot_base(AI.nallocs, NONE);
   {
@@ -234,16 +253,20 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
   // ---- phi placement at each slot's IDF -------------------------------------
   std::vector<std::vector<uint32_t>> phis_at(nb);
   for (uint32_t s = 0; s < total_slots; ++s) {
-    if (sdefs[s].size() < 2) continue;
+    if (sdefs[s].size() < 2)
+      continue;
     std::vector<ulen> idf =
         gns::calculate_iterated_dominance_frontiers_given_dominance_frontiers<
             V>(A.df, sdefs[s]);
     for (ulen blk : idf) {
       uint32_t b = (uint32_t)blk;
-      if (b >= nb || fn.preds[b].size() < 2) continue;
+      if (b >= nb || fn.preds[b].size() < 2)
+        continue;
       bool dup = false;
-      for (uint32_t x : phis_at[b]) dup |= (x == s);
-      if (!dup) phis_at[b].push_back(s);
+      for (uint32_t x : phis_at[b])
+        dup |= (x == s);
+      if (!dup)
+        phis_at[b].push_back(s);
     }
   }
   // ---- rebuild: slot phis at block starts, init consts after Allocs,
@@ -318,8 +341,8 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
           }
           continue; // variable phis: args are plain vreg references
         }
-        if (I.k == K::Const && I.dst != NONE &&
-            I.dst < init_slot_of.size() && init_slot_of[I.dst] != NONE) {
+        if (I.k == K::Const && I.dst != NONE && I.dst < init_slot_of.size() &&
+            init_slot_of[I.dst] != NONE) {
           // the promotion's zero-init
           uint32_t s2 = init_slot_of[I.dst];
           stacks[s2].push_back(I.dst);
@@ -329,7 +352,8 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
         uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
         if (I.k == K::Load && h != NONE && cls[h].lift) {
           uint32_t s = slot_base[h] + (uint32_t)kv[I.b2];
-          if (stacks[s].empty()) return false; // cannot happen (dominance)
+          if (stacks[s].empty())
+            return false; // cannot happen (dominance)
           I.k = K::Copy;
           I.a = stacks[s].back();
           I.b2 = NONE;
@@ -343,8 +367,7 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
           I.c2 = NONE;
           stacks[s].push_back(v);
           pushed.push_back(s);
-        } else if (I.k == K::Len && h != NONE &&
-                   (cls[h].lift || cls[h].dead)) {
+        } else if (I.k == K::Len && h != NONE && (cls[h].lift || cls[h].dead)) {
           I.k = K::Const;
           I.c = cls[h].len;
           I.a = NONE;
@@ -354,20 +377,29 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
       // block reaches the successor along this edge. Slot phis are exactly
       // the first phis_at[s].size() phi instrs of s (insertion order).
       for (uint32_t s2 : {fn.succ0(b), fn.succ1(b)}) {
-        if (s2 == NONE || s2 >= nb) continue;
+        if (s2 == NONE || s2 >= nb)
+          continue;
         uint32_t k = 0;
         for (uint32_t i = fn.blocks[s2].begin; i < fn.blocks[s2].end; ++i) {
           Instr &I = fn.code[i];
-          if (I.k != K::Phi) break;
+          if (I.k != K::Phi)
+            break;
           if (k < phis_at[s2].size()) {
             uint32_t s = phis_at[s2][k];
             uint32_t slot = NONE; // b's position among s2's preds
             for (uint32_t j = 0; j < fn.preds[s2].size(); ++j)
-              if (fn.preds[s2][j] == b) slot = j;
-            if (slot == NONE) return false;
+              if (fn.preds[s2][j] == b)
+                slot = j;
+            if (slot == NONE)
+              return false;
             uint32_t arg = stacks[s].empty() ? NONE : stacks[s].back();
-            if (slot == 0) { I.a = arg; I.t = b; }
-            else           { I.b2 = arg; I.f = b; }
+            if (slot == 0) {
+              I.a = arg;
+              I.t = b;
+            } else {
+              I.b2 = arg;
+              I.f = b;
+            }
           }
           ++k;
         }
@@ -375,8 +407,9 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
       return true;
     };
     std::vector<uint32_t> pu{};
-    if (!visit(0, pu)) return false; // defensive: refuse (nothing mutated
-                                     // by visit at that point on failure)
+    if (!visit(0, pu))
+      return false; // defensive: refuse (nothing mutated
+                    // by visit at that point on failure)
     wstack.push_back({0, 0, std::move(pu)});
     while (!wstack.empty()) {
       Frame &fr = wstack.back();

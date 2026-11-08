@@ -8,13 +8,13 @@
 #include <random>
 
 static int ut_checks = 0, ut_fails = 0;
-#define UT(cond, msg)                                                        \
-  do {                                                                       \
-    ++ut_checks;                                                             \
-    if (!(cond)) {                                                           \
-      std::printf("UT FAIL[%d]: %s\n", __LINE__, msg);                       \
-      ++ut_fails;                                                            \
-    }                                                                        \
+#define UT(cond, msg)                                                          \
+  do {                                                                         \
+    ++ut_checks;                                                               \
+    if (!(cond)) {                                                             \
+      std::printf("UT FAIL[%d]: %s\n", __LINE__, msg);                         \
+      ++ut_fails;                                                              \
+    }                                                                          \
   } while (0)
 
 int main() {
@@ -30,12 +30,13 @@ int main() {
     UT(w_shl(1, 70).v == (1 << 6), "w_shl masks the count to 6 bits");
     UT(w_ashr(-8, 2).v == -2, "w_ashr arithmetic");
     UT(w_mulhi(0xdeadbeefull, 0xfeedull).v ==
-            (val_t)(((((unsigned __int128)0xdeadbeefull) * 0xfeedull) >> 64)),
-        "w_mulhi");
+           (val_t)(((((unsigned __int128)0xdeadbeefull) * 0xfeedull) >> 64)),
+       "w_mulhi");
     std::mt19937_64 rng(12345);
     for (int i = 0; i < 2000; ++i) {
       val_t a = (val_t)rng(), b = (val_t)rng();
-      if (b == 0) b = 7;
+      if (b == 0)
+        b = 7;
       UT(w_div(a, b).v == a / b && !w_div(a, b).trap, "w_div matches C");
       UT(w_mod(a, b).v == a % b && !w_mod(a, b).trap, "w_mod matches C");
       UT(w_add(a, b).v == (val_t)((uint64_t)a + (uint64_t)b), "w_add matches");
@@ -45,8 +46,8 @@ int main() {
   // ---- 2. AST binop -> IR binop mapping is total & identity --------------
   {
     int mapped[11]{};
-    const Bk all[] = {Bk::Add, Bk::Sub, Bk::Mul, Bk::Div, Bk::Mod,
-                       Bk::Lt, Bk::Le,  Bk::Gt, Bk::Ge, Bk::Eq, Bk::Ne};
+    const Bk all[] = {Bk::Add, Bk::Sub, Bk::Mul, Bk::Div, Bk::Mod, Bk::Lt,
+                      Bk::Le,  Bk::Gt,  Bk::Ge,  Bk::Eq,  Bk::Ne};
     for (Bk b : all) {
       B r = ir_op(b);
       ++mapped[(int)b];
@@ -56,7 +57,8 @@ int main() {
          "ir_op lands in B");
       (void)r;
     }
-    UT(mapped[(int)Bk::Add] && mapped[(int)Bk::Ne], "ir_op covers all AST binops");
+    UT(mapped[(int)Bk::Add] && mapped[(int)Bk::Ne],
+       "ir_op covers all AST binops");
     UT(ir_op(Bk::Lt) == B::Lt && ir_op(Bk::Le) == B::Le &&
            ir_op(Bk::Gt) == B::Gt && ir_op(Bk::Ge) == B::Ge,
        "ir_op is the identity on the four comparisons");
@@ -93,11 +95,15 @@ int main() {
                     "print input() / %lld; print input() %% %lld;",
                     (long long)D, (long long)D);
       Program P = compile(buf);
-      if (!P.ok) { ++bad; continue; }
+      if (!P.ok) {
+        ++bad;
+        continue;
+      }
       std::vector<val_t> tape{n, n};
       RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, tape);
       RunOut opt = run_prog(fns_of(P, 1), 100000, tape);
-      if (!same_run(oracle, opt)) ++bad;
+      if (!same_run(oracle, opt))
+        ++bad;
     }
     UT(bad == 0, "divmagic fuzz: 700 random (n, D) pairs agree with oracle");
   }
@@ -121,7 +127,10 @@ int main() {
                     "print d(%lld); print m(%lld);",
                     (long long)D, (long long)D, (long long)X, (long long)X);
       Program P = compile(buf);
-      if (!P.ok) { ++bad5; continue; }
+      if (!P.ok) {
+        ++bad5;
+        continue;
+      }
       RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {});
       RunOut plain = run_prog(fns_of(P, 0), 100000, {});
       RunOut opt = run_prog(fns_of(P, 1), 100000, {});
@@ -206,10 +215,11 @@ int main() {
     UT(same_run(oracle, opt) && oracle.out.at(0) == 7,
        "bug2 regression: m3a(5) == 7 via tailrec path");
     // bug 3 (scctco sibling entry rotation): fa(8) must be 1, not TRAP
-    const char *f2 =
-        "fn fa(n) { if (n == 0) { return 0; } if (n % 4 == 1) { return fa(n / 4); } return fb(n / 4); }\n"
-        "fn fb(n) { if (n == 0) { return 1; } if (n % 4 == 1) { return fa(n / 4); } return fb(n / 4); }\n"
-        "print fa(input());\n";
+    const char *f2 = "fn fa(n) { if (n == 0) { return 0; } if (n % 4 == 1) { "
+                     "return fa(n / 4); } return fb(n / 4); }\n"
+                     "fn fb(n) { if (n == 0) { return 1; } if (n % 4 == 1) { "
+                     "return fa(n / 4); } return fb(n / 4); }\n"
+                     "print fa(input());\n";
     Program P2 = compile(f2); // default: scctco on
     std::vector<val_t> tape2{8};
     RunOut o2 = run_ast(P2.P.ast, P2.P.root, 100000, tape2);
@@ -217,7 +227,8 @@ int main() {
     UT(same_run(o2, c2) && o2.out.at(0) == 1,
        "bug3 regression: fa(8) == 1 (scctco entry rotation)");
     // bug 4 (comparison negation): equality points
-    const char *nc = "print !(!(0 < 0)); print !(!(0 > 0)); print !(!(1 > 0));\n";
+    const char *nc =
+        "print !(!(0 < 0)); print !(!(0 > 0)); print !(!(1 > 0));\n";
     Program P3 = compile(nc);
     RunOut o3 = run_ast(P3.P.ast, P3.P.root, 100000, {});
     RunOut c3 = run_prog(fns_of(P3, 1), 100000, {});

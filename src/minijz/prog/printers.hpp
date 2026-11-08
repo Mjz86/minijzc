@@ -15,7 +15,8 @@
 struct An; // opt/analysis/an.hpp (defined with the pipeline TU)
 
 inline std::string vname(const Fn &fn, uint32_t v) {
-  if (v == NONE) return "_";
+  if (v == NONE)
+    return "_";
   char buf[64];
   uint32_t base = fn.base_of(v), ver = fn.vern_of(v);
   std::string n;
@@ -35,13 +36,14 @@ void print_analysis(const An &A, const Fn &fn, const char *tag);
 inline void print_fn(const Fn &fn, const char *title) {
   std::printf("  ---- %s ----\n", title);
   for (uint32_t b = 0; b < fn.nblocks(); ++b) {
-    if (fn.blocks[b].begin == fn.blocks[b].end &&
-        fn.succ0(b) == NONE && fn.succ1(b) == NONE && b != 0)
+    if (fn.blocks[b].begin == fn.blocks[b].end && fn.succ0(b) == NONE &&
+        fn.succ1(b) == NONE && b != 0)
       continue; // isolated dead block
     std::printf("  b%u:", b);
     if (!fn.preds.empty() && !fn.preds[b].empty()) {
       std::printf("              ; preds:");
-      for (uint32_t p : fn.preds[b]) std::printf(" b%u", p);
+      for (uint32_t p : fn.preds[b])
+        std::printf(" b%u", p);
     }
     std::printf("\n");
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
@@ -49,8 +51,7 @@ inline void print_fn(const Fn &fn, const char *title) {
       std::printf("    ");
       switch (I.k) {
       case K::Const:
-        std::printf("%s = %lld", vname(fn, I.dst).c_str(),
-                    (long long)I.c);
+        std::printf("%s = %lld", vname(fn, I.dst).c_str(), (long long)I.c);
         break;
       case K::Copy:
         std::printf("%s = %s", vname(fn, I.dst).c_str(),
@@ -112,8 +113,10 @@ inline void print_fn(const Fn &fn, const char *title) {
         break;
       }
       case K::Ret:
-        if (I.a == NONE) std::printf("ret 0");
-        else std::printf("ret %s", vname(fn, I.a).c_str());
+        if (I.a == NONE)
+          std::printf("ret 0");
+        else
+          std::printf("ret %s", vname(fn, I.a).c_str());
         break;
       }
       std::printf("\n");
@@ -122,11 +125,18 @@ inline void print_fn(const Fn &fn, const char *title) {
 }
 
 inline void print_run(const RunOut &R) {
-  if (R.trapped) { std::printf("TRAP\n"); return; }
-  if (R.timeout) { std::printf("TIMEOUT\n"); return; }
+  if (R.trapped) {
+    std::printf("TRAP\n");
+    return;
+  }
+  if (R.timeout) {
+    std::printf("TIMEOUT\n");
+    return;
+  }
   for (size_t i = 0; i < R.out.size(); ++i)
     std::printf("%s%lld", i ? " " : "", (long long)R.out[i]);
-  if (R.out.empty()) std::printf("(no output)");
+  if (R.out.empty())
+    std::printf("(no output)");
   std::printf("\n");
 }
 
@@ -152,7 +162,9 @@ inline std::string text_of(const RunOut &R) {
     std::snprintf(buf, sizeof buf, "%lld\n", (long long)v);
     s += buf;
   }
-  if (R.trapped) s += "TRAP\n";
-  else if (R.timeout) s += "TIMEOUT\n";
+  if (R.trapped)
+    s += "TRAP\n";
+  else if (R.timeout)
+    s += "TIMEOUT\n";
   return s;
 }

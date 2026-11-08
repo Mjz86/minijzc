@@ -20,24 +20,28 @@
 //   r = (n & (2^t-1)) - ((n>>a63) & ((n & (2^t-1)) != 0 ? 2^t : 0)).
 constexpr bool divmagic_of(val_t D, uint64_t &inv, uint32_t &shift) {
   uint64_t Dam = (uint64_t)(D < 0 ? (val_t)(0 - (uint64_t)D) : D);
-  if (Dam < 3 || (Dam & (Dam - 1)) == 0) return false; // pow2: shifts only
-  auto [invN, sh, bits, ss2, thr] =
-      get_devide_inverse_and_shift<V, 64>((uint64_t)1 << 63, Dam, false,
-                                          (uint64_t)0, false);
+  if (Dam < 3 || (Dam & (Dam - 1)) == 0)
+    return false; // pow2: shifts only
+  auto [invN, sh, bits, ss2, thr] = get_devide_inverse_and_shift<V, 64>(
+      (uint64_t)1 << 63, Dam, false, (uint64_t)0, false);
   (void)bits;
   (void)ss2;
   (void)thr;
-  if (invN.nth_word(1) != 0 || invN.nth_word(2) != 0) return false;
+  if (invN.nth_word(1) != 0 || invN.nth_word(2) != 0)
+    return false;
   uint32_t s = (uint32_t)sh;
-  if (s < 64 || s > 127) return false;
+  if (s < 64 || s > 127)
+    return false;
   uint64_t m = (uint64_t)invN.nth_word(0);
   // exactness gate (128-bit math; every term fits)
   unsigned __int128 prod = (unsigned __int128)m * Dam;
   unsigned __int128 two_s = (unsigned __int128)1 << s;
-  if (prod < two_s) return false; // eps < 0: reciprocal too small
+  if (prod < two_s)
+    return false; // eps < 0: reciprocal too small
   unsigned __int128 eps = prod - two_s;
   unsigned __int128 Mp = (((unsigned __int128)1 << 63) + 1) / Dam;
-  if (Mp * eps >= (unsigned __int128)m) return false;
+  if (Mp * eps >= (unsigned __int128)m)
+    return false;
   inv = m;
   shift = s;
   return true;
@@ -84,16 +88,16 @@ constexpr bool build_divmagic(Fn &fn, const Instr &I, val_t D,
     }
     if (is_mod) {
       uint32_t tt = tmp();
-      bin(B::And, tt, n, cm);       // low bits of n
+      bin(B::And, tt, n, cm); // low bits of n
       uint32_t z = konst(0);
       uint32_t nz = tmp();
-      bin(B::Ne, nz, tt, z);        // != 0 -> 0/1
+      bin(B::Ne, nz, tt, z); // != 0 -> 0/1
       uint32_t cd = konst((val_t)Dam);
       uint32_t m2 = tmp();
       bin(B::Mul, m2, nz, cd);
       uint32_t sub = tmp();
       bin(B::And, sub, sg, m2);
-      bin(B::Sub, I.dst, tt, sub);  // r = tt - (neg ? 2^t : 0)
+      bin(B::Sub, I.dst, tt, sub); // r = tt - (neg ? 2^t : 0)
       return true;
     }
     // div, D < 0: q was negated above
@@ -103,7 +107,8 @@ constexpr bool build_divmagic(Fn &fn, const Instr &I, val_t D,
   // general: exact reciprocal multiply
   uint64_t inv{};
   uint32_t sh{};
-  if (!divmagic_of(D, inv, sh)) return false;
+  if (!divmagic_of(D, inv, sh))
+    return false;
   uint32_t ap = tmp();
   bin(B::Xor, ap, n, sg);
   uint32_t ap2 = tmp();
@@ -144,12 +149,15 @@ constexpr bool build_divmagic(Fn &fn, const Instr &I, val_t D,
 }
 constexpr bool opt_divmagic(Fn &fn, OptStats &os) {
   const uint32_t nb = fn.nblocks();
-  if (!nb) return false;
+  if (!nb)
+    return false;
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  if (!nv) return false;
+  if (!nv)
+    return false;
   std::vector<uint32_t> ndefs(nv, 0);
   for (const Instr &I : fn.code)
-    if (I.dst != NONE && I.dst < nv) ++ndefs[I.dst];
+    if (I.dst != NONE && I.dst < nv)
+      ++ndefs[I.dst];
   std::vector<char> kc(nv, 0);
   std::vector<val_t> kv(nv, 0);
   for (const Instr &I : fn.code)
@@ -165,14 +173,15 @@ constexpr bool opt_divmagic(Fn &fn, OptStats &os) {
     nbl[b].begin = (uint32_t)nc.size();
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) &&
-          I.b2 != NONE && I.b2 < nv && kc[I.b2]) {
+      if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) && I.b2 != NONE &&
+          I.b2 < nv && kc[I.b2]) {
         val_t D = kv[I.b2];
         const bool aconst = I.a != NONE && I.a < nv && kc[I.a];
         if (!aconst && D != 0 && D != 1 && D != -1) {
           std::vector<Instr> seq{};
           if (build_divmagic(fn, I, D, seq)) {
-            for (const Instr &x : seq) nc.push_back(x);
+            for (const Instr &x : seq)
+              nc.push_back(x);
             os.divmagics++;
             changed = true;
             continue; // original Div/Mod replaced
@@ -190,4 +199,5 @@ constexpr bool opt_divmagic(Fn &fn, OptStats &os) {
   return changed;
 }
 
-// --- 9d2. loop unrolling -------------------------------------------------------
+// --- 9d2. loop unrolling
+// -------------------------------------------------------

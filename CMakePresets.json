@@ -1,0 +1,66 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 19, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "default (multi-TU, auto compiler)",
+      "description": "9 real TUs; clang++ preferred when nothing is pinned",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "gcc",
+      "displayName": "g++ (multi-TU)",
+      "binaryDir": "${sourceDir}/build-gcc",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "clang",
+      "displayName": "clang++ (multi-TU)",
+      "binaryDir": "${sourceDir}/build-clang",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "fancy",
+      "displayName": "the full-fat clang++ line (README note)",
+      "description": "clang++, C++26, -O3 -g, march=native, the whole -W battery, -fconstexpr-steps — the command line from the README, packaged as a preset",
+      "binaryDir": "${sourceDir}/build-fancy",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS": "-O3 -g -march=native -fconstexpr-steps=55555555 -Wall -Wextra -Walloca -Wcast-align -Wcast-qual -Wctor-dtor-privacy -Wdeprecated-copy-dtor -Wdouble-promotion -Wenum-conversion -Wfloat-equal -Wformat-signedness -Wformat=2 -Wmismatched-tags -Wmultichar -Wnon-virtual-dtor -Woverloaded-virtual -Wpointer-arith -Wrange-loop-construct -Wshadow -Wuninitialized -Wvla -Wwrite-strings -Wsign-conversion -Wdelete-non-virtual-dtor -ferror-limit=30",
+        "MINIJZ_CXX_STANDARD": "26"
+      }
+    },
+    {
+      "name": "header-only",
+      "displayName": "single TU (header-only constexpr form)",
+      "binaryDir": "${sourceDir}/build-ho",
+      "cacheVariables": {
+        "MINIJZ_MULTI_CPP": "OFF"
+      }
+    },
+    {
+      "name": "fuzz-wide",
+      "displayName": "multi-TU + a wide ctest fuzz window",
+      "binaryDir": "${sourceDir}/build-fuzz",
+      "cacheVariables": {
+        "FUZZ_SEEDS": "4001:2000",
+        "FUZZ_SHARDS": "4",
+        "FUZZ_JOBS": "4"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "default", "configurePreset": "default" },
+    { "name": "gcc", "configurePreset": "gcc" },
+    { "name": "clang", "configurePreset": "clang" },
+    { "name": "fancy", "configurePreset": "fancy" },
+    { "name": "header-only", "configurePreset": "header-only" },
+    { "name": "fuzz-wide", "configurePreset": "fuzz-wide" }
+  ]
+}

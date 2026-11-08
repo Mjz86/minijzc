@@ -69,11 +69,15 @@
 constexpr uint32_t scctco_uses(const Fn &fn, uint32_t v) {
   uint32_t n = 0;
   for (const Instr &I : fn.code) {
-    if (I.a == v) ++n;
-    if (I.b2 == v) ++n;
-    if (I.c2 == v) ++n;
+    if (I.a == v)
+      ++n;
+    if (I.b2 == v)
+      ++n;
+    if (I.c2 == v)
+      ++n;
     for (uint32_t u : I.args)
-      if (u == v) ++n;
+      if (u == v)
+        ++n;
   }
   return n;
 }
@@ -82,17 +86,21 @@ constexpr uint32_t scctco_uses(const Fn &fn, uint32_t v) {
 // the block's terminating Ret (which returns it)?
 constexpr bool scctco_is_tail(const Fn &fn, uint32_t b, uint32_t i) {
   const Instr &I = fn.code[i];
-  if (I.k != K::Call || I.dst == NONE) return false;
+  if (I.k != K::Call || I.dst == NONE)
+    return false;
   const Block &B = fn.blocks[b];
-  if (B.begin >= B.end) return false; // empty/tombstone: no terminator
-  if (fn.code[B.end - 1].k != K::Ret) return false;
-  if (fn.code[B.end - 1].a != I.dst) return false;
+  if (B.begin >= B.end)
+    return false; // empty/tombstone: no terminator
+  if (fn.code[B.end - 1].k != K::Ret)
+    return false;
+  if (fn.code[B.end - 1].a != I.dst)
+    return false;
   return scctco_uses(fn, I.dst) == 1;
 }
 
 // prepend instrs to block `blk` (phis must stay first); later blocks shift
 constexpr void scctco_prepend(Fn &fn, uint32_t blk,
-                             const std::vector<Instr> &ins) {
+                              const std::vector<Instr> &ins) {
   const uint32_t pos = fn.blocks[blk].begin;
   fn.code.insert(fn.code.begin() + pos, ins.begin(), ins.end());
   const int64_t d = (int64_t)ins.size();
@@ -117,7 +125,8 @@ constexpr void scctco_set_block(Fn &fn, uint32_t b, std::vector<Instr> ns) {
   const int64_t d = (int64_t)ns.size() - (int64_t)(en - bg);
   fn.blocks[b].end = bg + (uint32_t)ns.size();
   for (uint32_t q = 0; q < fn.nblocks(); ++q) {
-    if (q == b) continue;
+    if (q == b)
+      continue;
     Block &B = fn.blocks[q];
     if (B.begin >= en) {
       B.begin = (uint32_t)((int64_t)B.begin + d);
@@ -128,29 +137,37 @@ constexpr void scctco_set_block(Fn &fn, uint32_t b, std::vector<Instr> ns) {
 
 // point block b's terminator edge `from` -> `to` (from == NONE sets the
 // unset false arm of a fresh guard Cbr)
-constexpr void scctco_retarget(Fn &fn, uint32_t b, uint32_t from,
-                               uint32_t to) {
+constexpr void scctco_retarget(Fn &fn, uint32_t b, uint32_t from, uint32_t to) {
   const Block &B = fn.blocks[b];
-  if (B.begin >= B.end) return; // empty/tombstone
+  if (B.begin >= B.end)
+    return; // empty/tombstone
   Instr &T = fn.code[B.end - 1];
-  if (T.k == K::Br && T.t == from) T.t = to;
+  if (T.k == K::Br && T.t == from)
+    T.t = to;
   else if (T.k == K::Cbr) {
-    if (T.t == from) T.t = to;
-    if (T.f == from) T.f = to;
+    if (T.t == from)
+      T.t = to;
+    if (T.f == from)
+      T.f = to;
   }
 }
 
 // rewrite uses of vreg `from` -> `to` in blocks [lo, hi) except `skip`
-constexpr void scctco_rewrite(Fn &fn, uint32_t lo, uint32_t hi,
-                              uint32_t skip, uint32_t from, uint32_t to) {
+constexpr void scctco_rewrite(Fn &fn, uint32_t lo, uint32_t hi, uint32_t skip,
+                              uint32_t from, uint32_t to) {
   for (uint32_t b = lo; b < hi && b < fn.nblocks(); ++b) {
-    if (b == skip) continue;
+    if (b == skip)
+      continue;
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       Instr &I = fn.code[i];
-      if (I.a == from) I.a = to;
-      if (I.b2 == from) I.b2 = to;
-      if (I.c2 == from) I.c2 = to;
-      for (uint32_t &u : I.args) u = (u == from) ? to : u;
+      if (I.a == from)
+        I.a = to;
+      if (I.b2 == from)
+        I.b2 = to;
+      if (I.c2 == from)
+        I.c2 = to;
+      for (uint32_t &u : I.args)
+        u = (u == from) ? to : u;
     }
   }
 }
@@ -161,9 +178,11 @@ constexpr void scctco_rewrite(Fn &fn, uint32_t lo, uint32_t hi,
 constexpr void scctco_resucc(Fn &f) {
   f.succ.assign(2 * f.nblocks(), NONE);
   for (uint32_t b = 0; b < f.nblocks(); ++b) {
-    if (f.blocks[b].begin >= f.blocks[b].end) continue; // empty range
+    if (f.blocks[b].begin >= f.blocks[b].end)
+      continue; // empty range
     const Instr &T = f.code[f.blocks[b].end - 1];
-    if (T.k == K::Br) f.succ[2 * b] = T.t;
+    if (T.k == K::Br)
+      f.succ[2 * b] = T.t;
     else if (T.k == K::Cbr) {
       f.succ[2 * b] = T.t;
       f.succ[2 * b + 1] = T.f;
@@ -177,26 +196,28 @@ constexpr void scctco_resucc(Fn &f) {
 // ---- collapse one SCC member ------------------------------------------------
 
 struct ScctcoHead {
-  uint32_t entry{NONE};      // block carrying the merge phis
-  uint32_t root_pred{NONE};  // the one non-back-edge predecessor
+  uint32_t entry{NONE};     // block carrying the merge phis
+  uint32_t root_pred{NONE}; // the one non-back-edge predecessor
   std::vector<uint32_t> root_vals{};
   bool phis{false};
   uint32_t tip_pred{NONE}; // current second predecessor
   std::vector<uint32_t> tip_vals{};
-  uint32_t cb{NONE}, ce{NONE}; // the sibling copy's block range
-  uint32_t trip_src{NONE};     // trip ARRIVING at the entry (pre-phi)
-  uint32_t trip_phi{NONE};     // ... and the phi result (post-phi)
+  uint32_t cb{NONE}, ce{NONE};      // the sibling copy's block range
+  uint32_t trip_src{NONE};          // trip ARRIVING at the entry (pre-phi)
+  uint32_t trip_phi{NONE};          // ... and the phi result (post-phi)
   std::vector<uint32_t> phi_vals{}; // self only: the param rotation phis
 };
 
 constexpr bool scctco_member(Fn &f, uint32_t self_fn,
                              const std::vector<Fn> &snap,
-                             const std::vector<uint32_t> &snap_of,
-                             uint32_t nfn, OptStats &os, uint8_t dbg) {
+                             const std::vector<uint32_t> &snap_of, uint32_t nfn,
+                             OptStats &os, uint8_t dbg) {
   const uint32_t nparams = f.nparams;
-  if (nparams > 6) return false;
+  if (nparams > 6)
+    return false;
   for (uint32_t i = f.blocks[0].begin; i < f.blocks[0].end; ++i)
-    if (f.code[i].k == K::Phi) return false; // entry must be phi-free
+    if (f.code[i].k == K::Phi)
+      return false; // entry must be phi-free
 
   // ---- 1. prepend D (block 0) + H (block 1); old blocks shift by 2 -------
   const uint32_t nb0 = f.nblocks();
@@ -207,9 +228,9 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
   // r' >= 0 immediately, bounding BOTH sides of the phi (an UP counter's
   // interval grows +1 per round for ~512 rounds before widening, which
   // multiplied by inlined copies made analysis of the caller quadratic).
-  const uint32_t t0 = new_anon_vreg(f, 0);   // r = 511 on the entry edge
-  const uint32_t k1 = new_anon_vreg(f, 0);   // 1 (the guard decrement)
-  const uint32_t z0 = new_anon_vreg(f, 0);   // 0 (the guard comparison)
+  const uint32_t t0 = new_anon_vreg(f, 0); // r = 511 on the entry edge
+  const uint32_t k1 = new_anon_vreg(f, 0); // 1 (the guard decrement)
+  const uint32_t z0 = new_anon_vreg(f, 0); // 0 (the guard comparison)
   {
     std::vector<Instr> nc;
     nc.reserve(f.code.size() + 8);
@@ -222,13 +243,18 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
       for (uint32_t i = f.blocks[b].begin; i < f.blocks[b].end; ++i) {
         Instr I = f.code[i];
         if (I.k == K::Br) {
-          if (I.t != NONE) I.t += 2;
+          if (I.t != NONE)
+            I.t += 2;
         } else if (I.k == K::Cbr) {
-          if (I.t != NONE) I.t += 2;
-          if (I.f != NONE) I.f += 2;
+          if (I.t != NONE)
+            I.t += 2;
+          if (I.f != NONE)
+            I.f += 2;
         } else if (I.k == K::Phi) {
-          if (I.t != NONE) I.t += 2;
-          if (I.f != NONE) I.f += 2;
+          if (I.t != NONE)
+            I.t += 2;
+          if (I.f != NONE)
+            I.f += 2;
         }
         nc.push_back(I);
       }
@@ -243,8 +269,7 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
     for (uint32_t b = 0; b < nb0; ++b) {
       nbl.push_back({5 + f.blocks[b].begin, 5 + f.blocks[b].end});
       nsucc.push_back(f.succ[2 * b] == NONE ? NONE : f.succ[2 * b] + 2);
-      nsucc.push_back(f.succ[2 * b + 1] == NONE ? NONE
-                                                : f.succ[2 * b + 1] + 2);
+      nsucc.push_back(f.succ[2 * b + 1] == NONE ? NONE : f.succ[2 * b + 1] + 2);
     }
     f.code = std::move(nc);
     f.blocks = std::move(nbl);
@@ -255,7 +280,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
   ScctcoHead self{};
   self.entry = 1;
   self.root_pred = 0;
-  for (uint32_t p = 0; p < nparams; ++p) self.root_vals.push_back(p);
+  for (uint32_t p = 0; p < nparams; ++p)
+    self.root_vals.push_back(p);
   self.root_vals.push_back(t0);
   self.trip_src = t0;
   const uint32_t NV = nparams + 1; // carried values: params + trip
@@ -278,7 +304,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
   // (a copy's sites count from the trip ARRIVING at the copy's entry)
   auto trip_read = [&](uint32_t blk) -> uint32_t {
     for (const ScctcoHead &h : heads) {
-      if (h.cb == NONE || blk < h.cb || blk >= h.ce) continue;
+      if (h.cb == NONE || blk < h.cb || blk >= h.ce)
+        continue;
       return h.phis ? h.trip_phi : h.trip_src;
     }
     return T_cur;
@@ -291,8 +318,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
     std::vector<uint32_t> res;
     for (uint32_t v = 0; v < NV; ++v) {
       uint32_t dst = new_anon_vreg(f, f.base_of(Hd.root_vals[v]));
-      Instr P{.k = K::Phi, .dst = dst,
-              .c = (int64_t)f.base_of(Hd.root_vals[v])};
+      Instr P{
+          .k = K::Phi, .dst = dst, .c = (int64_t)f.base_of(Hd.root_vals[v])};
       if (Hd.root_pred < b) {
         P.a = Hd.root_vals[v];
         P.t = Hd.root_pred;
@@ -332,23 +359,32 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
       // exact. Phi instructions are skipped: their args must keep the
       // raw root-edge value (rewriting them would make each phi
       // self-referential on its root edge).
-      for (uint32_t i = f.blocks[Hd.entry].begin;
-           i < f.blocks[Hd.entry].end; ++i) {
+      for (uint32_t i = f.blocks[Hd.entry].begin; i < f.blocks[Hd.entry].end;
+           ++i) {
         Instr &I = f.code[i];
-        if (I.k == K::Phi) continue;
+        if (I.k == K::Phi)
+          continue;
         for (uint32_t v = 0; v < nparams; ++v) {
           const uint32_t from = Hd.root_vals[v], to = res[v];
-          if (I.a == from) I.a = to;
-          if (I.b2 == from) I.b2 = to;
-          if (I.c2 == from) I.c2 = to;
+          if (I.a == from)
+            I.a = to;
+          if (I.b2 == from)
+            I.b2 = to;
+          if (I.c2 == from)
+            I.c2 = to;
           for (uint32_t &u : I.args)
-            if (u == from) u = to;
+            if (u == from)
+              u = to;
         }
-        if (I.a == Hd.trip_src) I.a = res[nparams];
-        if (I.b2 == Hd.trip_src) I.b2 = res[nparams];
-        if (I.c2 == Hd.trip_src) I.c2 = res[nparams];
+        if (I.a == Hd.trip_src)
+          I.a = res[nparams];
+        if (I.b2 == Hd.trip_src)
+          I.b2 = res[nparams];
+        if (I.c2 == Hd.trip_src)
+          I.c2 = res[nparams];
         for (uint32_t &u : I.args)
-          if (u == Hd.trip_src) u = res[nparams];
+          if (u == Hd.trip_src)
+            u = res[nparams];
       }
     }
     Hd.trip_phi = res[nparams];
@@ -370,8 +406,7 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
     std::vector<uint32_t> res;
     for (uint32_t v = 0; v < NV; ++v) {
       uint32_t dst = new_anon_vreg(f, f.base_of(Hd.tip_vals[v]));
-      Instr P{.k = K::Phi, .dst = dst,
-              .c = (int64_t)f.base_of(Hd.tip_vals[v])};
+      Instr P{.k = K::Phi, .dst = dst, .c = (int64_t)f.base_of(Hd.tip_vals[v])};
       if (Hd.tip_pred < b) {
         P.a = Hd.tip_vals[v];
         P.t = Hd.tip_pred;
@@ -395,7 +430,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
     for (uint32_t i = f.blocks[Hd.entry].begin; i < f.blocks[Hd.entry].end;
          ++i) {
       Instr &P = f.code[i];
-      if (P.k != K::Phi) break;
+      if (P.k != K::Phi)
+        break;
       if (P.t == Hd.tip_pred) {
         P.t = M;
         P.a = res[v];
@@ -420,24 +456,29 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
   uint32_t iters = 0;
   bool changed = false;
   for (bool progress = true; progress;) {
-    if (++iters > iter_cap) return changed;
+    if (++iters > iter_cap)
+      return changed;
     progress = false;
     // find the first still-present internal tail call
     uint32_t sb = NONE, ci = NONE, callee = NONE;
     for (uint32_t b = 0; b < f.nblocks() && sb == NONE; ++b) {
       for (uint32_t i = f.blocks[b].begin; i < f.blocks[b].end; ++i) {
         const Instr &I = f.code[i];
-        if (I.k != K::Call) continue;
+        if (I.k != K::Call)
+          continue;
         uint32_t g = (uint32_t)I.c;
-        if (g >= nfn || snap_of[g] == NONE) continue; // not in this SCC
-        if (!scctco_is_tail(f, b, i)) return false;   // cannot happen
+        if (g >= nfn || snap_of[g] == NONE)
+          continue; // not in this SCC
+        if (!scctco_is_tail(f, b, i))
+          return false; // cannot happen
         sb = b;
         ci = i;
         callee = g;
         break;
       }
     }
-    if (sb == NONE) break;
+    if (sb == NONE)
+      break;
     progress = true;
     changed = true;
     const std::vector<uint32_t> args = f.code[ci].args;
@@ -448,16 +489,17 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
     if (trapb == NONE) {
       const uint32_t c1 = new_anon_vreg(f, 0), c0 = new_anon_vreg(f, 0),
                      dx = new_anon_vreg(f, 0);
-      trapb = append_block({Instr{.k = K::Const, .dst = c1, .c = 1},
-                            Instr{.k = K::Const, .dst = c0, .c = 0},
-                            Instr{.k = K::Bin, .b = B::Div, .dst = dx,
-                                  .a = c1, .b2 = c0},
-                            Instr{.k = K::Ret, .a = dx}});
+      trapb = append_block(
+          {Instr{.k = K::Const, .dst = c1, .c = 1},
+           Instr{.k = K::Const, .dst = c0, .c = 0},
+           Instr{.k = K::Bin, .b = B::Div, .dst = dx, .a = c1, .b2 = c0},
+           Instr{.k = K::Ret, .a = dx}});
     }
     {
       std::vector<Instr> ns;
       for (uint32_t i = f.blocks[sb].begin; i < f.blocks[sb].end; ++i)
-        if (i != ci && i + 1 != f.blocks[sb].end) ns.push_back(f.code[i]);
+        if (i != ci && i + 1 != f.blocks[sb].end)
+          ns.push_back(f.code[i]);
       ns.push_back(
           Instr{.k = K::Bin, .b = B::Sub, .dst = tp, .a = tripv, .b2 = k1});
       ns.push_back(
@@ -475,8 +517,7 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
       const uint32_t nvG = G.nvars + (uint32_t)G.version_base.size();
       std::vector<uint32_t> vmap(nvG, NONE);
       for (uint32_t v = 0; v < nvG; ++v)
-        vmap[v] =
-            (v < G.nparams) ? args[v] : new_anon_vreg(f, G.base_of(v));
+        vmap[v] = (v < G.nparams) ? args[v] : new_anon_vreg(f, G.base_of(v));
       auto mapv = [&](uint32_t v) -> uint32_t {
         return (v == NONE || v >= nvG) ? v : vmap[v];
       };
@@ -486,19 +527,27 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
         std::vector<Instr> gb;
         for (uint32_t i = G.blocks[g].begin; i < G.blocks[g].end; ++i) {
           Instr I = G.code[i];
-          if (I.dst != NONE) I.dst = mapv(I.dst);
+          if (I.dst != NONE)
+            I.dst = mapv(I.dst);
           I.a = mapv(I.a);
           I.b2 = mapv(I.b2);
-          if (I.c2 != NONE) I.c2 = mapv(I.c2);
-          for (uint32_t &av : I.args) av = mapv(av);
+          if (I.c2 != NONE)
+            I.c2 = mapv(I.c2);
+          for (uint32_t &av : I.args)
+            av = mapv(av);
           if (I.k == K::Phi) {
-            if (I.t != NONE && I.t < nbG) I.t = cb + I.t;
-            if (I.f != NONE && I.f < nbG) I.f = cb + I.f;
+            if (I.t != NONE && I.t < nbG)
+              I.t = cb + I.t;
+            if (I.f != NONE && I.f < nbG)
+              I.f = cb + I.f;
           } else if (I.k == K::Br) {
-            if (I.t != NONE && I.t < nbG) I.t = cb + I.t;
+            if (I.t != NONE && I.t < nbG)
+              I.t = cb + I.t;
           } else if (I.k == K::Cbr) {
-            if (I.t != NONE && I.t < nbG) I.t = cb + I.t;
-            if (I.f != NONE && I.f < nbG) I.f = cb + I.f;
+            if (I.t != NONE && I.t < nbG)
+              I.t = cb + I.t;
+            if (I.f != NONE && I.f < nbG)
+              I.f = cb + I.f;
           }
           gb.push_back(I);
         }
@@ -535,7 +584,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
     for (uint32_t b = 1; b < f.nblocks(); ++b)
       for (uint32_t i = f.blocks[b].begin; i < f.blocks[b].end; ++i) {
         Instr &P = f.code[i];
-        if (P.k != K::Phi) continue;
+        if (P.k != K::Phi)
+          continue;
         if (P.a != NONE && P.a < nparams && P.t != 0)
           P.a = self.phi_vals[P.a];
         if (P.b2 != NONE && P.b2 < nparams && P.f != 0)
@@ -544,7 +594,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
   }
 
   scctco_resucc(f);
-  if (dbg >= 2) print_fn(f, "[scctco] collapsed (pre-fold)");
+  if (dbg >= 2)
+    print_fn(f, "[scctco] collapsed (pre-fold)");
   scctco_fold(f, 1, nparams, os, trapb, dbg);
   scctco_resucc(f);
   return changed;
@@ -553,7 +604,8 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
 // runtime-only tracer for the scctco driver (never reached on the
 // constexpr path: cfg.debug is 0 there)
 static void scctco_dbg_rt(uint8_t dbg, const char *what, long a, long b) {
-  if (dbg < 1) return;
+  if (dbg < 1)
+    return;
   std::printf("  [scctco] %s %ld %ld\n", what, a, b);
 }
 
@@ -567,21 +619,26 @@ constexpr bool opt_scc_tailcall(std::vector<Fn> &fns,
                                 const std::vector<std::string_view> &names,
                                 PassCfg cfg) {
   const uint32_t n = (uint32_t)fns.size();
-  if (n < 2) return false;
+  if (n < 2)
+    return false;
   CallGraph G = build_callgraph(fns);
   bool any = false;
   for (uint32_t s = 0; s < G.nscc; ++s) {
     const uint32_t b = G.scc_begin[s];
     const uint32_t e =
         (s + 1 < G.nscc) ? G.scc_begin[s + 1] : (uint32_t)G.members.size();
-    if (e <= b) continue;
+    if (e <= b)
+      continue;
     std::vector<uint32_t> mem(G.members.begin() + b, G.members.begin() + e);
-    if (mem.size() > 8) continue; // small SCCs only
+    if (mem.size() > 8)
+      continue; // small SCCs only
     bool internal = false;
     for (uint32_t f : mem)
       for (ulen c : G.adj[f])
-        if ((uint32_t)c < n && G.scc_of[(uint32_t)c] == s) internal = true;
-    if (!internal) continue;
+        if ((uint32_t)c < n && G.scc_of[(uint32_t)c] == s)
+          internal = true;
+    if (!internal)
+      continue;
     // preconditions: every internal edge is a tail call with matching arg
     // count; total size bounded; main is never a member
     uint64_t total = 0;
@@ -593,12 +650,14 @@ constexpr bool opt_scc_tailcall(std::vector<Fn> &fns,
       }
       total += fns[f].code.size();
       for (uint32_t blk = 0; blk < fns[f].nblocks() && ok; ++blk)
-        for (uint32_t i = fns[f].blocks[blk].begin;
-             i < fns[f].blocks[blk].end; ++i) {
+        for (uint32_t i = fns[f].blocks[blk].begin; i < fns[f].blocks[blk].end;
+             ++i) {
           const Instr &I = fns[f].code[i];
-          if (I.k != K::Call) continue;
+          if (I.k != K::Call)
+            continue;
           uint32_t g = (uint32_t)I.c;
-          if (g >= n || G.scc_of[g] != s) continue; // external edge
+          if (g >= n || G.scc_of[g] != s)
+            continue; // external edge
           if (!scctco_is_tail(fns[f], blk, i) ||
               I.args.size() != fns[g].nparams) {
             if (cfg.debug >= 1)
@@ -611,8 +670,7 @@ constexpr bool opt_scc_tailcall(std::vector<Fn> &fns,
     }
     if (!ok || total > 6000) {
       if (cfg.debug >= 1)
-        scctco_dbg_rt(cfg.debug, "skip scc (ok,total)", (long)ok,
-                      (long)total);
+        scctco_dbg_rt(cfg.debug, "skip scc (ok,total)", (long)ok, (long)total);
       continue;
     }
     // pre-collapse snapshots + fn -> snapshot map
@@ -626,8 +684,7 @@ constexpr bool opt_scc_tailcall(std::vector<Fn> &fns,
       // stats land on row 0 (<main>): collapsed members are routinely dead
       // (their only callers were inside the SCC), and eliminate_dead_fns
       // drops their stats rows with them
-      if (!scctco_member(fns[f], f, snap, snap_of, n, ostats[0],
-                         cfg.debug)) {
+      if (!scctco_member(fns[f], f, snap, snap_of, n, ostats[0], cfg.debug)) {
         if (cfg.debug >= 1)
           scctco_dbg_rt(cfg.debug, "member refused", (long)f, 0);
         continue;

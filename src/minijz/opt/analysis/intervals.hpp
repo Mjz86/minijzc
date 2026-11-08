@@ -35,8 +35,10 @@ constexpr bool iv_eq(const Iv &a, const Iv &b) {
   return a.bot == b.bot && a.lo == b.lo && a.hi == b.hi;
 }
 constexpr Iv iv_hull(const Iv &a, const Iv &b) { // join (may-analysis)
-  if (a.bot) return b;
-  if (b.bot) return a;
+  if (a.bot)
+    return b;
+  if (b.bot)
+    return a;
   return {a.lo < b.lo ? a.lo : b.lo, a.hi > b.hi ? a.hi : b.hi, false};
 }
 constexpr uint64_t u64_abs(val_t v) { // |v| saturating at 2^63
@@ -45,7 +47,8 @@ constexpr uint64_t u64_abs(val_t v) { // |v| saturating at 2^63
 }
 // one interval per operand of a Bin; all results are sound supersets
 constexpr Iv iv_bin(B b, const Iv &x, const Iv &y) {
-  if (x.bot || y.bot) return {0, 0, true};
+  if (x.bot || y.bot)
+    return {0, 0, true};
   switch (b) {
   case B::Add: {
     __int128 lo = (__int128)x.lo + y.lo, hi = (__int128)x.hi + y.hi;
@@ -64,46 +67,61 @@ constexpr Iv iv_bin(B b, const Iv &x, const Iv &y) {
                      (__int128)x.hi * y.lo, (__int128)x.hi * y.hi};
     __int128 lo = c[0], hi = c[0];
     for (int k = 1; k < 4; ++k) {
-      if (c[k] < lo) lo = c[k];
-      if (c[k] > hi) hi = c[k];
+      if (c[k] < lo)
+        lo = c[k];
+      if (c[k] > hi)
+        hi = c[k];
     }
     if (lo < (__int128)INT64_MIN || hi > (__int128)INT64_MAX)
       return {INT64_MIN, INT64_MAX, false};
     return {(val_t)lo, (val_t)hi, false};
   }
   case B::Div: {
-    if (!(y.lo >= 1 || y.hi <= -1)) return {INT64_MIN, INT64_MAX, false};
+    if (!(y.lo >= 1 || y.hi <= -1))
+      return {INT64_MIN, INT64_MAX, false};
     // single-sign divisor: the extrema of x/y are at the four corners
     val_t cl = INT64_MAX, ch = INT64_MIN; // careful with init directions
-    cl = INT64_MIN; ch = INT64_MAX;
+    cl = INT64_MIN;
+    ch = INT64_MAX;
     val_t lo = INT64_MAX, hi = INT64_MIN;
     for (int k = 0; k < 4; ++k) {
       val_t a = (k & 1) ? x.hi : x.lo, d = (k & 2) ? y.hi : y.lo;
       Rv r = w_div(a, d); // corner may trap numerically: then top
-      if (r.trap) return {INT64_MIN, INT64_MAX, false};
-      if (r.v < lo) lo = r.v;
-      if (r.v > hi) hi = r.v;
+      if (r.trap)
+        return {INT64_MIN, INT64_MAX, false};
+      if (r.v < lo)
+        lo = r.v;
+      if (r.v > hi)
+        hi = r.v;
     }
     (void)cl;
     (void)ch;
     return {lo, hi, false};
   }
   case B::Mod: {
-    if (!(y.lo >= 1 || y.hi <= -1)) return {INT64_MIN, INT64_MAX, false};
+    if (!(y.lo >= 1 || y.hi <= -1))
+      return {INT64_MIN, INT64_MAX, false};
     // |r| < |y| and sign(r) == sign(x); also |r| <= |x|
     val_t M{};
     if (y.lo >= 1) {
       M = (y.hi == INT64_MAX) ? INT64_MAX : (y.hi - 1);
     } else {
-      uint64_t m = u64_abs(y.lo) > u64_abs(y.hi) ? u64_abs(y.lo)
-                                                 : u64_abs(y.hi);
+      uint64_t m =
+          u64_abs(y.lo) > u64_abs(y.hi) ? u64_abs(y.lo) : u64_abs(y.hi);
       M = (m >= (uint64_t)INT64_MAX) ? INT64_MAX : (val_t)(m - 1);
     }
-    if (x.lo >= 0) return {0, x.hi < M ? x.hi : M, false};
-    if (x.hi <= 0) return {x.lo < -M ? -M : x.lo, 0, false};
+    if (x.lo >= 0)
+      return {0, x.hi < M ? x.hi : M, false};
+    if (x.hi <= 0)
+      return {x.lo < -M ? -M : x.lo, 0, false};
     return {x.lo < -M ? -M : x.lo, x.hi < M ? x.hi : M, false};
   }
-  case B::Lt: case B::Le: case B::Gt: case B::Ge: case B::Eq: case B::Ne:
+  case B::Lt:
+  case B::Le:
+  case B::Gt:
+  case B::Ge:
+  case B::Eq:
+  case B::Ne:
     return {0, 1, false}; // comparisons yield 0/1
   case B::And:
     // x & 1 in {0,1} whatever x is (the parity bit of the countdown fold
@@ -117,7 +135,8 @@ constexpr Iv iv_bin(B b, const Iv &x, const Iv &y) {
 }
 // tighten (x,y) given that `x cmp y` is known to be `taken`
 constexpr void iv_refine(Iv &x, Iv &y, B cmp, bool taken) {
-  if (x.bot || y.bot) return;
+  if (x.bot || y.bot)
+    return;
   if (cmp == B::Gt || cmp == B::Ge) { // normalize to the Lt/Le direction
     Iv t = x;
     x = y;
@@ -125,45 +144,71 @@ constexpr void iv_refine(Iv &x, Iv &y, B cmp, bool taken) {
     cmp = (cmp == B::Gt) ? B::Lt : B::Le;
   }
   auto exclude = [](Iv &i, val_t c) { // remove the point c if it is an endpoint
-    if (i.lo == c && i.hi == c) { i.bot = true; return; }
-    if (i.lo == c && c != INT64_MAX) i.lo = c + 1;
-    else if (i.hi == c && c != INT64_MIN) i.hi = c - 1;
+    if (i.lo == c && i.hi == c) {
+      i.bot = true;
+      return;
+    }
+    if (i.lo == c && c != INT64_MAX)
+      i.lo = c + 1;
+    else if (i.hi == c && c != INT64_MIN)
+      i.hi = c - 1;
   };
   if (cmp == B::Lt) {
     if (taken) {
-      if (y.hi != INT64_MIN && x.hi > y.hi - 1) x.hi = y.hi - 1;
-      if (x.lo != INT64_MAX && y.lo < x.lo + 1) y.lo = x.lo + 1;
+      if (y.hi != INT64_MIN && x.hi > y.hi - 1)
+        x.hi = y.hi - 1;
+      if (x.lo != INT64_MAX && y.lo < x.lo + 1)
+        y.lo = x.lo + 1;
     } else { // x >= y
-      if (x.lo < y.lo) x.lo = y.lo;
-      if (y.hi > x.hi) y.hi = x.hi;
+      if (x.lo < y.lo)
+        x.lo = y.lo;
+      if (y.hi > x.hi)
+        y.hi = x.hi;
     }
   } else if (cmp == B::Le) {
     if (taken) {
-      if (x.hi > y.hi) x.hi = y.hi;
-      if (y.lo < x.lo) y.lo = x.lo;
+      if (x.hi > y.hi)
+        x.hi = y.hi;
+      if (y.lo < x.lo)
+        y.lo = x.lo;
     } else { // x > y
-      if (y.lo != INT64_MAX && x.lo < y.lo + 1) x.lo = y.lo + 1;
-      if (x.hi != INT64_MIN && y.hi > x.hi - 1) y.hi = x.hi - 1;
+      if (y.lo != INT64_MAX && x.lo < y.lo + 1)
+        x.lo = y.lo + 1;
+      if (x.hi != INT64_MIN && y.hi > x.hi - 1)
+        y.hi = x.hi - 1;
     }
   } else if (cmp == B::Eq) {
     if (taken) {
       val_t lo = x.lo > y.lo ? x.lo : y.lo;
       val_t hi = x.hi < y.hi ? x.hi : y.hi;
-      if (lo > hi) { x.bot = y.bot = true; } // contradictory: dead edge
-      else { x = {lo, hi, false}; y = {lo, hi, false}; }
+      if (lo > hi) {
+        x.bot = y.bot = true;
+      } // contradictory: dead edge
+      else {
+        x = {lo, hi, false};
+        y = {lo, hi, false};
+      }
     } else {
-      if (y.lo == y.hi) exclude(x, y.lo);
-      else if (x.lo == x.hi) exclude(y, x.lo);
+      if (y.lo == y.hi)
+        exclude(x, y.lo);
+      else if (x.lo == x.hi)
+        exclude(y, x.lo);
     }
   } else { // B::Ne
     if (taken) {
-      if (y.lo == y.hi) exclude(x, y.lo);
-      else if (x.lo == x.hi) exclude(y, x.lo);
+      if (y.lo == y.hi)
+        exclude(x, y.lo);
+      else if (x.lo == x.hi)
+        exclude(y, x.lo);
     } else {
       val_t lo = x.lo > y.lo ? x.lo : y.lo;
       val_t hi = x.hi < y.hi ? x.hi : y.hi;
-      if (lo > hi) { x.bot = y.bot = true; }
-      else { x = {lo, hi, false}; y = {lo, hi, false}; }
+      if (lo > hi) {
+        x.bot = y.bot = true;
+      } else {
+        x = {lo, hi, false};
+        y = {lo, hi, false};
+      }
     }
   }
 }
@@ -179,14 +224,17 @@ struct Ranges {
 constexpr void iv_transfer(const Fn &fn, uint32_t i, uint32_t nv,
                            std::vector<Iv> &st) {
   const Instr &I = fn.code[i];
-  if (I.dst == NONE || I.dst >= nv) return;
+  if (I.dst == NONE || I.dst >= nv)
+    return;
   switch (I.k) {
   case K::Const:
     st[I.dst] = {I.c, I.c, false};
     return;
   case K::Copy:
-    if (I.a != NONE && I.a < nv) st[I.dst] = st[I.a];
-    else st[I.dst] = {INT64_MIN, INT64_MAX, false};
+    if (I.a != NONE && I.a < nv)
+      st[I.dst] = st[I.a];
+    else
+      st[I.dst] = {INT64_MIN, INT64_MAX, false};
     return;
   case K::Bin:
     st[I.dst] = iv_bin(I.b, st[I.a], st[I.b2]);
@@ -211,34 +259,42 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
   RA.nv = fn.nvars + (uint32_t)fn.version_base.size();
   RA.ok = RA.nb && RA.nv &&
           (uint64_t)RA.nb * RA.nv <= 4u * 1024u * 1024u; // memory cap
-  if (!RA.ok) return RA;
+  if (!RA.ok)
+    return RA;
   const uint32_t nb = RA.nb, nv = RA.nv;
   // comparison def behind each Cbr (same predicate the emission plan uses
   // for branch fusion: single-use, single-def comparison)
   std::vector<uint32_t> raw(nv, 0), ndefs(nv, 0), defi(nv, NONE);
   for (uint32_t i = 0; i < fn.code.size(); ++i) {
     const Instr &I = fn.code[i];
-    if (I.a != NONE && I.a < nv) raw[I.a]++;
-    if (I.b2 != NONE && I.b2 < nv) raw[I.b2]++;
-    if (I.c2 != NONE && I.c2 < nv) raw[I.c2]++;
+    if (I.a != NONE && I.a < nv)
+      raw[I.a]++;
+    if (I.b2 != NONE && I.b2 < nv)
+      raw[I.b2]++;
+    if (I.c2 != NONE && I.c2 < nv)
+      raw[I.c2]++;
     if (I.dst != NONE && I.dst < nv) {
       ++ndefs[I.dst];
       defi[I.dst] = i;
     }
   }
   auto is_cmp_def = [&](uint32_t c) -> uint32_t {
-    if (c == NONE || c >= nv) return NONE;
-    if (raw[c] != 1 || ndefs[c] != 1) return NONE;
+    if (c == NONE || c >= nv)
+      return NONE;
+    if (raw[c] != 1 || ndefs[c] != 1)
+      return NONE;
     uint32_t d = defi[c];
-    if (d == NONE) return NONE;
+    if (d == NONE)
+      return NONE;
     const Instr &D = fn.code[d];
-    if (D.k != K::Bin) return NONE;
+    if (D.k != K::Bin)
+      return NONE;
     if (D.b == B::Lt || D.b == B::Le || D.b == B::Gt || D.b == B::Ge ||
         D.b == B::Eq || D.b == B::Ne)
       return d;
     return NONE;
   };
-  std::vector<Iv> entry((size_t)nb * nv, Iv{0, 0, true});  // bottom: grow up
+  std::vector<Iv> entry((size_t)nb * nv, Iv{0, 0, true}); // bottom: grow up
   std::vector<Iv> exit_((size_t)nb * nv, Iv{0, 0, true});
   std::vector<char> touched(nb, 0);
   std::vector<Iv> st(nv), edge(nv);
@@ -259,44 +315,59 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
     bool changed = false;
     for (uint32_t b = 0; b < nb; ++b) {
       // ---- entry = hull over incoming (refined) pred exits + phi rule
-      for (uint32_t v = 0; v < nv; ++v) st[v] = {0, 0, true};
+      for (uint32_t v = 0; v < nv; ++v)
+        st[v] = {0, 0, true};
       bool any_pred = false;
       for (uint32_t p : fn.preds[b]) {
-        if (p >= nb || !touched[p]) continue;
+        if (p >= nb || !touched[p])
+          continue;
         any_pred = true;
         // refined exit of p along the edge p -> b
-        for (uint32_t v = 0; v < nv; ++v) edge[v] = exit_[(size_t)p * nv + v];
+        for (uint32_t v = 0; v < nv; ++v)
+          edge[v] = exit_[(size_t)p * nv + v];
         const Instr &term = fn.code[fn.blocks[p].end - 1];
         if (term.k == K::Cbr) {
           uint32_t d = is_cmp_def(term.a);
           if (d != NONE) {
             const Instr &D = fn.code[d];
-            Iv x = (D.a != NONE && D.a < nv) ? edge[D.a] : Iv{INT64_MIN, INT64_MAX, false};
-            Iv y = (D.b2 != NONE && D.b2 < nv) ? edge[D.b2] : Iv{INT64_MIN, INT64_MAX, false};
+            Iv x = (D.a != NONE && D.a < nv) ? edge[D.a]
+                                             : Iv{INT64_MIN, INT64_MAX, false};
+            Iv y = (D.b2 != NONE && D.b2 < nv)
+                       ? edge[D.b2]
+                       : Iv{INT64_MIN, INT64_MAX, false};
             bool taken = (term.t == b);
             iv_refine(x, y, D.b, taken);
-            if (D.a != NONE && D.a < nv) edge[D.a] = x;
-            if (D.b2 != NONE && D.b2 < nv) edge[D.b2] = y;
+            if (D.a != NONE && D.a < nv)
+              edge[D.a] = x;
+            if (D.b2 != NONE && D.b2 < nv)
+              edge[D.b2] = y;
           }
         }
-        for (uint32_t v = 0; v < nv; ++v) st[v] = iv_hull(st[v], edge[v]);
+        for (uint32_t v = 0; v < nv; ++v)
+          st[v] = iv_hull(st[v], edge[v]);
       }
       if (!any_pred && b != 0) { // unreachable: keep bottom
-        for (uint32_t v = 0; v < nv; ++v) st[v] = {0, 0, true};
+        for (uint32_t v = 0; v < nv; ++v)
+          st[v] = {0, 0, true};
       }
       if (b == 0) { // entry: everything top (params included)
-        for (uint32_t v = 0; v < nv; ++v) st[v] = {INT64_MIN, INT64_MAX, false};
+        for (uint32_t v = 0; v < nv; ++v)
+          st[v] = {INT64_MIN, INT64_MAX, false};
       } else {
         // phi rule: the phi's value is one of its args, per incoming edge
         for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
           const Instr &I = fn.code[i];
-          if (I.k != K::Phi) break;
+          if (I.k != K::Phi)
+            break;
           Iv acc{0, 0, true};
           for (uint32_t p : fn.preds[b]) {
-            if (p >= nb || !touched[p]) continue;
+            if (p >= nb || !touched[p])
+              continue;
             uint32_t arg = NONE;
-            if (I.t == p && I.a != NONE) arg = I.a;
-            else if (I.f == p && I.b2 != NONE) arg = I.b2;
+            if (I.t == p && I.a != NONE)
+              arg = I.a;
+            else if (I.f == p && I.b2 != NONE)
+              arg = I.b2;
             if (arg != NONE && arg < nv)
               acc = iv_hull(acc, exit_[(size_t)p * nv + arg]);
           }
@@ -307,7 +378,10 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
       {
         bool diff = false;
         for (uint32_t v = 0; v < nv; ++v)
-          if (!iv_eq(st[v], entry[(size_t)b * nv + v])) { diff = true; break; }
+          if (!iv_eq(st[v], entry[(size_t)b * nv + v])) {
+            diff = true;
+            break;
+          }
         if (diff) {
           // WIDEN AT LOOP HEADERS ONLY (Cousot discipline). Widening at
           // every block re-inflates refined body states (e.g. a body entry
@@ -319,10 +393,14 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
           if (widening && b < A.n && A.inner[b] == b) { // widen growing sides
             for (uint32_t v = 0; v < nv; ++v) {
               Iv &old = entry[(size_t)b * nv + v];
-              if (st[v].bot) continue;
-              if (st[v].lo < old.lo) st[v].lo = INT64_MIN;
-              if (st[v].hi > old.hi) st[v].hi = INT64_MAX;
-              if (st[v].lo > st[v].hi) st[v] = old; // paranoia
+              if (st[v].bot)
+                continue;
+              if (st[v].lo < old.lo)
+                st[v].lo = INT64_MIN;
+              if (st[v].hi > old.hi)
+                st[v].hi = INT64_MAX;
+              if (st[v].lo > st[v].hi)
+                st[v] = old; // paranoia
             }
           }
           for (uint32_t v = 0; v < nv; ++v)
@@ -331,10 +409,12 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
         }
       }
       // ---- transfer through the block
-      for (uint32_t v = 0; v < nv; ++v) st[v] = entry[(size_t)b * nv + v];
+      for (uint32_t v = 0; v < nv; ++v)
+        st[v] = entry[(size_t)b * nv + v];
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
         iv_transfer(fn, i, nv, st);
-      for (uint32_t v = 0; v < nv; ++v) exit_[(size_t)b * nv + v] = st[v];
+      for (uint32_t v = 0; v < nv; ++v)
+        exit_[(size_t)b * nv + v] = st[v];
       touched[b] = 1;
     }
     if (!changed) {
@@ -342,8 +422,10 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
       break;
     }
     ++round;
-    if (!widening && round >= plain) widening = true;
-    if (widening && round >= plain + widened_cap) break; // give up (below)
+    if (!widening && round >= plain)
+      widening = true;
+    if (widening && round >= plain + widened_cap)
+      break; // give up (below)
   }
   if (!converged) {
     // no fixpoint (pathological CFG): every claim would rest on an
@@ -355,39 +437,53 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
   // ---- narrowing: re-run transfers and intersect with the widened state
   for (uint32_t n = 0; n < 3; ++n) {
     for (uint32_t b = 0; b < nb; ++b) {
-      for (uint32_t v = 0; v < nv; ++v) st[v] = {0, 0, true};
+      for (uint32_t v = 0; v < nv; ++v)
+        st[v] = {0, 0, true};
       bool any_pred = false;
       for (uint32_t p : fn.preds[b]) {
-        if (p >= nb || !touched[p]) continue;
+        if (p >= nb || !touched[p])
+          continue;
         any_pred = true;
-        for (uint32_t v = 0; v < nv; ++v) edge[v] = exit_[(size_t)p * nv + v];
+        for (uint32_t v = 0; v < nv; ++v)
+          edge[v] = exit_[(size_t)p * nv + v];
         const Instr &term = fn.code[fn.blocks[p].end - 1];
         if (term.k == K::Cbr) {
           uint32_t d = is_cmp_def(term.a);
           if (d != NONE) {
             const Instr &D = fn.code[d];
-            Iv x = (D.a != NONE && D.a < nv) ? edge[D.a] : Iv{INT64_MIN, INT64_MAX, false};
-            Iv y = (D.b2 != NONE && D.b2 < nv) ? edge[D.b2] : Iv{INT64_MIN, INT64_MAX, false};
+            Iv x = (D.a != NONE && D.a < nv) ? edge[D.a]
+                                             : Iv{INT64_MIN, INT64_MAX, false};
+            Iv y = (D.b2 != NONE && D.b2 < nv)
+                       ? edge[D.b2]
+                       : Iv{INT64_MIN, INT64_MAX, false};
             iv_refine(x, y, D.b, term.t == b);
-            if (D.a != NONE && D.a < nv) edge[D.a] = x;
-            if (D.b2 != NONE && D.b2 < nv) edge[D.b2] = y;
+            if (D.a != NONE && D.a < nv)
+              edge[D.a] = x;
+            if (D.b2 != NONE && D.b2 < nv)
+              edge[D.b2] = y;
           }
         }
-        for (uint32_t v = 0; v < nv; ++v) st[v] = iv_hull(st[v], edge[v]);
+        for (uint32_t v = 0; v < nv; ++v)
+          st[v] = iv_hull(st[v], edge[v]);
       }
       (void)any_pred;
       if (b == 0)
-        for (uint32_t v = 0; v < nv; ++v) st[v] = {INT64_MIN, INT64_MAX, false};
+        for (uint32_t v = 0; v < nv; ++v)
+          st[v] = {INT64_MIN, INT64_MAX, false};
       else
         for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
           const Instr &I = fn.code[i];
-          if (I.k != K::Phi) break;
+          if (I.k != K::Phi)
+            break;
           Iv acc{0, 0, true};
           for (uint32_t p : fn.preds[b]) {
-            if (p >= nb || !touched[p]) continue;
+            if (p >= nb || !touched[p])
+              continue;
             uint32_t arg = NONE;
-            if (I.t == p && I.a != NONE) arg = I.a;
-            else if (I.f == p && I.b2 != NONE) arg = I.b2;
+            if (I.t == p && I.a != NONE)
+              arg = I.a;
+            else if (I.f == p && I.b2 != NONE)
+              arg = I.b2;
             if (arg != NONE && arg < nv)
               acc = iv_hull(acc, exit_[(size_t)p * nv + arg]);
           }
@@ -396,19 +492,24 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
       // intersect with the previous (sound) approximation
       for (uint32_t v = 0; v < nv; ++v) {
         Iv &old = entry[(size_t)b * nv + v];
-        if (st[v].bot || old.bot) continue;
+        if (st[v].bot || old.bot)
+          continue;
         val_t lo = st[v].lo > old.lo ? st[v].lo : old.lo;
         val_t hi = st[v].hi < old.hi ? st[v].hi : old.hi;
-        if (lo <= hi) old = {lo, hi, false};
+        if (lo <= hi)
+          old = {lo, hi, false};
       }
-      for (uint32_t v = 0; v < nv; ++v) st[v] = entry[(size_t)b * nv + v];
+      for (uint32_t v = 0; v < nv; ++v)
+        st[v] = entry[(size_t)b * nv + v];
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
         iv_transfer(fn, i, nv, st);
-      for (uint32_t v = 0; v < nv; ++v) exit_[(size_t)b * nv + v] = st[v];
+      for (uint32_t v = 0; v < nv; ++v)
+        exit_[(size_t)b * nv + v] = st[v];
     }
   }
   RA.entry = std::move(entry);
   return RA;
 }
 
-// --- 9d3c. trap elimination ----------------------------------------------------
+// --- 9d3c. trap elimination
+// ----------------------------------------------------

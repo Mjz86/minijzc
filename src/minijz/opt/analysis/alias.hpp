@@ -37,7 +37,8 @@ constexpr AliasInfo alias_analyze(const Fn &fn) {
   AliasInfo AI{};
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   AI.single.assign(nv, NONE);
-  if (!nv) return AI;
+  if (!nv)
+    return AI;
   for (const Instr &I : fn.code)
     if (I.k == K::Alloc && I.dst != NONE && I.dst < nv)
       AI.single[I.dst] = AI.nallocs++;
@@ -49,10 +50,10 @@ constexpr AliasInfo alias_analyze(const Fn &fn) {
   for (uint32_t guard = 0; grew && guard < 64; ++guard) {
     grew = false;
     for (const Instr &I : fn.code) {
-      if (I.dst == NONE || I.dst >= nv) continue;
+      if (I.dst == NONE || I.dst >= nv)
+        continue;
       if (I.k == K::Copy) {
-        if (I.a != NONE && I.a < nv &&
-            AI.single[I.dst] != AI.single[I.a]) {
+        if (I.a != NONE && I.a < nv && AI.single[I.dst] != AI.single[I.a]) {
           AI.single[I.dst] = AI.single[I.a];
           grew = true;
         }
@@ -81,7 +82,8 @@ constexpr void prog_handle_gates(const std::vector<Fn> &fns, bool &lift_ok,
   lift_ok = true;
   stkarr_ok = true;
   for (const Fn &fn : fns) {
-    if (!fn.nblocks()) continue;
+    if (!fn.nblocks())
+      continue;
     AliasInfo AI = alias_analyze(fn);
     const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
     auto sgl = [&](uint32_t v) -> bool {
@@ -91,11 +93,14 @@ constexpr void prog_handle_gates(const std::vector<Fn> &fns, bool &lift_ok,
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
         const Instr &I = fn.code[i];
         if (I.k == K::Load || I.k == K::Store) {
-          if (!sgl(I.a)) lift_ok = false; // could hit ANY array's contents
+          if (!sgl(I.a))
+            lift_ok = false; // could hit ANY array's contents
         } else if (I.k == K::Len) {
-          if (!sgl(I.a)) stkarr_ok = false; // length table would shift
+          if (!sgl(I.a))
+            stkarr_ok = false; // length table would shift
         }
-        if (!stkarr_ok) continue;
+        if (!stkarr_ok)
+          continue;
         // observable uses of a handle VALUE (numbers that shift when an
         // earlier allocation leaves the arena)
         switch (I.k) {
@@ -104,19 +109,24 @@ constexpr void prog_handle_gates(const std::vector<Fn> &fns, bool &lift_ok,
         case K::Print: // printing a handle
         case K::Ret:   // returning a handle to the caller
         case K::Alloc: // a handle as an allocation size
-          if (sgl(I.a) || sgl(I.b2)) stkarr_ok = false;
+          if (sgl(I.a) || sgl(I.b2))
+            stkarr_ok = false;
           break;
-        case K::Load:  // handle used as an INDEX
-          if (sgl(I.b2)) stkarr_ok = false;
+        case K::Load: // handle used as an INDEX
+          if (sgl(I.b2))
+            stkarr_ok = false;
           break;
         case K::Store: // handle used as an index or stored as a value
-          if (sgl(I.b2) || sgl(I.c2)) stkarr_ok = false;
+          if (sgl(I.b2) || sgl(I.c2))
+            stkarr_ok = false;
           break;
-        case K::Call:  // handle passed to a function
+        case K::Call: // handle passed to a function
           for (uint32_t v : I.args)
-            if (sgl(v)) stkarr_ok = false;
+            if (sgl(v))
+              stkarr_ok = false;
           break;
-        default: break; // Copy/Phi: plumbing; Len handle position: fine
+        default:
+          break; // Copy/Phi: plumbing; Len handle position: fine
         }
       }
   }

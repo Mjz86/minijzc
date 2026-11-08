@@ -17,20 +17,20 @@
 struct Cli {
   std::string file{};
   std::string inline_src{};
-  std::string cc{};          // "" = auto-detect
+  std::string cc{}; // "" = auto-detect
   std::string out_dir{"."};
-  std::string stdin_path{};  // --stdin=FILE (input() tape)
-  std::string stdin_text{};  // raw text of the tape (fed to native builds)
+  std::string stdin_path{};    // --stdin=FILE (input() tape)
+  std::string stdin_text{};    // raw text of the tape (fed to native builds)
   std::vector<val_t> inputs{}; // parsed tape (fed to in-process runners)
   std::vector<std::string> native_O{"0"};
-  std::string exe_name{};    // -o NAME: name of the --emit=exe executable
+  std::string exe_name{}; // -o NAME: name of the --emit=exe executable
   bool emit_c{false}, emit_asm{false}, emit_bc{false}, emit_exe{false};
   bool do_run{false}, no_opt{false}, print_ir{false}, print_bc{false};
   bool no_inline{false};
   bool no_scctco{false};
   bool no_reassoc{false}, no_lcf{false}, no_divmagic{false};
-  int opt_level{-1};  // -O0..-O3 preset (-1: default, i.e. 3)
-  unsigned debug{0};  // --debug=N: pass-manager dump volume (0..3)
+  int opt_level{-1};     // -O0..-O3 preset (-1: default, i.e. 3)
+  unsigned debug{0};     // --debug=N: pass-manager dump volume (0..3)
   unsigned fp_limit{24}; // --fp-limit=N: fixpoint round cap (0 = default)
   bool regalloc{true};   // --no-regalloc: identity slots ("SSA-like" C)
   std::vector<std::string> enable_passes{}, disable_passes{};
@@ -39,13 +39,13 @@ struct Cli {
   unsigned repeats{3};
   uint64_t steps{200000000ull};
   long fuzz{0}, fuzz_native{0}, fuzz_from{1};
-  long fuzz_jobs{0};             // --fuzz-jobs=N: parallel fuzz workers
-                                 // (0 = auto: selftest serial, else cores)
-  bool fuzz_random{false};      // --fuzz-cfg=random: random pass configs
-  std::string shrink_file{};    // --shrink=FILE: delta-debug a failing program
+  long fuzz_jobs{0};         // --fuzz-jobs=N: parallel fuzz workers
+                             // (0 = auto: selftest serial, else cores)
+  bool fuzz_random{false};   // --fuzz-cfg=random: random pass configs
+  std::string shrink_file{}; // --shrink=FILE: delta-debug a failing program
   bool demo{false}, selftest{false}, help{false};
   bool mjz_fuzz_dumps{false};
-  bool debugger{false};          // --debugger: interactive IR/VM session
+  bool debugger{false}; // --debugger: interactive IR/VM session
 };
 
 static void usage() {
@@ -97,8 +97,10 @@ static void usage() {
       "  --no-exec         compile/emit only: do not run the program\n"
       "                    (no oracle/compiled lines, stdin untouched)\n"
       "  --stdin=FILE      whitespace-separated integers fed to input():\n"
-      "                    parsed for the in-process runners AND piped verbatim\n"
-      "                    into the native binaries (default: real stdin if it\n"
+      "                    parsed for the in-process runners AND piped "
+      "verbatim\n"
+      "                    into the native binaries (default: real stdin if "
+      "it\n"
       "                    is not a terminal; reads return 0 at EOF)\n"
       "  --native-O=L      optimization level(s) for the native compiler,\n"
       "                    comma list (e.g. 0,2); default 0 — measure OUR "
@@ -155,7 +157,8 @@ static void usage() {
       "  --print-ir        dump SSA (pre/post opt) and destroyed IR\n"
       "  --print-bc        print the bytecode listing\n"
       "  --quiet           no reports, just results\n"
-      "  --fuzz_dump       dumps fuzz info (MJZ_FUZZ_DUMP env var is no longer used) \n"
+      "  --fuzz_dump       dumps fuzz info (MJZ_FUZZ_DUMP env var is no longer "
+      "used) \n"
       "  --debugger        interactive debugger on the compiled program: dump\n"
       "                    IR at every stage, walk the pass pipeline live,\n"
       "                    single-step the bytecode VM with full state\n"
@@ -167,13 +170,15 @@ static void split_commas(const std::string &s, std::vector<std::string> &out) {
   std::string cur{};
   for (char c : s) {
     if (c == ',') {
-      if (!cur.empty()) out.push_back(cur);
+      if (!cur.empty())
+        out.push_back(cur);
       cur.clear();
     } else {
       cur += c;
     }
   }
-  if (!cur.empty()) out.push_back(cur);
+  if (!cur.empty())
+    out.push_back(cur);
 }
 
 static bool parse_cli(int argc, char **argv, Cli &C) {
@@ -181,33 +186,51 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
     std::string a = argv[i];
     auto val = [&](const char *pre) -> const char * {
       size_t n = std::strlen(pre);
-      if (a.compare(0, n, pre) != 0) return nullptr;
+      if (a.compare(0, n, pre) != 0)
+        return nullptr;
       const char *v = a.c_str() + n;
-      if (!*v) return nullptr;
+      if (!*v)
+        return nullptr;
       return v;
     };
-    if (a == "--help" || a == "-h") C.help = true;
-    else if (a == "--demo") C.demo = true;
-    else if (a == "--selftest") C.selftest = true;
-    else if (a == "--fuzz") C.fuzz = 1000;
-    else if (const char *v = val("--fuzz=")) C.fuzz = atol(v);
+    if (a == "--help" || a == "-h")
+      C.help = true;
+    else if (a == "--demo")
+      C.demo = true;
+    else if (a == "--selftest")
+      C.selftest = true;
+    else if (a == "--fuzz")
+      C.fuzz = 1000;
+    else if (const char *v = val("--fuzz="))
+      C.fuzz = atol(v);
     else if (const char *v = val("--fuzz-from=")) {
       C.fuzz_from = atol(v);
-      if (C.fuzz_from < 1) C.fuzz_from = 1;
-    }
-    else if (a == "--fuzz-native") C.fuzz_native = 20;
-    else if (const char *v = val("--fuzz-native=")) C.fuzz_native = atol(v);
+      if (C.fuzz_from < 1)
+        C.fuzz_from = 1;
+    } else if (a == "--fuzz-native")
+      C.fuzz_native = 20;
+    else if (const char *v = val("--fuzz-native="))
+      C.fuzz_native = atol(v);
     else if (a == "--fuzz-cfg=random" || a == "--fuzz-random")
       C.fuzz_random = true;
-    else if (const char *v = val("--shrink=")) C.shrink_file = v;
-    else if (a == "--run") C.do_run = true;
-    else if (a == "--no-exec" || a == "--compile-only") C.no_exec = true;
-    else if (a == "--check-all") C.check_all = true;
-    else if (a == "--debug-plan") C.debug_plan = true;
-    else if (a == "-O0") C.opt_level = 0;
-    else if (a == "-O1") C.opt_level = 1;
-    else if (a == "-O2") C.opt_level = 2;
-    else if (a == "-O3") C.opt_level = 3;
+    else if (const char *v = val("--shrink="))
+      C.shrink_file = v;
+    else if (a == "--run")
+      C.do_run = true;
+    else if (a == "--no-exec" || a == "--compile-only")
+      C.no_exec = true;
+    else if (a == "--check-all")
+      C.check_all = true;
+    else if (a == "--debug-plan")
+      C.debug_plan = true;
+    else if (a == "-O0")
+      C.opt_level = 0;
+    else if (a == "-O1")
+      C.opt_level = 1;
+    else if (a == "-O2")
+      C.opt_level = 2;
+    else if (a == "-O3")
+      C.opt_level = 3;
     else if (const char *v = val("--opt=")) {
       int lv = atoi(v);
       if (lv < 0 || lv > 3) {
@@ -219,28 +242,48 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
       split_commas(v, C.enable_passes);
     } else if (const char *v = val("--disable=")) {
       split_commas(v, C.disable_passes);
-    } else if (const char *v = val("--debug=")) C.debug = (unsigned)atol(v);
+    } else if (const char *v = val("--debug="))
+      C.debug = (unsigned)atol(v);
     else if (const char *v = val("--fp-limit="))
       C.fp_limit = (unsigned)atol(v);
-    else if (a == "--no-regalloc") C.regalloc = false;
-    else if (a == "--no-opt") C.no_opt = true;
-    else if (a == "--no-inline") C.no_inline = true;
-    else if (a == "--no-scctco") C.no_scctco = true;
-    else if (a == "--no-reassoc") C.no_reassoc = true;
-    else if (a == "--fuzz_dump") C.mjz_fuzz_dumps = true;
-    else if (const char *v = val("--fuzz-jobs=")) C.fuzz_jobs = atol(v);
-    else if (a == "--debugger") C.debugger = true;
-    else if (a == "--no-lcf") C.no_lcf = true;
-    else if (a == "--no-divmagic") C.no_divmagic = true;
-    else if (const char *v = val("--unroll=")) C.unroll = (unsigned)atol(v);
-    else if (a == "--print-ir") C.print_ir = true;
-    else if (a == "--print-bc") C.print_bc = true;
-    else if (a == "--quiet") C.quiet = true;
-    else if (const char *v = val("--repeats=")) C.repeats = (unsigned)atol(v);
-    else if (const char *v = val("--steps=")) C.steps = strtoull(v, nullptr, 10);
-    else if (const char *v = val("--cc=")) C.cc = v;
-    else if (const char *v = val("--stdin=")) C.stdin_path = v;
-    else if (const char *v = val("--out-dir=")) C.out_dir = v;
+    else if (a == "--no-regalloc")
+      C.regalloc = false;
+    else if (a == "--no-opt")
+      C.no_opt = true;
+    else if (a == "--no-inline")
+      C.no_inline = true;
+    else if (a == "--no-scctco")
+      C.no_scctco = true;
+    else if (a == "--no-reassoc")
+      C.no_reassoc = true;
+    else if (a == "--fuzz_dump")
+      C.mjz_fuzz_dumps = true;
+    else if (const char *v = val("--fuzz-jobs="))
+      C.fuzz_jobs = atol(v);
+    else if (a == "--debugger")
+      C.debugger = true;
+    else if (a == "--no-lcf")
+      C.no_lcf = true;
+    else if (a == "--no-divmagic")
+      C.no_divmagic = true;
+    else if (const char *v = val("--unroll="))
+      C.unroll = (unsigned)atol(v);
+    else if (a == "--print-ir")
+      C.print_ir = true;
+    else if (a == "--print-bc")
+      C.print_bc = true;
+    else if (a == "--quiet")
+      C.quiet = true;
+    else if (const char *v = val("--repeats="))
+      C.repeats = (unsigned)atol(v);
+    else if (const char *v = val("--steps="))
+      C.steps = strtoull(v, nullptr, 10);
+    else if (const char *v = val("--cc="))
+      C.cc = v;
+    else if (const char *v = val("--stdin="))
+      C.stdin_path = v;
+    else if (const char *v = val("--out-dir="))
+      C.out_dir = v;
     else if (const char *v = val("--native-O=")) {
       C.native_O.clear();
       split_commas(v, C.native_O);
@@ -248,12 +291,17 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
       std::vector<std::string> parts{};
       split_commas(v, parts);
       for (auto &p : parts) {
-        if (p == "c") C.emit_c = true;
-        else if (p == "asm") C.emit_asm = true;
-        else if (p == "bc") C.emit_bc = true;
-        else if (p == "exe") C.emit_exe = true;
+        if (p == "c")
+          C.emit_c = true;
+        else if (p == "asm")
+          C.emit_asm = true;
+        else if (p == "bc")
+          C.emit_bc = true;
+        else if (p == "exe")
+          C.emit_exe = true;
         else {
-          std::printf("unknown --emit target '%s' (c, asm, bc, exe)\n", p.c_str());
+          std::printf("unknown --emit target '%s' (c, asm, bc, exe)\n",
+                      p.c_str());
           return false;
         }
       }
@@ -288,33 +336,53 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
 // The -O preset selects the pass tiers; granular legacy flags and the
 // --enable/--disable overrides are applied on top (in that order, so a
 // later --disable wins over --enable of the same pass).
-static const char *const PASS_NAMES[] = {"fold",  "copyprop", "canon",
-    "cse",   "unreach",  "splice", "dce",     "mem2reg", "trapelim",
-    "licm",  "divmagic", "reassoc", "unroll", "lcf",     "inline",
-    "scctco"};
+static const char *const PASS_NAMES[] = {
+    "fold",   "copyprop", "canon",    "cse",   "unreach",  "splice",
+    "dce",    "mem2reg",  "trapelim", "licm",  "divmagic", "reassoc",
+    "unroll", "lcf",      "inline",   "scctco"};
 static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
                            std::string &err) {
   auto eq = [&](const char *s) { return n == s; };
-  if (eq("fold")) p.p_fold = on;
-  else if (eq("copyprop")) p.p_copyprop = on;
-  else if (eq("canon")) p.p_canon = on;
-  else if (eq("cse")) p.p_cse = on;
-  else if (eq("unreach")) p.p_unreach = on;
-  else if (eq("splice")) p.p_splice = on;
-  else if (eq("dce")) p.p_dce = on;
-  else if (eq("mem2reg")) p.p_mem2reg = on;
-  else if (eq("trapelim")) p.p_trapelim = on;
-  else if (eq("licm")) p.p_licm = on;
-  else if (eq("divmagic")) p.p_divmagic = on;
-  else if (eq("reassoc")) p.p_reassoc = on;
-  else if (eq("unroll")) p.p_unroll = on;
-  else if (eq("lcf")) p.p_lcf = on;
-  else if (eq("constcall")) p.p_constcall = on;
-  else if (eq("scctco")) p.p_scctco = on;
-  else if (eq("tailrec")) p.p_tailrec = on;
-  else if (eq("cdfold")) p.p_cdfold = on;
-  else if (eq("ifconv")) p.p_ifconv = on;
-  else if (eq("inline")) p.do_inline = on;
+  if (eq("fold"))
+    p.p_fold = on;
+  else if (eq("copyprop"))
+    p.p_copyprop = on;
+  else if (eq("canon"))
+    p.p_canon = on;
+  else if (eq("cse"))
+    p.p_cse = on;
+  else if (eq("unreach"))
+    p.p_unreach = on;
+  else if (eq("splice"))
+    p.p_splice = on;
+  else if (eq("dce"))
+    p.p_dce = on;
+  else if (eq("mem2reg"))
+    p.p_mem2reg = on;
+  else if (eq("trapelim"))
+    p.p_trapelim = on;
+  else if (eq("licm"))
+    p.p_licm = on;
+  else if (eq("divmagic"))
+    p.p_divmagic = on;
+  else if (eq("reassoc"))
+    p.p_reassoc = on;
+  else if (eq("unroll"))
+    p.p_unroll = on;
+  else if (eq("lcf"))
+    p.p_lcf = on;
+  else if (eq("constcall"))
+    p.p_constcall = on;
+  else if (eq("scctco"))
+    p.p_scctco = on;
+  else if (eq("tailrec"))
+    p.p_tailrec = on;
+  else if (eq("cdfold"))
+    p.p_cdfold = on;
+  else if (eq("ifconv"))
+    p.p_ifconv = on;
+  else if (eq("inline"))
+    p.do_inline = on;
   else {
     err = n;
     return false;
@@ -328,12 +396,18 @@ static PassCfg pass_cfg_of(const Cli &C) {
   p.fp_limit = C.fp_limit ? C.fp_limit : 24u;
   p.debug = (uint8_t)(C.debug > 3 ? 3 : C.debug);
   p.regalloc = C.regalloc;
-  if (C.no_opt) p.do_opt = false;
-  if (C.no_inline) p.do_inline = false;
-  if (C.no_scctco) p.p_scctco = false;
-  if (C.no_reassoc) p.p_reassoc = false; // legacy granular flags
-  if (C.no_lcf) p.p_lcf = false;
-  if (C.no_divmagic) p.p_divmagic = false;
+  if (C.no_opt)
+    p.do_opt = false;
+  if (C.no_inline)
+    p.do_inline = false;
+  if (C.no_scctco)
+    p.p_scctco = false;
+  if (C.no_reassoc)
+    p.p_reassoc = false; // legacy granular flags
+  if (C.no_lcf)
+    p.p_lcf = false;
+  if (C.no_divmagic)
+    p.p_divmagic = false;
   std::string err{};
   for (const std::string &s : C.enable_passes)
     if (!set_named_pass(p, s, true, err)) {
@@ -347,4 +421,3 @@ static PassCfg pass_cfg_of(const Cli &C) {
     }
   return p;
 }
-
