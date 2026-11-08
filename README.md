@@ -135,3 +135,63 @@ and compares byte-for-byte.
 
 #NOTE:
 next time we will do clang format so the formatting is consistent
+
+
+
+
+
+NOTE:
+
+PS C:\Users\Mehdi\Documents\code_projects\generic_string_class\minijzc> cmake -S . -B build && cmake --build build -j   -DMINIJZ_MULTI_CPP                            
+At line:1 char:21
++ cmake -S . -B build && cmake --build build -j   -DMINIJZ_MULTI_CPP
++                     ~~
+The token '&&' is not a valid statement separator in this version.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : InvalidEndOfLine
+ 
+PS C:\Users\Mehdi\Documents\code_projects\generic_string_class\minijzc> cmake -S . -B build ; cmake --build build -j   -DMINIJZ_MULTI_CPP 
+-- Building for: NMake Makefiles
+CMake Error at CMakeLists.txt:2 (project):
+  Running
+
+   'nmake' '-?'
+
+  failed with:
+
+   no such file or directory
+
+
+CMake Error: CMAKE_CXX_COMPILER not set, after EnableLanguage
+-- Configuring incomplete, errors occurred!
+Unknown argument -DMINIJZ_MULTI_CPP
+Usage: cmake --build <dir>             [options] [-- [native-options]]
+       cmake --build --preset <preset> [options] [-- [native-options]]
+Options:
+  <dir>          = Project binary directory to be built.
+  --preset <preset>, --preset=<preset>
+                 = Specify a build preset.
+  --list-presets[=<type>]
+                 = List available build presets.
+  --parallel [<jobs>], -j [<jobs>]
+                 = Build in parallel using the given number of jobs. 
+                   If <jobs> is omitted the native build tool's 
+                   default number is used.
+                   The CMAKE_BUILD_PARALLEL_LEVEL environment variable
+                   specifies a default parallel level when this option
+                   is not given.
+  -t <tgt>..., --target <tgt>...
+                 = Build <tgt> instead of default targets.
+  --config <cfg> = For multi-configuration tools, choose <cfg>.
+  --clean-first  = Build target 'clean' first, then build.
+                   (To clean only, use --target 'clean'.)
+  --resolve-package-references={on|only|off}
+                 = Restore/resolve package references during build.
+  -v, --verbose  = Enable verbose output - if supported - including
+                   the build commands to be executed. 
+  --             = Pass remaining options to the native tool.
+
+
+  make cmake detect and use clang , also i think some clang and gcc flags differ , for example i use somthing like if i want to be fancy :
+clang++ -std=c++26 -O3   -g -fprebuilt-module-path=build  -fconstexpr-steps=55555555 -fexperimental-library  -march=native   -Wall -Wextra  -Walloca -Wcast-align -Wcast-qual -Wctor-dtor-privacy -Wdeprecated-copy-dtor -Wdouble-promotion -Wenum-conversion -Wfloat-equal -Wformat-signedness -Wformat=2 -Wmismatched-tags  -Wmultichar -Wnon-virtual-dtor -Woverloaded-virtual -Wpointer-arith -Wrange-loop-construct -Wshadow -Wuninitialized -Wvla -Wwrite-strings -Wsign-conversion -Wdelete-non-virtual-dtor  -ferror-limit=30       -lstdc++  
+
