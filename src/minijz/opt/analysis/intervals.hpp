@@ -4,6 +4,7 @@
 
 #include "minijz/ir/instr.hpp"
 #include "minijz/opt/analysis/alias.hpp"
+#include "minijz/opt/analysis/an.hpp"
 
 // ============================================================================
 // 9d3b. VALUE RANGE ANALYSIS (signed intervals + branch refinement)

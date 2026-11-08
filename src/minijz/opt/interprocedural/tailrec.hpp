@@ -6,6 +6,7 @@
 #include "minijz/base/pass_cfg.hpp"
 #include "minijz/ir/instr.hpp"
 #include "minijz/opt/analysis/an.hpp"
+#include "minijz/opt/interprocedural/callgraph.hpp"
 
 // ============================================================================
 // 9e4. TAIL-CALL ELIMINATION for inner-SCC tail calls
