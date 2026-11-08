@@ -214,10 +214,9 @@ set_tests_properties(header_order PROPERTIES TIMEOUT 900 LABELS regr)
 # a scripted --debugger session: the interactive facility is itself a
 # regression gate (IR dump, single-step, full state, five-way check)
 add_test(NAME debugger_session
-  COMMAND bash -c
-    "printf 'fns\nvm reset\nvm step 5\nvm state\nvm run\ncheck\nquit\n' |
-     '$<TARGET_FILE:minijz>' ${CMAKE_CURRENT_SOURCE_DIR}/demos/tco_parity.mjz
-       --debugger --stdin=${CMAKE_CURRENT_SOURCE_DIR}/examples/general.in")
+  COMMAND bash -c [==[printf 'fns\nvm reset\nvm step 5\nvm state\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
+          bash $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/tco_parity.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/examples/general.in)
 set_tests_properties(debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
 
 # bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that
