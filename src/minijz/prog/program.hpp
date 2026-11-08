@@ -107,6 +107,7 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.rangecmps += U.ostats.rangecmps;
     t.cmpfacts += U.ostats.cmpfacts;
     t.callcses += U.ostats.callcses;
+    t.deadargs += U.ostats.deadargs;
     if (U.ostats.iters > t.iters)
       t.iters = U.ostats.iters;
   }

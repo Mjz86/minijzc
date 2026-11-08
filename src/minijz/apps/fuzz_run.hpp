@@ -48,6 +48,7 @@ struct FuzzStats {
   long scctco_total{}, scctco_fold_total{};
   long sccp_consts{}, sccp_brs{}, ld_fwds{}, ld_cses{}, rangecmps{};
   long cmpfacts{}, callcses{};
+  long deadargs{};
   long div_progs{}, mat_progs{}, aparam_progs{};
 };
 static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
@@ -82,6 +83,7 @@ static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.rangecmps += b.rangecmps;
   a.cmpfacts += b.cmpfacts;
   a.callcses += b.callcses;
+  a.deadargs += b.deadargs;
   a.div_progs += b.div_progs;
   a.mat_progs += b.mat_progs;
   a.aparam_progs += b.aparam_progs;
@@ -127,7 +129,7 @@ static PassCfg fuzz_cfg_for(long seed, bool random_configs) {
   PassCfg cfg{};
   cfg.set_level(3);
   cfg.fp_limit = 8; // fuzz programs are pathological: cap fixpoint depth
-  switch (seed % 11) {
+  switch (seed % 12) {
   case 0:
     cfg.p_scctco = false;
     break; // no SCC tail-call collapse
@@ -167,9 +169,12 @@ static PassCfg fuzz_cfg_for(long seed, bool random_configs) {
     cfg.p_ldelim = false;
     cfg.p_callcse = false;
     break; // no new-portable-opts slice (SCCP/ldelim/callcse)
+  case 11:
+    cfg.p_deadargs = false;
+    break; // no interprocedural dead-argument elimination
   }
   // (ported from Branchedmain) --fuzz-cfg=random: additionally disable a
-  // random 1..4 of the 23 toggles and pick a random tier, exposing pass
+  // random 1..4 of the 24 toggles and pick a random tier, exposing pass
   // INTERACTION bugs the fixed rotation never reaches
   if (random_configs) {
     auto pick32 = [](uint32_t &rng) -> uint32_t {
@@ -251,6 +256,7 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
     F.rangecmps += os.rangecmps;
     F.cmpfacts += os.cmpfacts;
     F.callcses += os.callcses;
+    F.deadargs += os.deadargs;
   }
   RunOut oracle = run_ast(P.P.ast, P.P.root, 200000, g.ins);
   RunOut plain = run_prog(fns_of(P, 0), 200000, g.ins);
@@ -411,6 +417,7 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
               "SCC-TCO collapses: %ld (folds: %ld) | "
               "SCCP consts: %ld (brs: %ld) | load fwd/CSE: %ld/%ld | "
               "range-cmps: %ld | cmp-facts: %ld | call-CSE: %ld | "
+              "dead-args: %ld | "
               "native-checked (C+asm x -O0/-O2): %ld\n"
               "  vocabulary: w/ div/mod: %ld | w/ 2-D arrays: %ld | "
               "w/ array params: %ld\n"
@@ -421,7 +428,7 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
               F.constcalls, F.deadallocs, F.tces, F.cdfolds, F.ifconvs,
               F.gensims, F.traps_killed, F.scctco_total, F.scctco_fold_total,
               F.sccp_consts, F.sccp_brs, F.ld_fwds, F.ld_cses, F.rangecmps,
-              F.cmpfacts, F.callcses, F.native_checked, F.div_progs,
+              F.cmpfacts, F.callcses, F.deadargs, F.native_checked, F.div_progs,
               F.mat_progs, F.aparam_progs, secs, jobs, jobs == 1 ? "" : "s");
   CHECK(mismatches == 0, "fuzz must be clean");
 }

@@ -10,6 +10,7 @@
 #include "../scalar/dce.hpp"
 #include "../loop/lcf_rt.hpp"
 #include "callcse.hpp"
+#include "deadargs.hpp"
 
 struct CallGraph {
   std::vector<std::vector<ulen>> adj{}; // caller -> callees (with dups)
@@ -585,6 +586,12 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
     }
   }
   eliminate_dead_fns(fns, names, ostats, src_index);
+  // ---- 9e5: interprocedural dead-argument elimination -------------------
+  // (after dead-fn elimination: all inlining/constcall/callcse are done, so
+  // the surviving call sites are final; before the last optimize round, so
+  // callers whose dropped argument expressions turned dead get DCE'd)
+  if (cfg.p_deadargs)
+    (void)opt_deadargs(fns, ostats);
   for (uint32_t f = 0; f < fns.size(); ++f) {
     An A{};
     optimize(fns[f], ostats[f], A, main_aware(cfg, f));

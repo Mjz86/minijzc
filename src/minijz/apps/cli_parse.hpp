@@ -387,6 +387,8 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_ldelim = on;
   else if (eq("callcse"))
     p.p_callcse = on;
+  else if (eq("deadargs"))
+    p.p_deadargs = on;
   else if (eq("inline"))
     p.do_inline = on;
   else {
