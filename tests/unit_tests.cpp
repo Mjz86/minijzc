@@ -102,6 +102,51 @@ int main() {
     UT(bad == 0, "divmagic fuzz: 700 random (n, D) pairs agree with oracle");
   }
 
+  // ---- 4b. divmagic inside a fn, through ALL FIVE runners ---------------
+  // (B2's in-flight units idea, finished: divmagic fires inside the body,
+  // the fn is inlined into main, and every runner — oracle, plain SSA,
+  // optimized, destroyed, VM — must still agree)
+  {
+    std::mt19937_64 rng(0xBEEFCAFE);
+    long bad5 = 0;
+    for (int i = 0; i < 300; ++i) {
+      val_t D = 0;
+      while (D == 0 || D == -1)
+        D = (val_t)(rng() % 2001) - 1000; // -1000..1000, not 0/-1
+      val_t X = (val_t)(rng() % 2001) - 1000;
+      char buf[192];
+      std::snprintf(buf, sizeof buf,
+                    "fn d(n) { return n / %lld; }\n"
+                    "fn m(n) { return n %% %lld; }\n"
+                    "print d(%lld); print m(%lld);",
+                    (long long)D, (long long)D, (long long)X, (long long)X);
+      Program P = compile(buf);
+      if (!P.ok) { ++bad5; continue; }
+      RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {});
+      RunOut plain = run_prog(fns_of(P, 0), 100000, {});
+      RunOut opt = run_prog(fns_of(P, 1), 100000, {});
+      RunOut lowered = run_prog(fns_of(P, 2), 100000, {});
+      RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
+      if (!(same_run(oracle, plain) && same_run(oracle, opt) &&
+            same_run(oracle, lowered) && same_run(oracle, vm)))
+        ++bad5;
+    }
+    UT(bad5 == 0,
+       "divmagic fn-fuzz: 300 random (X, D) pairs agree across ALL 5 runners");
+
+    // ---- 4c. C-truncation semantics pinned explicitly ------------------
+    // (B2's units had this expectation WRONG; MiniJZ `/` and `%` truncate
+    // toward zero exactly like C)
+    UT(w_div(-7, 2).v == -3 && w_mod(-7, 2).v == -1,
+       "C truncation: -7 / 2 == -3, -7 % 2 == -1");
+    UT(w_div(7, -2).v == -3 && w_mod(7, -2).v == 1,
+       "C truncation: 7 / -2 == -3, 7 % -2 == 1");
+    UT(w_div(-7, -2).v == 3 && w_mod(-7, -2).v == -1,
+       "C truncation: -7 / -2 == 3, -7 % -2 == -1");
+    UT(w_div(INT64_MIN, -1).trap && w_mod(INT64_MIN, -1).trap,
+       "the one C-UB case traps: INT64_MIN / -1 and INT64_MIN % -1");
+  }
+
   // ---- 5. pass-toggle glue: names, flags, describe_cfg --------------------
   {
     for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i) {

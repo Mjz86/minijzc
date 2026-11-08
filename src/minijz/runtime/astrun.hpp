@@ -3,6 +3,7 @@
 // the AST oracle interpreter (the reference semantics).
 
 #include "minijz/front/ast.hpp"
+#include "minijz/ir/instr.hpp"
 
 // ============================================================================
 // 11. AST interpreter (the oracle)

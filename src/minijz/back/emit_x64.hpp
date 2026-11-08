@@ -6,6 +6,7 @@
 #include "minijz/graph_lib.hpp"
 #include "minijz/base/pass_cfg.hpp"
 #include "minijz/ir/instr.hpp"
+#include "minijz/back/emit_c.hpp"
 
 // ---- 13.5b.0 register allocation (chordal graph coloring, via mjz_lib) -----
 // Live ranges are computed on the destroyed code (backward dataflow to a

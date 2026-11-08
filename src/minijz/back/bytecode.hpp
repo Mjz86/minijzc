@@ -3,6 +3,7 @@
 // bytecode emission + listing/disassembly.
 
 #include "minijz/ir/instr.hpp"
+#include "minijz/back/vm.hpp"
 
 // ---- 13.5c. bytecode listing (disassembly) -----------------------------------
 static std::string emit_bc_listing(const std::vector<uint8_t> &c) {
