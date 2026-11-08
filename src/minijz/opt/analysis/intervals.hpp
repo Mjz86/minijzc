@@ -118,12 +118,17 @@ constexpr Iv iv_bin(B b, const Iv &x, const Iv &y) {
 // tighten (x,y) given that `x cmp y` is known to be `taken`
 constexpr void iv_refine(Iv &x, Iv &y, B cmp, bool taken) {
   if (x.bot || y.bot) return;
+  bool swapped = false;
   if (cmp == B::Gt || cmp == B::Ge) { // normalize to the Lt/Le direction
     Iv t = x;
     x = y;
     y = t;
     cmp = (cmp == B::Gt) ? B::Lt : B::Le;
-  }
+    swapped = true; // refine in the mirrored space, restore at the end:
+  }                 // x/y are CALLER-BINDINGS (x <-> D.a), so the swap must
+                    // not leak out -- the old leak exchanged the operands'
+                    // intervals on every Gt/Ge edge, e.g. `while (c > 0)`
+                    // pinned c to [0,0] in the body (fuzz cfg seed 4412).
   auto exclude = [](Iv &i, val_t c) { // remove the point c if it is an endpoint
     if (i.lo == c && i.hi == c) { i.bot = true; return; }
     if (i.lo == c && c != INT64_MAX) i.lo = c + 1;
@@ -165,6 +170,16 @@ constexpr void iv_refine(Iv &x, Iv &y, B cmp, bool taken) {
       if (lo > hi) { x.bot = y.bot = true; }
       else { x = {lo, hi, false}; y = {lo, hi, false}; }
     }
+  }
+  // contradictory endpoint crossings (possible when a fact contradicts an
+  // endpoint, e.g. x=[5,5] refined by `x<3`): the empty interval, not a
+  // garbage [5,2] that hull() would smear across the state
+  if (!x.bot && x.lo > x.hi) x.bot = true;
+  if (!y.bot && y.lo > y.hi) y.bot = true;
+  if (swapped) { // restore the caller's bindings
+    Iv t = x;
+    x = y;
+    y = t;
   }
 }
 
