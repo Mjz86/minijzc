@@ -38,10 +38,13 @@ struct Cli {
   unsigned repeats{3};
   uint64_t steps{200000000ull};
   long fuzz{0}, fuzz_native{0}, fuzz_from{1};
+  long fuzz_jobs{0};             // --fuzz-jobs=N: parallel fuzz workers
+                                 // (0 = auto: selftest serial, else cores)
   bool fuzz_random{false};      // --fuzz-cfg=random: random pass configs
   std::string shrink_file{};    // --shrink=FILE: delta-debug a failing program
   bool demo{false}, selftest{false}, help{false};
   bool mjz_fuzz_dumps{false};
+  bool debugger{false};          // --debugger: interactive IR/VM session
 };
 
 static void usage() {
@@ -68,6 +71,12 @@ static void usage() {
       "                    pass-interaction bugs the fixed rotation misses;\n"
       "                    failures are auto-saved as fuzz_fail_<seed>.mjz/\n"
       "                    .flags/.in\n"
+      "  --fuzz-jobs=N    fuzz with N parallel workers (default: auto — the\n"
+      "                    selftest stays serial, plain --fuzz=N uses the\n"
+      "                    cores, capped at 4). Progress goes to stderr; a\n"
+      "                    watchdog names the in-flight seeds if a chunk\n"
+      "                    stalls, so a pathological seed is identifiable\n"
+      "                    instead of looking like a hang\n"
       "  --shrink=FILE    delta-debug a failing program: greedily remove\n"
       "                    lines while the differential (all runners + native\n"
       "                    parity) still fails; writes FILE.small.mjz. Pair\n"
@@ -146,6 +155,10 @@ static void usage() {
       "  --print-bc        print the bytecode listing\n"
       "  --quiet           no reports, just results\n"
       "  --fuzz_dump       dumps fuzz info (MJZ_FUZZ_DUMP env var is no longer used) \n"
+      "  --debugger        interactive debugger on the compiled program: dump\n"
+      "                    IR at every stage, walk the pass pipeline live,\n"
+      "                    single-step the bytecode VM with full state\n"
+      "                    (frames/slots/stack/arena), breakpoints included\n"
       "  --help            this text\n");
 }
 
@@ -214,6 +227,7 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
     else if (a == "--no-scctco") C.no_scctco = true;
     else if (a == "--no-reassoc") C.no_reassoc = true;
     else if (a == "--fuzz_dump") C.mjz_fuzz_dumps = true;
+    else if (const char *v = val("--fuzz-jobs=")) C.fuzz_jobs = atol(v);
     else if (a == "--no-lcf") C.no_lcf = true;
     else if (a == "--no-divmagic") C.no_divmagic = true;
     else if (const char *v = val("--unroll=")) C.unroll = (unsigned)atol(v);
