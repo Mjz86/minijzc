@@ -140,6 +140,46 @@ belt-and-braces. Seed 7406 now compiles in ~3 ms with all five runners
 agreeing (`0 0 3 1 0 285`), i.e. the crossed copies were semantically
 correct all along; only the propagation assumption was wrong.
 
+## 7. `s4412` — iv_refine's Gt/Ge normalization swap leaked through the caller's bindings
+
+**File:** `src/minijz/opt/analysis/intervals.hpp` (`iv_refine`, used by
+`range_analyze`'s branch-edge refinement)
+
+Found by `--fuzz-cfg=random` on seed 4412 (`-O2`, `canon`/`dce`/`unroll` and
+five more passes disabled) while validating the five new portable
+optimizations (SCCP, load forwarding/CSE, range-proved compare folding,
+compare-domain algebraic identities, pure-call CSE). `iv_refine` normalizes
+`Gt`/`Ge` facts to the `Lt`/`Le` direction by **swapping x and y through the
+caller's references** — but never swapped them back. The caller then wrote
+the (correctly refined, but now *mis-paired*) intervals back: `x` — bound
+to the comparison's *left* operand — received the *right* operand's
+interval and vice versa. On every `>`/`>=`-guarded branch edge the two
+operand intervals were silently **exchanged**: `while (c6 > 0)` pinned
+`c6` to `[0,0]` in the loop body while the constant `0` grew to `[1,2]`,
+so `t53 = c6 - 1` was "proven" `[-1,-1]` — and the second iteration's
+`t53 = 0` was then "impossible". A second symptom of the same leak:
+endpoint crossings produced garbage intervals like `[2..0]` that
+`iv_hull` smeared across the state instead of the empty interval.
+
+**Why it never miscompiled before:** the poisoned intervals only fed
+`nt` (can-this-trap) *metadata* — the guarded instruction still sat behind
+an intact runtime branch, so a wrongly-proven-safe division never executed
+with a trapping divisor. The new range-proved compare folding was the first
+consumer that made **control flow** follow the intervals: it folded the
+`c6 == 0` half of the `||` guard to constant `0`, rerouted both loop
+iterations into the division block, and the program trapped where the
+oracle printed `1 1`. A textbook latent-soundness-bug activation: the new
+pass didn't cause the wrong intervals, it *exposed* them.
+
+**Fix:** track the normalization swap and restore the caller's bindings
+before returning (the refinement arithmetic itself was always correct in
+the mirrored space), plus an empty-interval safety net when endpoint
+refinements cross (`lo > hi` → bottom, not a garbage hull seed). Guarded
+by `bugrepro/s4412.mjz` under `ctest -L regr`
+(`bugrepro_s4412_rangecfg`: `-O2 --disable=canon,dce`, the minimal
+discriminating config — with `canon` or `dce` on, they restructure the
+loop before the fold, which is why the plain `-O3` gates never saw it).
+
 ## Verification
 
 *Original (bugfix branch):*
@@ -166,3 +206,21 @@ correct all along; only the propagation assumption was wrong.
   C-truncation expectations); `ctest -L regr`: 21 gates green
 * differential fuzz widened: seeds 6201–8400 rotation + 6201–7500
   random configs clean after the fix
+
+*Post-merge continuation (2026-11-08, checkpoint 10 — portable opt batch):*
+* five architecture-independent passes added: SCCP (tier 0, incl.
+  branch pruning), store→load forwarding + load CSE (`ldelim`, tier 1),
+  range-proved compare folding (inside `trapelim`, shares the interval
+  walk), compare-domain algebraic identities (`x&x`, `x|x`,
+  `0-(0-x)`, `cmp&1`, `cmp%2`, `cmp>>k`, `cmp^1`, double negation),
+  and pure-call CSE (`callcse`, tier 2)
+* bug 7 (§7) fixed while validating the batch: the random-config fuzz
+  (seed 4412) exposed the latent `iv_refine` Gt/Ge exchange; gate
+  `bugrepro_s4412_rangecfg` added (22 `regr` gates now)
+* validation after the fix: selftest 206/206; unit tests 6109/6109;
+  constexpr proofs 6/6; differential fuzz seeds 1–1000 and 2001–3000
+  clean; random-config fuzz seeds 4001–4600 clean (incl. 4412);
+  `--fuzz=1000` completes in ~6 min (bug-6 hang fix holds)
+* fuzz-window stats at seed 1–1000: 76 311 SCCP constants
+  (19 261 branches pruned), 2932 range-cmps, 112 load fwd,
+  616 cmp-facts, all five runners agreeing on every program
