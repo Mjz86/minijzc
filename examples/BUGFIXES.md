@@ -20,11 +20,13 @@
 > correction this tree carries beyond the bugfix branch's own fix.
 > Historical repro programs for all five live in `bugrepro/`.
 
-All five bugs were found by running the differential fuzzer over seed
-ranges it had never seen before (`--fuzz=N --fuzz-from=S`), plus
-`examples/general.mjz` (which previously miscompiled at -O3). Each fix has
-a `regr_*` demo in `src/minijz/apps/demo.hpp`, so `--selftest` fails if
-any of them regresses. The count went from 186 to 206 checks.
+All six bugs were found by running the differential fuzzer over seed
+ranges it had never seen before (`--fuzz=N --fuzz-from=S`, for bug 6 with
+`--fuzz-cfg=random`), plus `examples/general.mjz` (which previously
+miscompiled at -O3). Bugs 1–5 each have a `regr_*` demo in
+`src/minijz/apps/demo.hpp`, so `--selftest` fails if any of them
+regresses (the count went from 186 to 206 checks); bug 6 is a compile-time
+hang guarded by `bugrepro/s7406.mjz` under `ctest -L regr`.
 
 ## 1. `regr_scc_dispatch` — scctco sibling copy kept reading the entry argument
 
@@ -112,6 +114,32 @@ the bug documented in a comment at the site in
 `src/minijz/opt/scalar/canon.hpp`. **Do not port the bugfix branch's
 one-character variant.**
 
+## 6. `s7406` — copyprop's resolve() walked into a self-loop and hung the compiler
+
+**File:** `src/minijz/opt/scalar/copyprop.hpp` (`opt_copyprop`)
+
+Unlike 1–5 this was not a miscompile but a **compile-time hang**, found by
+`--fuzz-cfg=random` on seed 7406 (`-O1`, random tier, `dce` disabled) while
+widening the fuzz window past 6200: the 50-seed chunk containing the seed
+sat for >100 s without finishing before the fix, and the surrounding
+100-seed window runs in ~15 s after it. Phi degeneration had materialized *crossed,
+loop-carried* copies around a loop: `t473 = t496` (blk 12), `t521 = t473`
+(blk 13), `t496 = t521` (blk 18). Each source is defined only on the
+incoming edge — execution-sound, but **not dominance-sound**, breaking the
+pass's "the copy's source dominates the copy" argument. Building the rename
+map then recorded `ren[t496] = resolve(t521) = t496` — a SELF-LOOP — and
+the next `resolve(t496)` (loop 2 rewrites the blk-12 copy's own source use)
+spun in `while (ren[v] != NONE)` forever. With `dce` enabled the dead copies
+never survived long enough to cross, which is why only random pass configs
+ever saw it.
+
+**Fix:** never record a self-loop entry — when `resolve(a) == dst` the copy
+is part of a crossed pair and simply stays **unpropagated** (uses keep their
+names; conservative and sound), plus a step cap in `resolve()` as
+belt-and-braces. Seed 7406 now compiles in ~3 ms with all five runners
+agreeing (`0 0 3 1 0 285`), i.e. the crossed copies were semantically
+correct all along; only the propagation assumption was wrong.
+
 ## Verification
 
 *Original (bugfix branch):*
@@ -128,3 +156,13 @@ one-character variant.**
 * differential fuzz: seeds 1–6200 clean (fixed rotation + random cfg)
 * `examples/general.mjz` correct at -O0..-O3, both build modes
   (single-TU and multi-cpp)
+
+*Post-merge continuation (2026-11-08, checkpoint 08):*
+* bug 6 (§6) fixed: copyprop crossed-copy resolve() self-loop — the
+  compiler hung on seed 7406; now ~3 ms, all five runners agree
+* 7 headers made truly include-order independent (standalone compile
+  proof: `scripts/header_order_test.sh`, wired into `ctest -L regr`)
+* unit tests: 6100/6100 (divmagic fn-fuzz across all 5 runners +
+  C-truncation expectations); `ctest -L regr`: 21 gates green
+* differential fuzz widened: seeds 6201–8400 rotation + 6201–7500
+  random configs clean after the fix

@@ -153,6 +153,14 @@ add_test(NAME header_order
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/header_order_test.sh)
 set_tests_properties(header_order PROPERTIES TIMEOUT 900 LABELS regr)
 
+# bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that
+# hung the compiler — crossed phi-degenerate copies + copyprop, no dce
+add_test(NAME bugrepro_s7406_hangcfg
+  COMMAND minijz ${CMAKE_CURRENT_SOURCE_DIR}/bugrepro/s7406.mjz --check-all
+          --stdin=${CMAKE_CURRENT_SOURCE_DIR}/bugrepro/s7406.in
+          -O1 --disable=dce)
+set_tests_properties(bugrepro_s7406_hangcfg PROPERTIES TIMEOUT 60 LABELS regr)
+
 # ---------------------------------------------------------------------------
 # showcases: build the showcase programs at several -O levels and keep a
 # GIT SUBDIRECTORY in the build folder so successive builds can be diffed

@@ -1,0 +1,35 @@
+fn rec(n) { if (n <= 0) { return 0; } return rec(n - 1) + n; }
+fn pe(n) { if (n <= 0) { return 1; } return po(n - 1); }
+fn po(n) { if (n <= 0) { return 0; } return pe(n - 1); }
+fn tsum(n, acc) { if (n <= 0) { return acc; } return tsum(n - 1, acc + n); }
+fn rgcd(a, b) { if (b == 0) { return a; } return rgcd(b, a % b); }
+let a0 = array(2);
+let a1 = array(3);
+let m2 = 3;
+let p3 = (-((-1 - a1[0])) <= (m2 + (m2 * m2)));
+print (len(a1) < ((len(a0) && pe(8)) <= (m2 && a0[1])));
+p3 = -27861;
+if (((pe(5) % 7) + (pe(0) * len(a1)))) {
+let p4 = (m2 - (m2 + rgcd(3, 8)));
+let a5 = array(4);
+} else {
+let c6 = 1;
+while (c6 > 0) {
+  c6 = c6 - 1;
+if (((-2955 == -89288) && (rgcd(((23 && (m2 != 0 && 22 / m2 < 3)) > (-3 && len(a1))), ((92 - len(p3)) == -81799)) % 9))) { break; }
+let p7 = ((-(6) * -90) + ((p3 && pe(1)) && (-1 % 2)));
+}
+}
+let r8 = !(!((pe(3) || -4)));
+let p9 = (((-4 < (p3 == 0 || 72 / p3 > 2)) == (p3 || tsum(86, 2))) / 8);
+print (((-7 < len(a0)) < (po(a1[1]) - len(a0))) % 7);
+print (((po(0) && (r8 == 0 || 45 / r8 < 1)) || 7) * ((m2 * pe(-2)) % 9));
+print (((rgcd(6, 6) > pe(7)) > a0[1]) + (-((p3 != 0 && 45 / p3 > 2)) - (rgcd(0, r8) < p3)));
+if ((-6 - (54083 * -90421))) {
+print (((-4 % 6) > !(6)) + ((r8 < (p3 != 0 && 51 / p3 > 3)) * (9 * 54)));
+print (r8 + ((len(a1) * 95) - (rec(8) >= a1[1])));
+} else {
+print (-(rec(0)) == ((-18773 - len(p3)) != (len(m2) + pe(5))));
+}
+a0[(m2 % 2 + 2) % 2] = r8;
+
