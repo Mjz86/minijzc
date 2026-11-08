@@ -127,6 +127,33 @@ add_test(NAME general_examples
 set_tests_properties(general_examples PROPERTIES TIMEOUT 120 LABELS fuzz)
 
 # ---------------------------------------------------------------------------
+# regression gates (ctest -L regr): the historical bug repros (bug ledger 1-5,
+# examples/BUGFIXES.md) through --check-all, the hand-written stress battery,
+# and header self-containment (README: "not dependent on include order")
+# ---------------------------------------------------------------------------
+file(GLOB MJZ_BUGREPRO RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} bugrepro/*.mjz)
+foreach(f ${MJZ_BUGREPRO})
+  string(REGEX REPLACE "bugrepro/|\\.mjz$" "" nm ${f})
+  add_test(NAME bugrepro_${nm}_O3
+    COMMAND minijz ${CMAKE_CURRENT_SOURCE_DIR}/${f} --check-all -O3)
+  set_tests_properties(bugrepro_${nm}_O3 PROPERTIES TIMEOUT 120 LABELS regr)
+  add_test(NAME bugrepro_${nm}_O3_noscctco
+    COMMAND minijz ${CMAKE_CURRENT_SOURCE_DIR}/${f} --check-all
+            -O3 --disable=scctco)
+  set_tests_properties(bugrepro_${nm}_O3_noscctco
+    PROPERTIES TIMEOUT 120 LABELS regr)
+endforeach()
+
+add_test(NAME stress_battery
+  COMMAND ${CMAKE_COMMAND} -E env MINIJZ_BIN=$<TARGET_FILE:minijz>
+          bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/stress.sh)
+set_tests_properties(stress_battery PROPERTIES TIMEOUT 1800 LABELS regr)
+
+add_test(NAME header_order
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/header_order_test.sh)
+set_tests_properties(header_order PROPERTIES TIMEOUT 900 LABELS regr)
+
+# ---------------------------------------------------------------------------
 # showcases: build the showcase programs at several -O levels and keep a
 # GIT SUBDIRECTORY in the build folder so successive builds can be diffed
 # ("see the difference between different versions")
