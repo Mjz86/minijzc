@@ -14,15 +14,8 @@
 constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   std::vector<uint32_t> ren(nv, NONE);
-  auto resolve = [&](const uint32_t regv) -> uint32_t {
-    uint32_t v=regv;
-    size_t timer=ren.size()+1;
-    while (v != NONE && v < nv && ren[v] != NONE){
-      if(!timer--){
-         return regv;
-      }
-      v = ren[v];
-    }
+  auto resolve = [&](uint32_t v) -> uint32_t {
+    while (v != NONE && v < nv && ren[v] != NONE) v = ren[v];
     return v;
   };
   bool had = false;
