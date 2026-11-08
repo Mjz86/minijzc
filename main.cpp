@@ -7,7 +7,7 @@
 // instead compiles src/tu/*.cpp and links them (tu/main.cpp is a thin
 // shell over the very same minijz_app_main).
 #include "src/minijz.hpp"
-#include "minijz/apps/app_main.hpp"
+#include "src/minijz/apps/app_main.hpp"
 
 int main(int argc, char **argv) {
   Cli C{};
