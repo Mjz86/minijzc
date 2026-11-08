@@ -2,7 +2,7 @@
 // === vm.hpp ========================================
 // the bytecode VM runner.
 
-#include "minijz/ir/instr.hpp"
+#include "../ir/instr.hpp"
 
 // (MJZ_MAX_CALL_DEPTH is defined with the const-call evaluator in 9e3)
 

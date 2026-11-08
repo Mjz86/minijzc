@@ -5,9 +5,9 @@
 // tu/backends.cpp in the multi-TU build (external definition) — include
 // it nowhere else.
 
-#include "minijz/ir/instr.hpp"
-#include "minijz/back/stack_alloc.hpp"
-#include "minijz/back/emit_plan.hpp"
+#include "../ir/instr.hpp"
+#include "stack_alloc.hpp"
+#include "emit_plan.hpp"
 
 #include <string>
 #include <string_view>

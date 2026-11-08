@@ -18,7 +18,7 @@
 // MJZ_CX_CHECK=0 keeps all six (fits when memory allows). The tool itself
 // never needs this file — it is a proof/CI artifact.
 // ============================================================================
-#include "src/minijz.hpp"
+#include "../src/minijz.hpp"
 
 #ifndef MJZ_CX_CHECK
 #define MJZ_CX_CHECK 0

@@ -2,9 +2,9 @@
 // === dce.hpp ========================================
 // SSA dead-code elimination.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
 
 // --- 9c. SSA dead-code elimination -------------------------------------------
 // roots: Print, Br, Cbr, Exit, and Div/Mod whose divisor is not a known

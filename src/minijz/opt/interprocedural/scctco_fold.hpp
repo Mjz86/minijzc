@@ -2,9 +2,9 @@
 // === scctco_fold.hpp ========================================
 // the scctco residue fold (countdown-by-c -> n & (c-1) etc.).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/interprocedural/callgraph.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "callgraph.hpp"
 
 // (the collapse helpers live in scctco.hpp; forward-declared so
 // this header can also be included standalone)

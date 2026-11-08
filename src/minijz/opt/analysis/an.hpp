@@ -3,9 +3,9 @@
 // An: the analysis bundle -- dominator tree, loops, SSA construction
 // helpers (phi placement + renaming). Uses mjz_lib graphs.
 
-#include "minijz/graph_lib.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/ir/stats.hpp"
+#include "../../graph_lib.hpp"
+#include "../../ir/instr.hpp"
+#include "../../ir/stats.hpp"
 
 // ============================================================================
 // 7. analysis driver — all the graph math comes from mjz::graph_ns

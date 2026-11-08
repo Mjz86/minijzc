@@ -2,8 +2,8 @@
 // === parser.hpp ========================================
 // the parser.
 
-#include "minijz/front/ast.hpp"
-#include "minijz/front/lexer.hpp"
+#include "ast.hpp"
+#include "lexer.hpp"
 
 // ============================================================================
 // 4. recursive-descent parser

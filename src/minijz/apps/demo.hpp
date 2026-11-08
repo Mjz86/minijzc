@@ -2,9 +2,9 @@
 // === demo.hpp ========================================
 // the curated demo suite.
 
-#include "minijz/prog/program.hpp"
-#include "minijz/prog/runners.hpp"
-#include "minijz/runtime/astrun.hpp"
+#include "../prog/program.hpp"
+#include "../prog/runners.hpp"
+#include "../runtime/astrun.hpp"
 
 // ============================================================================
 // 14. curated demos

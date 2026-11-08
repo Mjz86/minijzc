@@ -2,13 +2,13 @@
 // === shrink.hpp ========================================
 // --shrink: line-chunk delta-debugging of failing programs.
 
-#include "minijz/apps/cli_parse.hpp"
-#include "minijz/apps/app_api.hpp" // compile_report decl
-#include "minijz/prog/program.hpp"
-#include "minijz/prog/runners.hpp"
-#include "minijz/runtime/astrun.hpp"
-#include "minijz/back/bytecode.hpp"
-#include "minijz/base/native_run.hpp"
+#include "cli_parse.hpp"
+#include "app_api.hpp" // compile_report decl
+#include "../prog/program.hpp"
+#include "../prog/runners.hpp"
+#include "../runtime/astrun.hpp"
+#include "../back/bytecode.hpp"
+#include "../base/native_run.hpp"
 
 // ---- 17b. --shrink=FILE: delta-debug a failing program ---------------------
 // (ported from the Branchedmain monolith; adapted to the split's helpers).

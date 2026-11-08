@@ -4,7 +4,7 @@
 // run_capture, write_file -- shared by --run, the fuzzer and
 // --shrink.
 
-#include "minijz/config.hpp"
+#include "../config.hpp"
 
 // ---- 13.5d. native build & run harness
 // ----------------------------------------

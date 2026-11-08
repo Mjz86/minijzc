@@ -3,9 +3,9 @@
 // canonicalization: comparison direction, commutative order,
 // NOT-of-compare combination (notcomb).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
 
 // --- 9a4. canonicalization
 // ---------------------------------------------------- Puts every pure Bin into

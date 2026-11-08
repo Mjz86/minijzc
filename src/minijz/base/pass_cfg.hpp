@@ -3,7 +3,7 @@
 // PassCfg (-O presets, per-pass toggles), the 23-name toggle table
 // shared by CLI/fuzzer/--shrink, apply_pass_flag, describe_cfg.
 
-#include "minijz/config.hpp"
+#include "../config.hpp"
 
 // ============================================================================
 // 9e0. PASS MANAGER

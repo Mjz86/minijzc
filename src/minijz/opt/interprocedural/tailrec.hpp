@@ -3,10 +3,10 @@
 // tailrec: tce_self (multi-site self tail-recursion -> one loop) and
 // tce_merge (mutual-recursion rings -> sel-dispatched function).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/interprocedural/callgraph.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
+#include "callgraph.hpp"
 
 // ============================================================================
 // 9e4. TAIL-CALL ELIMINATION for inner-SCC tail calls

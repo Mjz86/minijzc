@@ -2,9 +2,9 @@
 // === splice.hpp ========================================
 // block splicing (single-pred/single-succ shortcutting).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
 
 // --- 9b2. block splicing
 // ------------------------------------------------------ If a single-succ block

@@ -3,7 +3,7 @@
 // lives in tu/cli_app.cpp. This TU also defines the process-wide CHECK
 // counters (config.hpp declares them extern under MJZ_MULTI_CPP), so
 // every TU's checks are counted by the final report.
-#include "minijz/apps/app_api.hpp"
+#include "../minijz/apps/app_api.hpp"
 
 int g_checks = 0, g_fails = 0;
 

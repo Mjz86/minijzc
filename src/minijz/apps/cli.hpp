@@ -3,9 +3,9 @@
 // umbrella: the CLI front (light) + the heavy run/report layer. Prefer the
 // specific headers; this one keeps the historical include surface.
 
-#include "minijz/apps/cli_parse.hpp"
-#include "minijz/apps/cli_run.hpp"
-#include "minijz/apps/fuzz_run.hpp"
-#include "minijz/apps/demo.hpp"
-#include "minijz/apps/shrink.hpp"
-#include "minijz/tests/cx_tours.hpp"
+#include "cli_parse.hpp"
+#include "cli_run.hpp"
+#include "fuzz_run.hpp"
+#include "demo.hpp"
+#include "shrink.hpp"
+#include "../tests/cx_tours.hpp"

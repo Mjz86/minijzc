@@ -1,7 +1,34 @@
 # see CMakePresets.json for ready-made configurations ("clang", "fancy",
-# "gcc", "header-only"); plain `cmake -S . -B build` = multi-TU + whatever
-# C++ compiler the environment provides (clang++ preferred when unpinned).
+# "gcc", "header-only", "windows-llvm", "windows-ninja", "vs-clang");
+# plain `cmake -S . -B build` = multi-TU + whatever C++ compiler the
+# environment provides (clang++ preferred when unpinned).
 cmake_minimum_required(VERSION 3.16)
+
+# ---------------------------------------------------------------------------
+# the Windows nmake trap, caught EARLY (README "Windows toolchains"): from a
+# plain PowerShell with no Visual Studio environment CMake's default
+# generator is "NMake Makefiles", and project() would die with the cryptic
+#   Running 'nmake' '-?'  failed with:  no such file or directory
+# (the exact failure pasted into the README task list). Intercept it BEFORE
+# project() and say what to do instead.
+# ---------------------------------------------------------------------------
+if(CMAKE_GENERATOR STREQUAL "NMake Makefiles")
+  find_program(MJZ_NMAKE nmake)
+  if(NOT MJZ_NMAKE)
+    message(FATAL_ERROR
+[=[
+nmake not found: the NMake generator needs a Visual Studio environment
+(a Native Tools / VsDevCmd prompt). Pick ONE instead:
+  cmake --preset windows-llvm    (MinGW Makefiles + clang++ -- no MSVC needed)
+  cmake --preset windows-ninja   (Ninja + clang++ -- needs ninja in PATH)
+  cmake --preset vs-clang        (VS 2022 generator + the clang-cl toolset)
+  cmake -G "MinGW Makefiles" -DCMAKE_CXX_COMPILER=clang++ -S . -B build
+or install VS Build Tools and configure from a Native Tools prompt so that
+nmake/CL exist and the default generator works.
+PowerShell 5 note: chain steps with ';' ('&&' needs PowerShell 7+).
+]=])
+  endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # compiler preference: unless the user pinned one (-DCMAKE_CXX_COMPILER=...,
@@ -57,8 +84,16 @@ set(FUZZ_JOBS 1 CACHE STRING "parallel fuzz workers for the ctest gates")
 option(FUZZ_RANDOM_CONFIGS ON "also fuzz with random pass configurations")
 set(MJZ_CX_CHECKS "1;2;3;4;5;6" CACHE STRING "constexpr proof check numbers")
 
-# the mjz_lib clone next to this repo (README: git clone String mjz_lib)
-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/alllib_import.hpp)
+# ---------------------------------------------------------------------------
+# the mjz_lib clone next to this repo (README: git clone .../String mjz_lib).
+# Both upstream layouts are supported: the historical root-level
+# allib_import.hpp and the current nested mjz_lib/mjz_lib/ one. The
+# committed src/mjz_lib/alllib_import.hpp bridge adapts via __has_include
+# (see its header comment), so no configure-time magic is needed -- here we
+# only verify the clone exists at all.
+# ---------------------------------------------------------------------------
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/alllib_import.hpp AND NOT
+   EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/alllib_import.hpp)
   message(FATAL_ERROR
     "mjz_lib not found: 'git clone https://github.com/Mjz86/String mjz_lib'"
     " inside this repo first (see README.md)")
@@ -211,6 +246,13 @@ add_test(NAME header_order
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/header_order_test.sh)
 set_tests_properties(header_order PROPERTIES TIMEOUT 900 LABELS regr)
 
+# every quoted include resolves in its includer's directory (the
+# -Wmicrosoft-include class from warnings.txt, kept dead -- see
+# scripts/include_portability_test.sh)
+add_test(NAME include_portability
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/include_portability_test.sh)
+set_tests_properties(include_portability PROPERTIES TIMEOUT 60 LABELS regr)
+
 # a scripted --debugger session: the interactive facility is itself a
 # regression gate (IR dump, single-step, full state, five-way check)
 add_test(NAME debugger_session
@@ -277,11 +319,7 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# a friendlier hint when the toolchain is missing (the Windows nmake trap:
-# pass -G "MinGW Makefiles" (or "Ninja") and let the clang preference above
-# find clang++, instead of failing on a missing MSVC)
+# (the old "no C++ compiler detected" warning after project() never fired:
+# by then CMAKE_CXX_COMPILER is always set. The nmake trap is handled above,
+# BEFORE project(), where the interception actually works.)
 # ---------------------------------------------------------------------------
-if(WIN32 AND NOT CMAKE_CXX_COMPILER)
-  message(WARNING "no C++ compiler detected: install LLVM/MinGW and retry"
-                  " with -G \"MinGW Makefiles\" -DCMAKE_CXX_COMPILER=clang++")
-endif()

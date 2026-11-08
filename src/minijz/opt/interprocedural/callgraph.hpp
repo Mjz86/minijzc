@@ -3,13 +3,13 @@
 // call graph + SCC (mjz_lib Tarjan) + the inliner (9e2) + the
 // interprocedural driver hook (9e).
 
-#include "minijz/graph_lib.hpp"
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/scalar/dce.hpp"
-#include "minijz/opt/loop/lcf_rt.hpp"
-#include "minijz/opt/interprocedural/callcse.hpp"
+#include "../../graph_lib.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
+#include "../scalar/dce.hpp"
+#include "../loop/lcf_rt.hpp"
+#include "callcse.hpp"
 
 struct CallGraph {
   std::vector<std::vector<ulen>> adj{}; // caller -> callees (with dups)

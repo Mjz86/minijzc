@@ -10,10 +10,10 @@
 // prog/compile_impl.hpp, compiled once (tu/prog.cpp in the multi-TU
 // build; constexpr-inline in the header-only build).
 
-#include "minijz/front/ast.hpp"     // Parsed (the parser's output type)
-#include "minijz/ir/instr.hpp"      // Fn (the IR container)
-#include "minijz/ir/stats.hpp"      // SsaStats / DestrStats
-#include "minijz/base/pass_cfg.hpp" // PassCfg / OptStats
+#include "../front/ast.hpp"     // Parsed (the parser's output type)
+#include "../ir/instr.hpp"      // Fn (the IR container)
+#include "../ir/stats.hpp"      // SsaStats / DestrStats
+#include "../base/pass_cfg.hpp" // PassCfg / OptStats
 
 #include <string_view>
 #include <vector>
@@ -45,7 +45,7 @@ Program compile(std::string_view src, PassCfg cfg = {}); // tu/prog.cpp
 #else
 constexpr Program compile(std::string_view src, PassCfg cfg = {});
 #define MJZ_PIPELINE_FN constexpr
-#include "minijz/prog/compile_impl.hpp"
+#include "compile_impl.hpp"
 #undef MJZ_PIPELINE_FN
 #endif
 // main's pre-optimization CFG analysis (dominators/loops), pretty-printed;

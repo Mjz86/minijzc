@@ -2,8 +2,8 @@
 // === sccp.hpp ========================================
 // sparse conditional constant propagation (SCCP).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
 
 // --- 9a0. sparse conditional constant propagation
 // ----------------------------- Lattice per vreg: TOP (not yet known) -> CONST

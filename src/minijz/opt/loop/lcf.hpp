@@ -3,10 +3,10 @@
 // closed-form loop evaluation: affine recurrences -> series, exact
 // compile-time simulation of non-affine bodies.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/linear/linform.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
+#include "../linear/linform.hpp"
 
 // --- 9d5. loop closed-form evaluation (constant trip counts) -----------------
 // A counted loop with a constant trip count N whose body is pure scalar math

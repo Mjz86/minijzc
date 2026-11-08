@@ -3,10 +3,10 @@
 // load elimination: store->load forwarding + redundant-load CSE for
 // provably-single allocations.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/analysis/alias.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
+#include "../analysis/alias.hpp"
 
 // --- 9d4. LOAD ELIMINATION
 // ------------------------------------------------------ For handles that

@@ -3,7 +3,7 @@
 // multi-predecessor normalization (binary merge trees) shared by SSA
 // construction and destruction.
 
-#include "minijz/ir/instr.hpp"
+#include "instr.hpp"
 
 // ---- 6z. multi-predecessor normalization (binary merge trees)
 // ---------------- A Phi in this IR carries exactly TWO arguments (keyed by the

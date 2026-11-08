@@ -2,9 +2,9 @@
 // === fold.hpp ========================================
 // constant folding/propagation, branch folding, algebraic identities.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
 
 // ============================================================================
 // 9. optimizer (all on SSA; analyses from the lib are recomputed on demand)

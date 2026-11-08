@@ -3,10 +3,10 @@
 // SCC tail-call optimization: collapse intra-SCC tail calls into
 // loops (helpers, per-member collapse, the driver).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/interprocedural/callgraph.hpp"
-#include "minijz/opt/interprocedural/scctco_fold.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "callgraph.hpp"
+#include "scctco_fold.hpp"
 
 // ============================================================================
 // 9e1b. SCC tail-call optimization ("scctco")

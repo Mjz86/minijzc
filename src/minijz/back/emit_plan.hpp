@@ -6,7 +6,7 @@
 // dead flags. Standalone and LIGHT: the C and asm backends and the
 // debugger all read it without pulling any backend's codegen.
 
-#include "minijz/ir/instr.hpp"
+#include "../ir/instr.hpp"
 
 #include <vector>
 

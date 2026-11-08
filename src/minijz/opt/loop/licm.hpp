@@ -2,9 +2,9 @@
 // === licm.hpp ========================================
 // loop-invariant code motion.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
 
 // --- 9d. loop-invariant code motion
 // ------------------------------------------- Uses the lib's natural loops +

@@ -4,7 +4,7 @@
 // functions too"). Whole-pipeline behavior is already covered by the
 // differential fuzzer + cx checks; this file pins the leaf functions.
 // ============================================================================
-#include "src/minijz.hpp"
+#include "../src/minijz.hpp"
 #include <random>
 
 static int ut_checks = 0, ut_fails = 0;

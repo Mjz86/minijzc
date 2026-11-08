@@ -2,9 +2,9 @@
 // === copyprop.hpp ========================================
 // copy propagation.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
 
 // --- 9a2. copy propagation
 // ---------------------------------------------------- `d = s` (Copy): every

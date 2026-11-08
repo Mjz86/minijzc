@@ -3,10 +3,10 @@
 // mem2reg: array memory -> SSA registers + dead-store/dead-alloc
 // elimination for never-read arrays.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/analysis/alias.hpp"
+#include "../base/pass_cfg.hpp"
+#include "../ir/instr.hpp"
+#include "analysis/an.hpp"
+#include "analysis/alias.hpp"
 
 // ============================================================================
 // 9d4. mem2reg: array memory -> SSA registers ("memory to register lifting")

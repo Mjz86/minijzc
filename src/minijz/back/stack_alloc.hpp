@@ -3,7 +3,7 @@
 // stack-allocation analysis for the C backend (non-escaping constant
 // arrays become C locals).
 
-#include "minijz/ir/instr.hpp"
+#include "../ir/instr.hpp"
 
 // --- 9f2. stack-allocation analysis (for the C backend) ---------------------
 // An `array(n)` with constant n whose handle only ever flows (through Copies)

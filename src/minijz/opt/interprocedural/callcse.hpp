@@ -2,10 +2,10 @@
 // === callcse.hpp ========================================
 // common-subexpression elimination of calls to provably-pure functions.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/loop/lcf_rt.hpp" // fn_pure_closure (the purity oracle)
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
+#include "../loop/lcf_rt.hpp" // fn_pure_closure (the purity oracle)
 
 // --- 9e3b. PURE-CALL CSE (interprocedural)
 // ------------------------------------- A call to a PURE function

@@ -4,7 +4,7 @@
 // mjz_lib) plus the codegen live in emit_x64_impl.hpp, compiled ONCE
 // (tu/backends.cpp in the multi-TU build) behind this light declaration.
 
-#include "minijz/ir/instr.hpp"
+#include "../ir/instr.hpp"
 
 #include <string>
 #include <string_view>
@@ -19,5 +19,5 @@ std::string emit_x64(const std::vector<Fn> &fns,
 // compiles it exactly once — one TU per binary includes the umbrella
 std::string emit_x64(const std::vector<Fn> &fns,
                      const std::vector<std::string_view> &names);
-#include "minijz/back/emit_x64_impl.hpp"
+#include "emit_x64_impl.hpp"
 #endif

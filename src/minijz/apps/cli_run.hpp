@@ -5,14 +5,14 @@
 // ONE TU per binary (tu/cli_app.cpp in the multi-TU build; root main.cpp
 // in the header-only build) — the entry functions here are externals.
 
-#include "minijz/apps/cli_parse.hpp"
-#include "minijz/apps/app_api.hpp"
-#include "minijz/prog/program.hpp"
-#include "minijz/prog/runners.hpp"
-#include "minijz/runtime/astrun.hpp"
-#include "minijz/back/bytecode.hpp"
-#include "minijz/back/emit_plan.hpp"
-#include "minijz/base/native_run.hpp"
+#include "cli_parse.hpp"
+#include "app_api.hpp"
+#include "../prog/program.hpp"
+#include "../prog/runners.hpp"
+#include "../runtime/astrun.hpp"
+#include "../back/bytecode.hpp"
+#include "../back/emit_plan.hpp"
+#include "../base/native_run.hpp"
 
 // ---- 17b. --shrink=FILE: delta-debug a failing program ---------------------
 

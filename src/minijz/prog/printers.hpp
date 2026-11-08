@@ -6,7 +6,7 @@
 // print_analysis() reads the An internals; its DECLARATION lives here and
 // its definition is compiled once with the analysis (prog/compile_impl.hpp).
 
-#include "minijz/ir/instr.hpp"
+#include "../ir/instr.hpp"
 
 #include <cstdio>
 #include <string>

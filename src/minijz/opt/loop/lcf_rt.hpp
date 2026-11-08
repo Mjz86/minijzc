@@ -3,10 +3,10 @@
 // RUNTIME trip counts: guarded/unguarded closed forms with the wrap
 // fallback (header phis re-keyed to the new entry edge).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/linear/linform.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
+#include "../linear/linform.hpp"
 
 // ============================================================================
 // 9e3. CONST-CALL EVALUATION (interprocedural)

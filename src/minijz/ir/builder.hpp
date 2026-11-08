@@ -2,9 +2,9 @@
 // === builder.hpp ========================================
 // AST -> IR builder (loops with break/continue merge chains).
 
-#include "minijz/front/ast.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/ir/pred_norm.hpp"
+#include "../front/ast.hpp"
+#include "instr.hpp"
+#include "pred_norm.hpp"
 
 constexpr B ir_op(Bk b) { // AST binop -> IR binop (identical enumerators)
   switch (b) {

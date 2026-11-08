@@ -9,13 +9,13 @@
 // which mismatch reports reach stdout can interleave (each report is
 // printed atomically under the fuzz mutex).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/prog/program.hpp"
-#include "minijz/prog/runners.hpp"
-#include "minijz/runtime/astrun.hpp"
-#include "minijz/back/bytecode.hpp"
-#include "minijz/base/native_run.hpp"
-#include "minijz/apps/fuzz_gen.hpp"
+#include "../base/pass_cfg.hpp"
+#include "../prog/program.hpp"
+#include "../prog/runners.hpp"
+#include "../runtime/astrun.hpp"
+#include "../back/bytecode.hpp"
+#include "../base/native_run.hpp"
+#include "fuzz_gen.hpp"
 
 #include <atomic>
 #include <chrono>

@@ -11,14 +11,14 @@
 // output tape are member state, so `vm state` shows EVERYTHING and
 // `vm step` moves exactly one bytecode op.
 
-#include "minijz/apps/cli_parse.hpp"
-#include "minijz/prog/program.hpp"
-#include "minijz/prog/printers.hpp"
-#include "minijz/back/vm.hpp"
-#include "minijz/back/bytecode.hpp"
-#include "minijz/back/emit_plan.hpp"
-#include "minijz/runtime/astrun.hpp"
-#include "minijz/opt/optimize_api.hpp"
+#include "cli_parse.hpp"
+#include "../prog/program.hpp"
+#include "../prog/printers.hpp"
+#include "../back/vm.hpp"
+#include "../back/bytecode.hpp"
+#include "../back/emit_plan.hpp"
+#include "../runtime/astrun.hpp"
+#include "../opt/optimize_api.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -104,9 +104,12 @@ static void dbg_vm_state(DbgVm &D, const Program &P) {
   std::printf("frames=%zu:\n", S.frames.size());
   for (size_t f = 0; f < S.frames.size(); ++f) {
     uint32_t fid = f < S.fr_fn.size() ? S.fr_fn[f] : 0;
-    const char *nm =
-        fid < P.fn_names.size() ? std::string(P.fn_names[fid]).c_str() : "?";
-    std::printf("  #%-2zu fn%-2u (%s) slots(%zu):", f, fid, nm,
+    // NB: a std::string temporary's c_str() must not outlive the
+    // full-expression (the -Wdangling-gsl hit in warnings.txt): keep the
+    // string alive until the printf below has consumed it.
+    std::string nm = fid < P.fn_names.size() ? std::string(P.fn_names[fid])
+                                             : std::string("?");
+    std::printf("  #%-2zu fn%-2u (%s) slots(%zu):", f, fid, nm.c_str(),
                 S.frames[f].size());
     for (size_t k = 0; k < S.frames[f].size() && k < 24; ++k)
       std::printf(" [%zu]=%lld", k, (long long)S.frames[f][k]);

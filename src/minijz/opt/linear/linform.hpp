@@ -2,7 +2,7 @@
 // === linform.hpp ========================================
 // linear forms: shared by reassociation & loop closed forms.
 
-#include "minijz/ir/instr.hpp"
+#include "../../ir/instr.hpp"
 
 // --- 9b2. linear forms: shared by reassociation & loop closed forms ------
 // A linear form is  sum(coeff_i * v_i) + K  with terms sorted by vreg id.

@@ -2,9 +2,9 @@
 // === unreach.hpp ========================================
 // unreachable-block removal + phi arg pruning.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
 
 // --- 9b. unreachable block removal + phi arg pruning -------------------------
 // Phi instrs carry their pred block ids in t/f (set during SSA construction),

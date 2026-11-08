@@ -2,7 +2,7 @@
 // === alias.hpp ========================================
 // handle aliasing: which vreg provably names exactly one allocation.
 
-#include "minijz/ir/instr.hpp"
+#include "../../ir/instr.hpp"
 
 // ============================================================================
 // 9d3. HANDLE ALIAS ANALYSIS (allocation-identity + value ranges)

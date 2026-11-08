@@ -90,8 +90,14 @@ cmake -S . -B build && cmake --build build -j        # default: multi-cpp
 ctest --test-dir build -L cx -j4 --output-on-failure  # the 6 constexpr proofs
 ctest --test-dir build -L fuzz --output-on-failure    # differential fuzz
 ctest --test-dir build -R unit --output-on-failure    # (or ./build/minijz_unit_tests)
-ctest --test-dir build -L regr --output-on-failure    # bug repros + stress + header order + a scripted debugger session
+ctest --test-dir build -L regr --output-on-failure    # bug repros + stress + header order + include portability + a scripted debugger session
 ```
+
+The String clone works under BOTH upstream layouts (the historical
+root-level `alllib_import.hpp` and the current nested
+`mjz_lib/mjz_lib/` one): the committed `src/mjz_lib/alllib_import.hpp`
+bridge adapts via `__has_include`, so a fresh clone needs zero extra
+steps — no symlinks, no configure-time generation.
 
 **Compiler preference:** if nothing is pinned (`-DCMAKE_CXX_COMPILER`,
 `$CXX`, toolchain), CMake looks for `clang++` first and uses it when
@@ -104,6 +110,11 @@ Options and presets:
   (C++26, `-O3 -g -march=native`, the whole `-W` battery,
   `-fconstexpr-steps=55555555`); `--preset header-only` — single TU;
   `--preset fuzz-wide` — a 2000-seed sharded ctest window.
+* Windows (see the dedicated section below): `--preset windows-llvm`
+  (MinGW Makefiles + clang++), `--preset windows-ninja` (Ninja + clang++),
+  `--preset vs-clang` (VS 2022 generator + the clang-cl toolset). They
+  carry a host condition, so `cmake --list-presets` only offers them on
+  Windows.
 * `-DMINIJZ_MULTI_CPP=OFF` — single translation unit (the header-only
   constexpr form).
 * `-DMINIJZ_EXT_WARNINGS=ON` — the extended warning battery (per-compiler
@@ -136,13 +147,43 @@ g++ -std=c++20 -O2 -I. -Isrc -I mjz_lib main.cpp -o minijz           # single TU
 g++ -std=c++20 -O2 -DMJZ_MULTI_CPP -I. -Isrc -I mjz_lib -c src/tu/*.cpp && g++ *.o -o minijz
 ```
 
-Windows note: with no MSVC installed, generate for MinGW/Ninja and let
-the clang preference find LLVM — `cmake -G "MinGW Makefiles"
--DCMAKE_CXX_COMPILER=clang++ -S . -B build` (PowerShell: use `;` between
-steps, `&&` needs PS7). clang-cl's `-Wmicrosoft-include` notes on quoted
-includes are benign here: every include resolves through `-I src`
-portably; the search-rule difference only affects WHICH rule finds it
-first.
+## Windows toolchains (the "nmake" trap, fixed)
+
+The original failure (kept for the record):
+
+```
+cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++
+CMake Error at CMakeLists.txt:20 (project):
+  Running 'nmake' '-?' failed with: no such file or directory
+```
+
+Cause: from a plain PowerShell with no Visual Studio environment,
+CMake's default generator on Windows is `NMake Makefiles`; with no VS
+installed there is no `nmake`, and `project()` dies before anything
+useful can happen (the follow-up `cmake --build` then complains that
+"NMake does not support parallel builds" — same root cause).
+
+What is in place now:
+
+1. **Early interception** — CMakeLists.txt checks, BEFORE `project()`,
+   whether the generator is NMake and `nmake` is missing, and fails
+   with a message that lists the fixes below instead of the cryptic
+   `'nmake' '-?' failed` one.
+2. **Ready-made presets** (host-conditioned, Windows-only):
+   `cmake --preset windows-llvm` (MinGW Makefiles + clang++ — no MSVC
+   needed), `cmake --preset windows-ninja` (Ninja + clang++),
+   `cmake --preset vs-clang` (VS 2022 generator + the clang-cl
+   toolset, for machines with VS installed).
+3. Manual equivalent of the first recipe:
+   `cmake -G "MinGW Makefiles" -DCMAKE_CXX_COMPILER=clang++ -S . -B build`.
+4. Or: install VS Build Tools and configure from an "x64 Native Tools"
+   prompt so `nmake`/`CL` exist and even the default generator works.
+
+PowerShell note: chain steps with `;` (`&&` needs PowerShell 7+).
+clang-cl is a first-class config now: every quoted include resolves in
+its includer's own directory (see warnings.txt), so the old
+`-Wmicrosoft-include` noise is gone — only genuinely portable includes
+remain (`include_portability` is a ctest `regr` gate).
 
 ## The compile-time proof
 
@@ -247,32 +288,64 @@ g++ -std=c++20 -O2 -I. -Isrc -I mjz_lib main.cpp -o minijz && ./minijz --selftes
 cmake --build build -j2 && ctest --test-dir build -L "cx|fuzz|regr" --output-on-failure
 ```
 
+---
 
+# The task list (status ledger)
 
-# fix cmake failure 
- cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++
-CMake Error at CMakeLists.txt:20 (project):
-  Running
+The three tasks below came in with the branchA README ("ADDED TASKS");
+this section tracks their state.
 
-   'nmake' '-?'
+## 1. fix cmake failure — DONE
 
-  failed with:
+The pasted failure (default NMake generator on a machine with no Visual
+Studio → `'nmake' '-?' failed`) is handled by the "Windows toolchains"
+section above: an early pre-`project()` interception with a friendly
+message, the host-conditioned presets `windows-llvm` / `windows-ninja` /
+`vs-clang`, and the documented manual recipes.
 
-   no such file or directory
+## 2. fix the warnings — DONE
 
+`warnings.txt` (216 clang-cl warnings) is now the triage ledger: the 215
+`-Wmicrosoft-include` hits were the quoted-include portability problem,
+fixed tree-wide (every quoted include resolves in its includer's own
+directory — enforced by the `include_portability` ctest gate); the one
+real `-Wdangling-gsl` (a temporary's `.c_str()` outliving the
+full-expression in the debugger's frame listing) is fixed at the source.
+See `warnings.txt` for the full story and the regeneration recipe.
 
--- Configuring incomplete, errors occurred!
-PS C:\Users\Mehdi\Documents\code_projects\generic_string_class\minijzc> cmake --build build -j
-Warning: NMake does not support parallel builds. Ignoring parallel build command line option.
-no such file or directory
-CMake Error: Generator: build tool execution failed, command was: nmake -f Makefile /nologo
-PS C:\Users\Mehdi\Documents\code_projects\generic_string_class\minijzc> 
+## 3. add the following optimization passes (or, if present, extend and widen them)
 
-#fix the warings 
+Status of the list as implemented in this tree (names in backticks are
+the ctest/CLI toggle names):
 
+* already covered: DCE/ADCE (`dce`, mark-and-sweep from side-effect
+  roots — trap-aware), dead-block + unreachable-block elimination
+  (`unreach`), CFG simplification / block merging / jump-chain splicing
+  (`splice`), branch folding (`fold` + `unreach`), if-conversion
+  (`ifconv`), loop deletion-via-closed-forms (`lcf` + `cdfold`),
+  constant folding/propagation (`fold`), SCCP + branch pruning
+  (`sccp`), algebraic simplification / instruction combining
+  (`fold` + `canon`), reassociation (`reassoc`), strength reduction
+  (`divmagic`), CSE (`cse`, dominator-scoped), value / correlated value
+  propagation + range analysis + constraint elimination (`trapelim`
+  range proofs + `sccp`), load/store forwarding + redundant load /
+  store elimination (`ldelim`), mem2reg / SROA / DSE (`mem2reg`),
+  inlining (`inline`), interprocedural constant propagation + IPSCCP
+  (`constcall`), pure-call CSE (`callcse`), LICM (`licm`), loop
+  unrolling (`unroll`), tail-call elimination (`tailrec` + `scctco`),
+  IR canonicalization (`canon`), dead-PHI elimination (`dce` +
+  `fold`), **dead-argument elimination (`deadargs`, interprocedural —
+  params unused everywhere incl. mutual-recursion chains are dropped
+  from signatures and every call site)**.
+* still open (the standing wishlist): jump threading, tail
+duplication, loop rotation/simplification/canonicalization proper,
+  LCSSA, GVN (beyond the dominator-scoped CSE + ldelim + callcse
+  combination), demanded/known bits, MemCpyOpt, argument promotion,
+  identical code folding, function specialization, loop
+  fusion/fission/distribution, loop unswitching/versioning/predication,
+  function outlining, Attributor-style inference, GlobalOpt.
 
-# add the following optimization passes ( or if present , extend and widen them):
-Do the full 
+The original wishlist (kept verbatim for reference):
 
 Mostly architecture-independent optimizations
 
@@ -496,103 +569,8 @@ Code-size and IR cleanup
 
 • Constant and string merging
 
-# CONTINUE — next steps after checkpoint 09
 
-Read SUMMARY.md (same zip root) first: it records the state (main @
-4a0bf9c — parallel fuzz, interactive debugger, real TU boundary, clang-
-format, cmake-clang — battery all green). This file is the resume manual.
-
-## Setup (2 min)
-
-```sh
-cd minijzc                       # main @ 4a0bf9c
-git log --oneline -6             # 4a0bf9c debugger gate ... ee02d79 parallel fuzz
-export PATH="$HOME/.venv/bin:$PATH"   # cmake 4.4 via pip; clang-format too
-cmake -S . -B build && cmake --build build -j2
-./build/minijz --selftest                    # 206/206
-ctest --test-dir build -L regr -j2           # 22 gates (includes debugger session)
-./build/minijz --fuzz=550 --fuzz-from=9501 --fuzz-jobs=4   # parallel chunk
-```
-
-## Standing backlog (priority order)
-
-1. **Keep widening the fuzz window** (rotation 9501+, random 8501+ — that
-   is how all 6 bugs were found). Parallel now: `--fuzz-jobs=4` makes a
-   2000-seed chunk ~4× faster; the watchdog names a stuck seed instead
-   of hanging silently.
-2. **Native parity in bulk**: more `--fuzz-native` windows (corpus: fz1-6,
-   fz1500s, fz3401-40, fz10201-04, fz11001-36 tracked so far).
-3. **Shave the prog TU** (14.8 s, the only heavy one): move
-   `optimize_prog` + the pass bodies into their own TU behind a light
-   decl (the pattern is established — see compile_impl/optimize_api);
-   estimated prog → ~9 s + opt ~9 s in parallel.
-4. Optional: split the remaining big headers along the established
-   umbrella pattern (lcf.hpp 1021, cdfold 692, tailrec 662 →
-   tce_self/tce_merge are independent, scctco 648, callgraph 546).
-
-## The protocol (user-mandated — NEVER skip)
-
-After EACH bug fix / significant change, in order:
-1. `git commit` in minijzc (message: root cause in one line)
-2. zip the working dir → /home/z/my-project/download/ (ONLY that dir is
-   user-visible) with SUMMARY.md + CONTINUE.md updated to the new state
-   at the zip root
-3. STOP and wait for user confirmation.
-Zips so far: fix1..fix6, final_complete, a144e9e snapshot, 07-3branch-
-merge, 08-bug6-regr-gates, **09-fuzz-debugger-tusplit** (this one).
-Do NOT delete the `snap-v2` ref (B2's history).
-
-## Verify battery (run ALL before claiming any change; all must be green)
-
-```sh
-g++ -std=c++20 -O2 -I. -Isrc -I mjz_lib main.cpp -o minijz && ./minijz --selftest
-cmake -S . -B build && cmake --build build -j2          # 9 real TUs
-./build/minijz --selftest && ./build/minijz_unit_tests  # 206 + 6100
-ctest --test-dir build -L cx --output-on-failure        # 6 proofs (~100 s)
-ctest --test-dir build -L fuzz -j2                      # 4 gates
-ctest --test-dir build -L regr -j2                      # 22 gates
-./build/minijz examples/general.mjz --stdin=examples/general.in -O3
-cmake -S . -B build-ho -DMINIJZ_MULTI_CPP=OFF && cmake --build build-ho -j2 \
-  && ./build-ho/minijz --selftest                       # single-TU mode: 206/206
-printf 'vm step 5\nvm state\ncheck\nquit\n' | ./build/minijz demos/tco_parity.mjz --debugger
-```
-
-## Gotchas (consolidated — the hard-won list, updated for this session)
-
-- mjz_lib graph fns need `ulen` (unsigned long) vectors with ulen(-1)
-  sentinels; uint32 truncation silently corrupts unreachable-node handling.
-- g++ OOMs under -j parallelism: build -j2 max in the sandbox; the
-  9-TU build is sized for that (biggest TU = prog @ ~15 s).
-- Each cx proof MUST be its own TU (CMake already arranges this; clang
-  uses -fconstexpr-steps instead of g++'s -fconstexpr-ops-limit — mapped).
-- Do not chase: TRAP-vs-TIMEOUT, divmagic negative divisors (cleared),
-  tailrec-in-constexpr (4 GiB limit, runtime only), SCC-shaped constexpr
-  OOM (pre-existing, scoped out on purpose).
-- Fresh seed ranges find fresh bugs. `--fuzz-from=S` rotates -O configs.
-- Background processes DIE when a tool call ends: fuzz chunks must run
-  in the FOREGROUND (`--fuzz-jobs` splits the work inside one process).
-- For pass-level tracing: `--debug=2` still dumps per-pass; better: the
-  interactive `--debugger` (`opt` re-runs the pipeline live; `vm state`
-  shows the whole machine). The fuzz loop reports progress on stderr.
-- `git status` "M" walls are 755 permission bits (core.fileMode=false);
-  content is clean. Untracked `fuzz_native/*.exe` are regenerable.
-- Prefer repro files over `-e "<inline src>"` (quoting bit us once).
-- Known-bug history: bug1 tce_self chain order | bug2 tce_merge dispatch
-  false-arm | bug3 scctco entry rotation | bug4 notcomb inv Gt/Ge swap |
-  bug5 empty-block ghost succ | bug6 copyprop crossed-copy resolve()
-  self-loop HANG (all fixed; examples/BUGFIXES.md; ctest label `regr`).
-- New-TU rule: a heavy function compiled in exactly ONE TU must be
-  non-static + declared in a light header (see app_api.hpp /
-  optimize_api.hpp / program.hpp). constexpr/inline entries that are
-  only DECLARED in a using TU need an emitted alias or a wrapper
-  (see cx_pipeline_rt) — constexpr bodies are emitted only where used.
-- clang-format is now the source of truth (`cmake --build build --target
-  check-format`); LLVM style, includes NEVER sorted (order is
-  documentation).
-
-## If the user asks for a git-level 3-way merge anyway
-
-Already content-merged (fa3816c) and the tree was restructured since —
-a git merge of snap-v2 now would conflict broadly. If forced: merge on
-main, prefer main's split-tree versions wholesale, then re-run the
-battery.
+(The resume manual for the current checkpoint lives in CONTINUE.md at
+the delivered zip root, not in the README — the embedded checkpoint-09
+copy was stale: it described main @ 4a0bf9c, before the TU split was
+merged into branchA.)

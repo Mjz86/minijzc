@@ -2,7 +2,7 @@
 // === ast.hpp ========================================
 // the AST.
 
-#include "minijz/config.hpp"
+#include "../config.hpp"
 
 // ============================================================================
 // 3. AST (arena of nodes, indices instead of pointers — constexpr friendly)

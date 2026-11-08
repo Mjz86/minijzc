@@ -5,7 +5,7 @@
 // parses and validates the command line without paying for the compiler;
 // the heavy interpretation lives in cli_run.hpp / app_main.hpp.
 
-#include "minijz/base/pass_cfg.hpp"
+#include "../base/pass_cfg.hpp"
 
 #include <cstdint>
 #include <cstdio>

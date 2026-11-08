@@ -53,6 +53,56 @@
         "FUZZ_SHARDS": "4",
         "FUZZ_JOBS": "4"
       }
+    },
+    {
+      "name": "windows-llvm",
+      "displayName": "Windows: MinGW Makefiles + clang++ (no MSVC needed)",
+      "description": "the README Windows recipe: from a plain PowerShell with no Visual Studio environment -- never hits the NMake/nmake trap, CMakeLists.txt intercepts that one early with a friendly message",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build-win",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-ninja",
+      "displayName": "Windows: Ninja + clang++",
+      "description": "same as windows-llvm but with the Ninja generator (needs ninja in PATH; LLVM installs often bundle it)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "vs-clang",
+      "displayName": "Windows: Visual Studio 2022 + the clang-cl toolset",
+      "description": "for machines WITH VS installed: the VS generator + clang-cl (all quoted includes are portable now, so the -Wmicrosoft-include noise is gone)",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build-vs",
+      "toolset": {
+        "value": "clangcl",
+        "strategy": "external"
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
     }
   ],
   "buildPresets": [
@@ -61,6 +111,9 @@
     { "name": "clang", "configurePreset": "clang" },
     { "name": "fancy", "configurePreset": "fancy" },
     { "name": "header-only", "configurePreset": "header-only" },
-    { "name": "fuzz-wide", "configurePreset": "fuzz-wide" }
+    { "name": "fuzz-wide", "configurePreset": "fuzz-wide" },
+    { "name": "windows-llvm", "configurePreset": "windows-llvm" },
+    { "name": "windows-ninja", "configurePreset": "windows-ninja" },
+    { "name": "vs-clang", "configurePreset": "vs-clang" }
   ]
 }

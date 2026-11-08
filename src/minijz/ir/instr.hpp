@@ -2,7 +2,7 @@
 // === instr.hpp ========================================
 // IR core: vregs, versions, Instr/Block/Fn, enums K/B, helpers.
 
-#include "minijz/config.hpp"
+#include "../config.hpp"
 
 // ============================================================================
 // 5. IR: three-address code in basic blocks

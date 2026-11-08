@@ -6,19 +6,19 @@
 // included by prog/program.hpp in the header-only build (constexpr) and
 // by tu/prog.cpp in the multi-TU build — include it nowhere else.
 
-#include "minijz/front/parser.hpp"
-#include "minijz/ir/builder.hpp"
-#include "minijz/ir/destruct.hpp"
-#include "minijz/ir/stats.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/analysis/alias.hpp" // prog_handle_gates
-#include "minijz/opt/driver.hpp"         // optimize_prog (callgraph.hpp)
-#include "minijz/opt/interprocedural/tailrec.hpp" // opt_tailrec body
-#include "minijz/opt/interprocedural/scctco.hpp"  // opt_scc_tailcall body
-#include "minijz/back/stack_alloc.hpp"
-#include "minijz/runtime/astrun.hpp" // assign_slots
-#include "minijz/prog/printers.hpp"
-#include "minijz/prog/program.hpp"
+#include "../front/parser.hpp"
+#include "../ir/builder.hpp"
+#include "../ir/destruct.hpp"
+#include "../ir/stats.hpp"
+#include "../opt/analysis/an.hpp"
+#include "../opt/analysis/alias.hpp"          // prog_handle_gates
+#include "../opt/driver.hpp"                  // optimize_prog (callgraph.hpp)
+#include "../opt/interprocedural/tailrec.hpp" // opt_tailrec body
+#include "../opt/interprocedural/scctco.hpp"  // opt_scc_tailcall body
+#include "../back/stack_alloc.hpp"
+#include "../runtime/astrun.hpp" // assign_slots
+#include "printers.hpp"
+#include "program.hpp"
 
 #ifndef MJZ_PIPELINE_FN
 #ifdef MJZ_MULTI_CPP

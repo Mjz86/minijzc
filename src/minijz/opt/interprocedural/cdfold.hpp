@@ -3,10 +3,10 @@
 // countdown fold: replace tailrec'd exact-budget loops by closed
 // forms.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/linear/linform.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "../analysis/an.hpp"
+#include "../linear/linform.hpp"
 
 // ============================================================================
 // 9e5. COUNTDOWN LOOP CLOSED FORM (cdfold)

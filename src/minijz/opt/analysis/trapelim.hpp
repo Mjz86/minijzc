@@ -2,11 +2,11 @@
 // === trapelim.hpp ========================================
 // trap elimination + range-proved comparison folding.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/analysis/alias.hpp"
-#include "minijz/opt/analysis/an.hpp"
-#include "minijz/opt/analysis/intervals.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "alias.hpp"
+#include "an.hpp"
+#include "intervals.hpp"
 
 // --- 9d3c. trap elimination
 // ---------------------------------------------------- A Div/Mod whose divisor

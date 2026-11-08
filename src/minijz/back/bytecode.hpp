@@ -2,8 +2,8 @@
 // === bytecode.hpp ========================================
 // bytecode emission + listing/disassembly.
 
-#include "minijz/ir/instr.hpp"
-#include "minijz/back/vm.hpp"
+#include "../ir/instr.hpp"
+#include "vm.hpp"
 
 // ---- 13.5c. bytecode listing (disassembly)
 // -----------------------------------

@@ -5,10 +5,10 @@
 // emit_x64.hpp in the header-only build (constexpr) and by tu/backends.cpp
 // in the multi-TU build — include it nowhere else.
 
-#include "minijz/graph_lib.hpp"
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/back/emit_plan.hpp"
+#include "../graph_lib.hpp"
+#include "../base/pass_cfg.hpp"
+#include "../ir/instr.hpp"
+#include "emit_plan.hpp"
 
 #include <string>
 #include <string_view>

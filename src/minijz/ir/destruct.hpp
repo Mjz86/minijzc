@@ -3,9 +3,9 @@
 // SSA destruction: split critical edges, materialize phis as copies,
 // fuse copy chains.
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp" // Fn (was masked by the old an.hpp include)
-#include "minijz/ir/stats.hpp"
+#include "../base/pass_cfg.hpp"
+#include "instr.hpp" // Fn (was masked by the old an.hpp include)
+#include "stats.hpp"
 
 // ============================================================================
 // 9g. SSA DESTRUCTION — phis -> edge copies

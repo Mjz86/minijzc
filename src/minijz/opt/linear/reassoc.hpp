@@ -2,9 +2,9 @@
 // === reassoc.hpp ========================================
 // block-local linear-combination canonicalization (+,-,*c chains).
 
-#include "minijz/base/pass_cfg.hpp"
-#include "minijz/ir/instr.hpp"
-#include "minijz/opt/linear/linform.hpp"
+#include "../../base/pass_cfg.hpp"
+#include "../../ir/instr.hpp"
+#include "linform.hpp"
 
 // --- 9b3. reassociation: block-local linear-combination canonicalization -----
 // Chains of +, - and *-by-constant inside ONE basic block are collected into

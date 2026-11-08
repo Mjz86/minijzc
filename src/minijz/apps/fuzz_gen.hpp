@@ -2,8 +2,8 @@
 // === fuzz_gen.hpp ========================================
 // the differential fuzzer's program generator (GenCtx, gen_program).
 
-#include "minijz/prog/program.hpp"
-#include "minijz/prog/runners.hpp"
+#include "../prog/program.hpp"
+#include "../prog/runners.hpp"
 
 struct GenCtx {
   struct Arr {
