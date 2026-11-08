@@ -228,6 +228,7 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
     else if (a == "--no-reassoc") C.no_reassoc = true;
     else if (a == "--fuzz_dump") C.mjz_fuzz_dumps = true;
     else if (const char *v = val("--fuzz-jobs=")) C.fuzz_jobs = atol(v);
+    else if (a == "--debugger") C.debugger = true;
     else if (a == "--no-lcf") C.no_lcf = true;
     else if (a == "--no-divmagic") C.no_divmagic = true;
     else if (const char *v = val("--unroll=")) C.unroll = (unsigned)atol(v);

@@ -3,6 +3,7 @@
 // apps) and linked here.
 #include "minijz/apps/cli.hpp"
 #include "minijz/apps/shrink.hpp"
+#include "minijz/apps/debugger.hpp"
 
 int main(int argc, char **argv) {
   Cli C{};
@@ -81,6 +82,22 @@ int main(int argc, char **argv) {
     // --stdin=FILE wins; otherwise, if the program reads input() and stdin
     // still has data (program came from a file/-e, stdin is a pipe), the
     // piped bytes become the tape. Native builds get the tape verbatim.
+    // (--debugger reads its COMMANDS from stdin, so it never slurps here;
+    // a tape for a debugged program comes from --stdin=FILE)
+    if (C.debugger) {
+      if (!C.stdin_path.empty()) {
+        std::ifstream f(C.stdin_path, std::ios::binary);
+        if (f) {
+          C.stdin_text = std::string((std::istreambuf_iterator<char>(f)),
+                                      std::istreambuf_iterator<char>());
+          C.inputs = parse_inputs(C.stdin_text);
+        } else {
+          std::printf("cannot read --stdin file '%s'\n", C.stdin_path.c_str());
+          return 1;
+        }
+      }
+      return run_debugger(C, src);
+    }
     if (!C.stdin_path.empty()) {
       std::ifstream f(C.stdin_path, std::ios::binary);
       if (!f) {
