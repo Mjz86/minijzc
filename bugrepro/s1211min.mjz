@@ -1,0 +1,26 @@
+fn h0(p0, p1, p2) {
+}
+fn h5(p0, p1) {
+let a6 = array(6);
+}
+fn sw(a, b, n) { if (n <= 0) { return a; } return sw(b, a, n - 1); }
+let w7 = 8;
+let u8 = (((-91868 / -10) || (82922 < (w7 == 0 || 75 / w7 > 2))) > w7);
+let z9 = (w7 % -4);
+z9 = h5(5, ((z9 + -99996) * (len(z9) && 2)));
+if (sw(2, -1, input())) {
+}
+let c10 = 2;
+while (c10 > 0) {
+  c10 = c10 - 1;
+if (((len(z9) - u8) && (-47612 + h0(input(), -2, input())))) {
+let c11 = 2;
+while (c11 > 0) {
+  c11 = c11 - 1;
+if (-((input() % -5))) {
+if (((input() - input()) / -11)) { continue; }
+}
+print !(!((input() < z9)));
+}
+}
+}

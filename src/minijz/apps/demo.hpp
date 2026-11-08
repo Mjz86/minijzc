@@ -24,6 +24,10 @@ static const val_t DEMO_INS_DIVMAGIC[] = {1234567890123456789, -9876543210987654
 static const val_t DEMO_INS_LCFRT[] = {1000000};
 static const val_t DEMO_INS_CCALL[] = {5};
 static const val_t DEMO_INS_COUNT[] = {100};
+// regression tape for regr_notnot_compare (fuzz seed 1211's first 16
+// values; the boundary case is the EOF-0 read after the tape runs out)
+static const val_t DEMO_INS_NOTNOT[] = {35, -3, 32, 23, -22, -30, 40, -37,
+                                        14, -28, 15, -23, 21, -6, -12, -27};
 
 static const Demo demos[] = {
   {"sum_1_to_10",
@@ -300,6 +304,66 @@ static const Demo demos[] = {
    "let a = array(1000);\nlet i = 0;\n"
    "while (i < 1000) { a[i] = i; i = i + 1; }\nprint 7;\n",
    true},
+  // ---- regression demos (each pins one fixed miscompile; all found by
+  // differential fuzzing -- see examples/BUGFIXES.md) ----------------------
+  {"regr_scc_dispatch", // 2-member SCC whose members dispatch on n%4 before
+   // the sibling tail call: the sibling copy's entry body kept reading the
+   // RAW entry argument after its merge phis existed (scctco promote())
+   "fn a(n) { if (n==0) { return 1; } if (n%4==3) { return b(n/4); } "
+   "return a(n/4); }\n"
+   "fn b(n) { if (n==0) { return 2; } if (n%4==3) { return b(n/4); } "
+   "return a(n/4); }\n"
+   "print a(0);\nprint a(3);\nprint a(12);\nprint a(15);\nprint b(3);\n"
+   "print a(1);\nprint a(255);\nprint a(64);\nprint a(5);\n",
+   false},
+  {"regr_self_multisite", // 4 self tail sites + a base case (the fun_easy
+   // shape): tce_self's latch blocks were emitted in reverse order, so the
+   // chain never reached the header and n never rotated
+   "fn f(n) { if (n/4==0) { return n%4; } if (n%4==1) { return f(n/4); }\n"
+   "  if (n%4==2) { return f(n/4); } if (n%4==3) { return f(n/4); } "
+   "return f(n/4); }\n"
+   "print f(255);\nprint f(64);\nprint f(5);\nprint f(0);\nprint f(3);\n",
+   false},
+  {"regr_scc3_members", // 3-member tail SCC (m3a/m3b/m3c): tce_merge's
+   // header dispatch skipped the sel==2 test, so member c was unreachable
+   // and the countdown returned the wrong member's base
+   "fn a(n) { if (n == 0) { return 7; } return b(n - 1); }\n"
+   "fn b(n) { if (n == 0) { return 8; } return c(n - 1); }\n"
+   "fn c(n) { if (n == 0) { return 9; } return a(n - 1); }\n"
+   "print a(5);\nprint a(0);\nprint a(1);\nprint a(2);\nprint a(6);\n"
+   "print b(4);\nprint c(7);\n",
+   false},
+  {"regr_scc4_dispatch", // the fun/fun1/fun2/fun3 shape from
+   // examples/general.mjz: 4 mutually tail-recursive members
+   "fn f(n) { if (n==0) { return 0; } if (n%4==1) { return f1(n/4); }\n"
+   "  if (n%4==2) { return f2(n/4); } if (n%4==3) { return f3(n/4); } "
+   "return f(n/4); }\n"
+   "fn f1(n) { if (n==0) { return 1; } if (n%4==1) { return f1(n/4); }\n"
+   "  if (n%4==2) { return f2(n/4); } if (n%4==3) { return f3(n/4); } "
+   "return f(n/4); }\n"
+   "fn f2(n) { if (n==0) { return 2; } if (n%4==1) { return f1(n/4); }\n"
+   "  if (n%4==2) { return f2(n/4); } if (n%4==3) { return f3(n/4); } "
+   "return f(n/4); }\n"
+   "fn f3(n) { if (n==0) { return 3; } if (n%4==1) { return f1(n/4); }\n"
+   "  if (n%4==2) { return f2(n/4); } if (n%4==3) { return f3(n/4); } "
+   "return f(n/4); }\n"
+   "print f(255);\nprint f(64);\nprint f(5);\nprint f(0);\n"
+   "print f(85);\nprint f3(255);\n",
+   false},
+  {"regr_notnot_compare", // !!(a < b) was mis-compiled to a <= b: the
+   // notcomb negation table mapped Ge to Le instead of Lt; only visible
+   // when the compare's left side hits the boundary value
+   "fn h0(p0, p1, p2) { }\n"
+   "let z = 0;\n"
+   "if (input()) { }\n"
+   "let c = 2;\n"
+   "while (c > 0) {\n  c = c - 1;\n"
+   "  if ((len(z) - 1) && (-47612 + h0(input(), -2, input()))) {\n"
+   "    let d = 2;\n    while (d > 0) {\n      d = d - 1;\n"
+   "      if (-((input() % -5))) {\n"
+   "        if (((input() - input()) / -11)) { continue; }\n      }\n"
+   "      print !(!((input() < z)));\n    }\n  }\n}\n",
+   false, DEMO_INS_NOTNOT, 16},
 };
 
 static void run_demos() {

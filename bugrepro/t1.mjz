@@ -1,0 +1,21 @@
+fn h0(p0, p1, p2) {
+}
+fn h5(p0, p1) {
+let a6 = array(6);
+}
+let z9 = 0;
+z9 = h5(5, 0);
+let c10 = 2;
+while (c10 > 0) {
+  c10 = c10 - 1;
+if ((len(z9) && h0(input(), -2, input()))) {
+let c11 = 2;
+while (c11 > 0) {
+  c11 = c11 - 1;
+if (-((input() % -5))) {
+if (((input() - input()) / -11)) { continue; }
+}
+print !(!((input() < z9)));
+}
+}
+}

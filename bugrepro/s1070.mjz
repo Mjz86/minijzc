@@ -1,0 +1,54 @@
+fn h0(p0, p1) {
+print (p1 != 0 && 80 / p1 > 1);
+let c1 = 3;
+while (c1 > 0) {
+  c1 = c1 - 1;
+if (((c1 + 9) / 10)) {
+print (((-9627 % 7) % 2) - (p0 != 0 && 80 / p0 < 3));
+print (((59 > 7) / 4) / 6);
+} else {
+print (-62 && ((p0 % 11) < (p1 != 0 && 64 / p1 < -3)));
+print !(-(91799));
+}
+let v2 = (((-6 / -8) - (p0 && (c1 != 0 && 19 / c1 > -2))) > (9 + (5 > -9)));
+}
+print (((5 - -3) < 53) % -2);
+  return ((0 - -46) > -(-39));
+}
+fn h3(p0, p1) {
+if (((6 || h0(-3, 3)) == -5)) {
+let v4 = 3;
+print (!((h0(((p1 == p0) - (-24815 == p0)), -3) || v4)) / -5);
+} else {
+if (((3 / 9) + -(-8))) {
+p1 = ((6 > (p0 * 91)) / -7);
+print -((!(h0(-3, 7)) / 3));
+}
+}
+  return ((-81 - h0(5, ((60213 - -53209) + 35480))) != (h0(((-6 - p1) && (p0 + 9)), -1) && -3));
+}
+fn rec(n) { if (n <= 0) { return 0; } return rec(n - 1) + n; }
+fn pe(n) { if (n <= 0) { return 1; } return po(n - 1); }
+fn po(n) { if (n <= 0) { return 0; } return pe(n - 1); }
+fn rgcd(a, b) { if (b == 0) { return a; } return rgcd(b, a % b); }
+fn m3a(n) { if (n == 0) { return 7; } return m3b(n - 1); }
+fn m3b(n) { if (n == 0) { return 8; } return m3c(n - 1); }
+fn m3c(n) { if (n == 0) { return 9; } return m3a(n - 1); }
+print 3;
+let c5 = 1;
+while (c5 > 0) {
+  c5 = c5 - 1;
+print !(6);
+}
+print 3;
+let m6 = 2;
+print (-((1 % -2)) || ((-34375 / -5) != (m6 * -6)));
+print m3a(5);
+if (((h3(-7, ((6 - 9) + (len(m6) + m6))) < 8) >= ((m6 != 0 && 89 / m6 < 1) + m6))) {
+print (((7 < len(m6)) % -10) + -((7 || m6)));
+} else {
+let a7 = array(5);
+}
+print (-38862 / 12);
+let a8 = array(4);
+

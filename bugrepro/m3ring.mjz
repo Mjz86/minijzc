@@ -1,0 +1,4 @@
+fn m3a(n) { if (n == 0) { return 7; } return m3b(n - 1); }
+fn m3b(n) { if (n == 0) { return 8; } return m3c(n - 1); }
+fn m3c(n) { if (n == 0) { return 9; } return m3a(n - 1); }
+print m3a(5);

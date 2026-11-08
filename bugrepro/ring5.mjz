@@ -1,0 +1,6 @@
+fn a(n) { if (n == 0) { return 1; } return b(n - 1); }
+fn b(n) { if (n == 0) { return 2; } return c(n - 1); }
+fn c(n) { if (n == 0) { return 3; } return d(n - 1); }
+fn d(n) { if (n == 0) { return 4; } return e(n - 1); }
+fn e(n) { if (n == 0) { return 5; } return a(n - 1); }
+print a(input());

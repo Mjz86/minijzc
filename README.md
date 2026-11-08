@@ -37,7 +37,8 @@ src/minijz/           the compiler as a header-only constexpr library
 src/minijz.hpp         umbrella (single-TU / constexpr build)
 src/tu/*.cpp           the multi-cpp translation units
 tests/                  constexpr_check.cpp (cx proofs), unit_tests.cpp
-examples/ demos/        showcase programs (+ general.in input tape)
+examples/ demos/        showcase programs (+ general.in input tape), BUGFIXES.md
+bugrepro/               historical repros for bugs 1-5, see examples/BUGFIXES.md
 cmake/                  run_showcases.cmake
 ```
 

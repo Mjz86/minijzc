@@ -259,6 +259,9 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
   fn.blocks = std::move(nbl);
   fn.succ.assign(2 * fn.nblocks(), NONE);
   for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+    if (fn.blocks[b].begin >= fn.blocks[b].end)
+      continue; // empty/tombstone: reading code[end-1] would steal the
+                // PREVIOUS block's terminator and forge ghost edges
     const Instr &term = fn.code[fn.blocks[b].end - 1];
     if (term.k == K::Br) fn.succ[2 * b] = term.t;
     else if (term.k == K::Cbr) {
@@ -542,6 +545,8 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
   Fm.blocks = std::move(nbl);
   Fm.succ.assign(2 * Fm.nblocks(), NONE);
   for (uint32_t b = 0; b < Fm.nblocks(); ++b) {
+    if (Fm.blocks[b].begin >= Fm.blocks[b].end)
+      continue; // empty/tombstone: never read code[end-1] of an empty range
     const Instr &term = Fm.code[Fm.blocks[b].end - 1];
     if (term.k == K::Br) Fm.succ[2 * b] = term.t;
     else if (term.k == K::Cbr) {
