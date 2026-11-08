@@ -147,51 +147,6 @@ mjz_f1:
   jmp .LF1_37
   xorl %edi, %edi
   call exit
-mjz_f2:
-  pushq %rbp
-  movq %rsp, %rbp
-  pushq %rbx
-  pushq %r12
-  pushq %r13
-  pushq %r14
-  incq mjz_depth(%rip)
-  cmpq $512, mjz_depth(%rip)
-  jg mjz_trap
-  movq %rdi, %rbx
-  movq %rsi, %r12
-  movq $511, %r13
-.LF2_1:
-  cmpq $0, %rbx
-  jg .LF2_4
-  movq %r12, %rax
-  decq mjz_depth(%rip)
-  popq %r14
-  popq %r13
-  popq %r12
-  popq %rbx
-  popq %rbp
-  ret
-.LF2_4:
-  movq %rbx, %r14
-  subq $1, %r14
-  addq %rbx, %r12
-  subq $1, %r13
-  cmpq $0, %r13
-  jge .LF2_9
-  jmp mjz_trap
-  movq %rbx, %rax
-  decq mjz_depth(%rip)
-  popq %r14
-  popq %r13
-  popq %r12
-  popq %rbx
-  popq %rbp
-  ret
-.LF2_9:
-  movq %r14, %rbx
-  jmp .LF2_1
-  xorl %edi, %edi
-  call exit
   .globl main
   .type main, @function
 main:
@@ -201,8 +156,6 @@ main:
   pushq %r12
   pushq %r13
   pushq %r14
-  pushq %r15
-  subq $8, %rsp
   call mjz_input
   movq %rax, %rbx
   movq %rbx, %rdi
@@ -270,18 +223,11 @@ main:
   cmpq %rcx, %rax
   setne %dl
   movzbq %dl, %rbx
-  movq %rbx, %r13
-  sarq $63, %r13
-  movq %rbx, %r12
-  xorq %r13, %r12
-  subq %r13, %r12
-  movq %r12, %rax
+  movq %rbx, %rax
   movabsq $-7905747460161236406, %rcx
   mulq %rcx
   movq %rdx, %r12
   shrq $2, %r12
-  xorq %r13, %r12
-  subq %r13, %r12
   imulq $7, %r12
   subq %r12, %rbx
   addq $-9, %rbx
@@ -332,63 +278,40 @@ main:
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
-  movq $0, %r12
-.Lb42:
-  cmpq $5, %r12
-  jge .Lb44
-  movq %r12, %r13
-  addq $1, %r13
-  movq $-9, %rdi
-  call mjz_len
-  movq %rax, %r12
-  movq $-93535, %rax
-  movq %r12, %rcx
-  cmpq %rcx, %rax
-  setl %dl
-  movzbq %dl, %r14
-  movq %r14, %r15
-  sarq $63, %r15
-  movq %r14, %r12
-  xorq %r15, %r12
-  subq %r15, %r12
-  movq %r12, %rax
-  movabsq $-7905747460161236406, %rcx
-  mulq %rcx
-  movq %rdx, %r12
-  shrq $2, %r12
-  xorq %r15, %r12
-  movq %r12, %rcx
-  movq %r15, %r12
-  subq %rcx, %r12
-  imulq $-7, %r12
-  movq %r12, %rcx
-  movq %r14, %r12
-  subq %rcx, %r12
-  testq %r12, %r12
-  je .Lb46
-  testq %r13, %r13
-  jne .Lb49
-  movq %rbx, %rdi
-  call mjz_len
-  movq %rax, %r12
-  testq %r12, %r12
-  jne .Lb49
-  movq $0, %r12
-.Lb51:
-  movq %r12, %r14
-  subq $-12710, %r14
-  movq %r14, %r12
-  sarq $63, %r12
-  andq $1, %r12
-  addq %r14, %r12
-  sarq $1, %r12
-  movq %r12, %rsi
+  movq $6355, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
-.Lb47:
-  movq %r13, %r12
-  jmp .Lb42
+  movq $6355, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  movq $6355, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  movq $6355, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  movq $6355, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  movq $7, %r14
+  movq $4, %r13
+  movq $511, %r12
+.Lb161:
+  cmpq $0, %r14
+  jg .Lb164
+  movq %r13, %rbx
+.Lb169:
+  movq %rbx, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  xorl %edi, %edi
+  call exit
 .Lb6:
   movq $0, %rbx
   jmp .Lb7
@@ -402,194 +325,18 @@ main:
   xorl %eax, %eax
   call printf
   jmp .Lb14
-.Lb44:
-  movq $32, %rsi
-  leaq .Lfmt(%rip), %rdi
-  xorl %eax, %eax
-  call printf
-  xorl %edi, %edi
-  call exit
-.Lb46:
-  movq %rbx, %rdi
-  movq $0, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rdi
-  movq $1, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rsi
-  leaq .Lfmt(%rip), %rdi
-  xorl %eax, %eax
-  call printf
-  call mjz_input
-  movq %rax, %r12
-  testq %r12, %r12
-  jne .Lb53
-  movq %rbx, %rdi
-  movq $2, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rdi
-  movq $0, %rsi
-  call mjz_load
-  movq %rax, %r12
-  testq %r12, %r12
-  jne .Lb53
-  movq $0, %r12
-.Lb55:
-  movq %r12, %rcx
-  movq $96429, %r12
-  subq %rcx, %r12
-  testq %r12, %r12
-  je .Lb57
-  movq %rbx, %rdi
-  movq $0, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rdi
-  movq $0, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq $-9, %rdi
-  call mjz_len
-  movq %rax, %r14
-  movq %rbx, %rdi
-  movq $1, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rdi
-  movq $1, %rsi
-  call mjz_load
-  movq %rax, %r12
-  subq %r12, %r14
-  movq %r14, %r15
-  sarq $63, %r15
-  movq %r14, %r12
-  xorq %r15, %r12
-  subq %r15, %r12
-  movq %r12, %rax
-  movabsq $-5030930201920786804, %rcx
-  mulq %rcx
-  movq %rdx, %r12
-  shrq $3, %r12
-  xorq %r15, %r12
-  movq %r12, %rcx
-  movq %r15, %r12
-  subq %rcx, %r12
-  imulq $-11, %r12
-  movq %r12, %rcx
-  movq %r14, %r12
-  subq %rcx, %r12
-  testq %r12, %r12
-  je .Lb61
-.Lb62:
-.Lb58:
-  jmp .Lb47
-.Lb53:
-  movq $1, %r12
-  jmp .Lb55
-.Lb57:
-  movq %rbx, %rdi
-  movq $0, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rdi
-  movq $1, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rcx
-  movq %r13, %r12
-  subq %rcx, %r12
-  testq %r12, %r12
-  je .Lb69
-.Lb70:
-  call mjz_input
-  movq %rax, %r12
-  movq %r13, %r14
-  addq %r12, %r14
-  movq %rbx, %rdi
-  movq $0, %rsi
-  call mjz_load
-  movq %rax, %r12
-  movq %r12, %rdi
-  call mjz_len
-  movq %rax, %r12
-  addq %r13, %r12
-  movq %r12, %r15
-  sarq $63, %r15
-  xorq %r15, %r12
-  subq %r15, %r12
-  movq %r12, %rax
-  movabsq $-7905747460161236406, %rcx
-  mulq %rcx
-  movq %rdx, %r12
-  shrq $2, %r12
-  xorq %r15, %r12
-  movq %r12, %rcx
-  movq %r15, %r12
-  subq %rcx, %r12
-  movq %r12, %rdi
-  movq $3, %rsi
-  call mjz_f2
-  movq %rax, %r12
-  cmpq %r14, %r12
-  jge .Lb73
-  cmpq $0, %r13
-  je .Lb77
-  movq $22, %rax
-  movq %r13, %rcx
-  cqto
-  idivq %rcx
-  movq %rax, %r12
-  cmpq $2, %r12
-  jge .Lb77
-  movq $1, %r12
-.Lb78:
-  call mjz_input
-  movq %rax, %r15
-  movq $511, %r14
-.Lb130:
-  cmpq $0, %r15
-  jg .Lb133
-  movq $1, %r14
-.Lb144:
-.Lb145:
-  addq %r14, %r12
+.Lb164:
+  movq %r14, %rbx
+  subq $1, %rbx
+  addq %r14, %r13
+  subq $1, %r12
   cmpq $0, %r12
-  jne .Lb73
-.Lb74:
-  jmp .Lb58
-.Lb69:
-  jmp .Lb70
-.Lb77:
-  movq $0, %r12
-  jmp .Lb78
-.Lb133:
-  subq $1, %r15
-  subq $1, %r14
-  cmpq $0, %r14
-  jl .Lb137
-  cmpq $0, %r15
-  jg .Lb140
-  movq $0, %r14
-  jmp .Lb145
-.Lb140:
-  subq $1, %r15
-  subq $1, %r14
-  cmpq $0, %r14
-  jl .Lb137
-  jmp .Lb130
-.Lb137:
+  jge .Lb171
   jmp mjz_trap
-  jmp .Lb144
-.Lb73:
-  jmp .Lb74
-.Lb61:
-  jmp .Lb62
-.Lb49:
-  movq $1, %r12
-  jmp .Lb51
+  jmp .Lb169
+.Lb171:
+  movq %rbx, %r14
+  jmp .Lb161
 mjz_trap:
   pushq %rbp
   movq %rsp, %rbp

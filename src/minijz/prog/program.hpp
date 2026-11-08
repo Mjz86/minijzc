@@ -160,6 +160,13 @@ static OptStats sum_ostats(const Program &P) {
     t.mem2reg_dses += U.ostats.mem2reg_dses;
     t.scctco += U.ostats.scctco;
     t.scctco_folds += U.ostats.scctco_folds;
+    t.sccp_consts += U.ostats.sccp_consts;
+    t.sccp_brs += U.ostats.sccp_brs;
+    t.ld_fwds += U.ostats.ld_fwds;
+    t.ld_cses += U.ostats.ld_cses;
+    t.rangecmps += U.ostats.rangecmps;
+    t.cmpfacts += U.ostats.cmpfacts;
+    t.callcses += U.ostats.callcses;
     if (U.ostats.iters > t.iters) t.iters = U.ostats.iters;
   }
   return t;

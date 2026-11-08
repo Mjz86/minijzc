@@ -12,8 +12,17 @@
 
 // --- 9a. constant folding / propagation / branch folding / identities -------
 // known: vreg -> const value. iterates to fixpoint.
+// The def-index map powers the two-def identities: 0-(0-x) and the
+// compare-domain facts (a compare result is EXACTLY 0/1, which decides
+// `t & 1', `t % 2', `t >> k', `t & ~1' and `t ^ 1' = NOT t).
 constexpr bool opt_constprop(Fn &fn, OptStats &os, bool is_main = false) {
   bool changed_any = false;
+  const uint32_t nv0 = fn.nvars + (uint32_t)fn.version_base.size();
+  std::vector<uint32_t> defi(nv0, NONE);
+  for (uint32_t b = 0; b < fn.nblocks(); ++b)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+      if (fn.code[i].dst != NONE && fn.code[i].dst < nv0)
+        defi[fn.code[i].dst] = i;
   for (int round = 0; round < 12; ++round) {
     bool changed = false;
     std::vector<char> known;
@@ -40,6 +49,70 @@ constexpr bool opt_constprop(Fn &fn, OptStats &os, bool is_main = false) {
           if (ka) { I.k = K::Const; I.c = av; os.folds++; changed = true; }
           break;
         case K::Bin: {
+          // compare-def lookup for the compare-domain identities: is vreg v
+          // EXACTLY one compare result (0/1)?
+          auto cmp_def = [&](uint32_t v, uint32_t &ca, uint32_t &cb,
+                             B &cop) -> bool {
+            if (v == NONE || v >= nv0 || defi[v] == NONE) return false;
+            const Instr &D = fn.code[defi[v]];
+            if (D.k != K::Bin) return false;
+            switch (D.b) {
+            case B::Lt: case B::Le: case B::Gt:
+            case B::Ge: case B::Eq: case B::Ne:
+              ca = D.a; cb = D.b2; cop = D.b;
+              return true;
+            default: return false;
+            }
+          };
+          auto inv_cmp = [](B b) -> B { // negation of a comparison
+            switch (b) {
+            case B::Lt: return B::Ge;
+            case B::Le: return B::Gt;
+            case B::Gt: return B::Le;
+            case B::Ge: return B::Lt;
+            case B::Eq: return B::Ne;
+            case B::Ne: return B::Eq;
+            default: return b;
+            }
+          };
+          // ---- compare-domain facts: t is exactly 0/1 ----
+          if (kb) {
+            uint32_t ca = NONE, cb = NONE;
+            B cop{};
+            bool t_is_cmp = cmp_def(I.a, ca, cb, cop);
+            if (t_is_cmp) {
+              if (I.b == B::And && bv == 1) { // (cmp) & 1 = cmp
+                I.k = K::Copy; os.copies++; os.cmpfacts++; changed = true; break;
+              }
+              if (I.b == B::Mod && bv == 2) { // (cmp) % 2 = cmp (no trap: 0/1)
+                I.k = K::Copy; os.copies++; os.cmpfacts++; changed = true; break;
+              }
+              if (I.b == B::And && bv == -2) { // (cmp) & ~1 = 0
+                I.k = K::Const; I.c = 0; os.folds++; os.cmpfacts++; changed = true; break;
+              }
+              if ((I.b == B::LShr || I.b == B::AShr) && bv >= 1) { // 0/1 >> k
+                I.k = K::Const; I.c = 0; os.folds++; os.cmpfacts++; changed = true; break;
+              }
+              if (I.b == B::Xor && bv == 1) { // (cmp) ^ 1 = NOT(cmp)
+                I.b = inv_cmp(cop);
+                I.a = ca;
+                I.b2 = cb;
+                os.cmpfacts++;
+                changed = true;
+                break;
+              }
+            }
+          }
+          // ---- double negation: 0 - (0 - x) = x ----
+          if (I.b == B::Sub && ka && av == 0 && I.b2 != NONE &&
+              I.b2 < nv0 && defi[I.b2] != NONE && I.b2 != I.a) {
+            const Instr &D = fn.code[defi[I.b2]];
+            val_t zv{};
+            if (D.k == K::Bin && D.b == B::Sub && D.a != NONE && D.a < nv0 &&
+                is_known(D.a, zv) && zv == 0) {
+              I.k = K::Copy; I.a = D.b2; os.copies++; changed = true; break;
+            }
+          }
           // algebraic identities (never introduce traps: the operand-defining
           // instrs still execute; we only recompute THIS instr's value)
           if (I.b == B::Add || I.b == B::Sub) {
@@ -92,6 +165,9 @@ constexpr bool opt_constprop(Fn &fn, OptStats &os, bool is_main = false) {
             }
           }
           if (I.a != NONE && I.a == I.b2) { // same vreg both sides (no traps)
+            if (I.b == B::And || I.b == B::Or) { // x & x = x ; x | x = x
+              I.k = K::Copy; os.copies++; changed = true; break;
+            }
             int which = -1; // -1 keep, 0 -> Const 0, 1 -> Const 1
             switch (I.b) {
             case B::Sub: case B::Lt: case B::Gt: which = 0; break;

@@ -298,6 +298,9 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
   else if (eq("tailrec")) p.p_tailrec = on;
   else if (eq("cdfold")) p.p_cdfold = on;
   else if (eq("ifconv")) p.p_ifconv = on;
+  else if (eq("sccp")) p.p_sccp = on;
+  else if (eq("ldelim")) p.p_ldelim = on;
+  else if (eq("callcse")) p.p_callcse = on;
   else if (eq("inline")) p.do_inline = on;
   else {
     err = n;
@@ -365,7 +368,9 @@ static RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "canon %u+%u | brs %u | cbr== %u | dead-blk %u | splice %u | "
         "phi-degen %u | dce %u | hoist %u | INLINED %u | UNROLLED %u | "
         "REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | NOTCOMB %u | "
-        "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u)\n"
+        "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
+        "SCCP %u(+%ubr) | LD-FWD %u | LD-CSE %u | RANGE-CMP %u | "
+        "CMP-FACT %u | CALL-CSE %u\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
         P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i,
@@ -380,7 +385,10 @@ static RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.divmagics, (unsigned)os.notcombs,
         (unsigned)os.traps_killed, (unsigned)os.mem2reg_lifts,
         (unsigned)os.mem2reg_dses, (unsigned)os.scctco,
-        (unsigned)os.scctco_folds, (unsigned)de_c,
+        (unsigned)os.scctco_folds, (unsigned)os.sccp_consts,
+        (unsigned)os.sccp_brs, (unsigned)os.ld_fwds, (unsigned)os.ld_cses,
+        (unsigned)os.rangecmps, (unsigned)os.cmpfacts, (unsigned)os.callcses,
+        (unsigned)de_c,
         (unsigned)dz_c, (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
   }
   if (C.print_ir) {

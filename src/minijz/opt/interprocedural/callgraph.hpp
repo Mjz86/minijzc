@@ -9,6 +9,7 @@
 #include "minijz/opt/analysis/an.hpp"
 #include "minijz/opt/scalar/dce.hpp"
 #include "minijz/opt/loop/lcf_rt.hpp"
+#include "minijz/opt/interprocedural/callcse.hpp"
 
 struct CallGraph {
   std::vector<std::vector<ulen>> adj{}; // caller -> callees (with dups)
@@ -495,6 +496,15 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
       inline_rounds(2); // merged leaves are tiny: inline them into callers
     }
   }
+  // ---- 9e3b: pure-call CSE ---------------------------------------------
+  // dedupe repeated calls to provably-pure functions: after the inliner
+  // rounds, exactly the multi-use and recursive calls remain, and those
+  // are the ones users ask twice (gcd(a,b) style shapes). Runs BEFORE
+  // const-call so a pair where one site has constant arguments folds once.
+  // The rewritten Copies are folded by the constcall re-fold below and the
+  // final full optimize.
+  if (cfg.p_callcse)
+    (void)opt_callcse(fns, ostats);
   // ---- 9e3: const-call evaluation ---------------------------------------
   // pure fns called with constant arguments are evaluated exactly at
   // compile time (recursion included -- the call graph is just a CFG to

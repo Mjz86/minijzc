@@ -3,6 +3,7 @@
 #include "minijz/opt/interprocedural/scctco.hpp"
 #include "minijz/opt/interprocedural/tailrec.hpp"
 #include "minijz/opt/interprocedural/cdfold.hpp"
+#include "minijz/opt/interprocedural/callcse.hpp"
 #include "minijz/opt/driver.hpp"
 #include "minijz/ir/destruct.hpp"
 namespace minijz_tu_marker {
