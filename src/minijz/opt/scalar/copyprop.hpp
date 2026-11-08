@@ -11,11 +11,27 @@
 // vreg exactly one def, and the copy's source dominates the copy, hence the
 // source dominates every replaced use — always sound. This is the pass that
 // cleans up phi-to-copy degenerations and lets CSE see canonical names.
+//
+// The dominance argument does NOT hold for CROSSED phi-degenerate copies:
+// around a loop, degeneration can materialize `t473 = t496` and
+// `t496 = t521` + `t521 = t473` (each source is only defined on the incoming
+// edge, not dominating). Recording ren[dst] = resolve(a) for the closing copy
+// then yields resolve(a) == dst — a SELF-LOOP that sends every later resolve
+// into an infinite `while (ren[v] != NONE)` walk (fuzz seed 7406, -O1 with
+// dce disabled, hung here). Such crossed copies stay unpropagated instead:
+// uses keep their original names (conservative, still sound).
 constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   std::vector<uint32_t> ren(nv, NONE);
   auto resolve = [&](uint32_t v) -> uint32_t {
-    while (v != NONE && v < nv && ren[v] != NONE) v = ren[v];
+    uint32_t steps = 0;
+    while (v != NONE && v < nv && ren[v] != NONE) {
+      v = ren[v];
+      // belt-and-braces: ren stays acyclic by construction (single write per
+      // dst + the self-loop guard below); the cap keeps any future
+      // multi-def IR from resurrecting the infinite walk
+      if (++steps > nv) break;
+    }
     return v;
   };
   bool had = false;
@@ -23,7 +39,9 @@ constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
       if (I.k == K::Copy && I.dst != NONE && I.a != NONE && I.a != I.dst) {
-        ren[I.dst] = resolve(I.a); // sources resolve transitively: chains die
+        uint32_t r = resolve(I.a); // sources resolve transitively: chains die
+        if (r != I.dst)            // r == dst: crossed pair — do not record
+          ren[I.dst] = r;          // (a self-loop entry would never resolve)
         had = true;
       }
     }
