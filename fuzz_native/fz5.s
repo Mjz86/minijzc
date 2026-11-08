@@ -238,19 +238,13 @@ main:
   cmpq %rcx, %rax
   setl %dl
   movzbq %dl, %r14
-  movq %r14, %r15
-  sarq $63, %r15
-  movq %r14, %r13
-  xorq %r15, %r13
-  subq %r15, %r13
-  movq %r13, %rax
+  movq %r14, %rax
   movabsq $-6148914691236517205, %rcx
   mulq %rcx
   movq %rdx, %r13
   shrq $2, %r13
-  xorq %r15, %r13
   movq %r13, %rcx
-  movq %r15, %r13
+  movq $0, %r13
   subq %rcx, %r13
   imulq $-6, %r13
   movq %r13, %rcx

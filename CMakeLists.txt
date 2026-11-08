@@ -227,6 +227,16 @@ add_test(NAME bugrepro_s7406_hangcfg
           -O1 --disable=dce)
 set_tests_properties(bugrepro_s7406_hangcfg PROPERTIES TIMEOUT 60 LABELS regr)
 
+# bug 7 (see examples/BUGFIXES.md §7): iv_refine's Gt/Ge swap leaked through
+# the caller bindings, so `while (c > 0)` pinned c to [0,0] in the body —
+# the range-proved compare folding then rewired the || guard around 99/c6.
+# Only bites without canon/dce (they restructure the loop first); the
+# plain -O3 gates above pass either way.
+add_test(NAME bugrepro_s4412_rangecfg
+  COMMAND minijz ${CMAKE_CURRENT_SOURCE_DIR}/bugrepro/s4412.mjz --check-all
+          -O2 --disable=canon,dce)
+set_tests_properties(bugrepro_s4412_rangecfg PROPERTIES TIMEOUT 60 LABELS regr)
+
 # ---------------------------------------------------------------------------
 # showcases: build the showcase programs at several -O levels and keep a
 # GIT SUBDIRECTORY in the build folder so successive builds can be diffed

@@ -1,6 +1,6 @@
 #pragma once
 // === trapelim.hpp ========================================
-// trap elimination: prove div/mod/load/store traps impossible.
+// trap elimination + range-proved comparison folding.
 
 #include "minijz/base/pass_cfg.hpp"
 #include "minijz/ir/instr.hpp"
@@ -15,7 +15,9 @@
 // DCE/LICM may treat it as pure, and the closed-form/simulation loop passes may
 // delete the loop computing it. A Load/Store whose handle provably names ONE
 // constant-length allocation with a constant in-range index can never trap
-// either.
+// either. The same walk folds COMPARISONS the value-range intervals already
+// decide (x.hi < y.lo etc.): comparisons never trap, so a decided outcome is
+// a constant, which the tier-0 fold pass then threads into branches.
 constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
   Ranges RA = range_analyze(fn, A);
   if (!RA.ok)
@@ -40,6 +42,42 @@ constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
   auto nz = [](const Iv &i) { return i.bot || i.hi < 0 || i.lo > 0; };
   auto nm1 = [](const Iv &i) { return i.bot || i.hi < -1 || i.lo > -1; };
   auto nmin = [](const Iv &i) { return i.bot || i.lo > INT64_MIN; };
+  // range-proved comparison folding: comparisons never trap, so an outcome
+  // the intervals already decide is a constant. x.hi < y.lo decides every
+  // ordering; disjoint intervals decide ==/!=; two singletons decide all
+  // six (via the exact evaluator).
+  auto fold_cmp = [&](B b, const Iv &x, const Iv &y, val_t &out) -> bool {
+    if (x.bot || y.bot)
+      return false;
+    if (x.lo == x.hi && y.lo == y.hi) { // both singletons: exact
+      Rv r = w_bin(b, x.lo, y.lo);
+      if (r.trap)
+        return false; // unreachable for comparisons; be safe
+      out = r.v;
+      return true;
+    }
+    if (x.hi < y.lo || x.lo > y.hi) { // provably disjoint / ordered
+      switch (b) {
+      case B::Lt:
+      case B::Le:
+        out = (x.hi < y.lo) ? 1 : 0;
+        return true;
+      case B::Gt:
+      case B::Ge:
+        out = (x.hi < y.lo) ? 0 : 1;
+        return true;
+      case B::Eq:
+        out = 0;
+        return true;
+      case B::Ne:
+        out = 1;
+        return true;
+      default:
+        return false;
+      }
+    }
+    return false;
+  };
   bool changed = false;
   std::vector<Iv> st(nv);
   for (uint32_t b = 0; b < nb; ++b) {
@@ -49,7 +87,21 @@ constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
       Instr &I = fn.code[i];
       if (I.k == K::Phi)
         continue; // entry rule already covered phis
-      if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) && !I.nt) {
+      if (I.k == K::Bin &&
+          (I.b == B::Lt || I.b == B::Le || I.b == B::Gt || I.b == B::Ge ||
+           I.b == B::Eq || I.b == B::Ne) &&
+          I.a != NONE && I.a < nv && I.b2 != NONE && I.b2 < nv) {
+        // range-proved comparison folding (comparisons never trap)
+        val_t out{};
+        if (fold_cmp(I.b, st[I.a], st[I.b2], out)) {
+          I.k = K::Const;
+          I.c = out;
+          I.a = NONE;
+          I.b2 = NONE;
+          os.rangecmps++;
+          changed = true;
+        }
+      } else if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) && !I.nt) {
         Iv dv = (I.b2 != NONE && I.b2 < nv) ? st[I.b2] : Iv{};
         Iv dd = (I.a != NONE && I.a < nv) ? st[I.a] : Iv{};
         if (nz(dv) && (nm1(dv) || nmin(dd))) {

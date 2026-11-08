@@ -1,6 +1,6 @@
 #pragma once
 // === pass_cfg.hpp ========================================
-// PassCfg (-O presets, per-pass toggles), the 20-name toggle table
+// PassCfg (-O presets, per-pass toggles), the 23-name toggle table
 // shared by CLI/fuzzer/--shrink, apply_pass_flag, describe_cfg.
 
 #include "minijz/config.hpp"
@@ -11,19 +11,22 @@
 // PassCfg is the single configuration threaded from the CLI through
 // compile() -> optimize_prog() -> optimize(). Passes live in three cost
 // tiers and the scheduler runs them with a strict discipline:
-//   tier 0 "cheap"    : constprop, copyprop, canon, cse, unreachable,
+//   tier 0 "cheap"    : sccp, constprop, copyprop, canon, cse, unreachable,
 //                       splice, dce -- always run to a FIXPOINT first
 //   tier 1 "middle"   : mem2reg (array lifting + dead stores + dead
-//                       allocs), trapelim(+range analysis), licm, divmagic,
-//                       reassoc -- one round each, followed by a tier-0
-//                       fixpoint, repeated until global fixpoint / --fp-limit
+//                       allocs), ldelim (store->load forwarding + load
+//                       CSE), trapelim(+range analysis + compare
+//                       folding), licm, divmagic, reassoc -- one round
+//                       each, followed by a tier-0 fixpoint, repeated
+//                       until global fixpoint / --fp-limit
 //   tier 2 "expensive": unroll, lcf -- CFG restructuring, run ONLY after
 //                       tiers 0/1 reached their fixpoint; each round is
 //                       followed by full tier-0 (+1) fixpoints again.
-//                       const-call evaluation is interprocedural (driven
-//                       from optimize_prog, after the inlining rounds):
-//                       pure constant-argument calls are executed exactly
-//                       at compile time, recursive fns included.
+//                       const-call evaluation and pure-call CSE are
+//                       interprocedural (driven from optimize_prog, after
+//                       the inlining rounds): pure constant-argument calls
+//                       are executed exactly at compile time, recursive
+//                       fns included; repeated pure calls are deduped.
 //   interprocedural (optimize_prog, before the inliner rounds): scctco
 //                       collapses every SCC whose internal edges are all
 //                       tail calls into loops (see 50b_scctco.hpp)
@@ -44,13 +47,13 @@ struct PassCfg {
   bool regalloc{true};   // C/bytecode register allocation (coloring)
   // tier 0
   bool p_fold{true}, p_copyprop{true}, p_canon{true}, p_cse{true},
-      p_unreach{true}, p_splice{true}, p_dce{true};
+      p_unreach{true}, p_splice{true}, p_dce{true}, p_sccp{true};
   // tier 1
   bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
-      p_reassoc{true};
+      p_reassoc{true}, p_ldelim{true};
   // tier 2
   bool p_unroll{true}, p_lcf{true}, p_constcall{true}, p_tailrec{true},
-      p_cdfold{true}, p_ifconv{true};
+      p_cdfold{true}, p_ifconv{true}, p_callcse{true};
   bool p_scctco{true}; // SCC tail-call collapse (inner-SCC tail calls)
   // interprocedural
   bool do_inline{true};
@@ -67,9 +70,11 @@ struct PassCfg {
   constexpr void set_level(uint32_t lv) {
     level = lv;
     bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
-    p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce = t0;
-    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = t1;
-    p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv = t2;
+    p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce =
+        p_sccp = t0;
+    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = p_ldelim = t1;
+    p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv =
+        p_callcse = t2;
     p_scctco = t2;
     do_inline = t2;
     do_opt = lv != 0;
@@ -80,11 +85,12 @@ struct PassCfg {
 // (ported from the Branchedmain monolith: fuzz random pass configs need a
 // numeric apply + a description; the CLI keeps its string-based
 // set_named_pass, which covers the same set plus 'inline'.)
-inline constexpr uint32_t PASS_TOGGLE_COUNT = 20;
+inline constexpr uint32_t PASS_TOGGLE_COUNT = 23;
 inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
-    "fold",      "copyprop", "canon",   "cse",      "unreach", "splice", "dce",
-    "mem2reg",   "trapelim", "licm",    "divmagic", "reassoc", "unroll", "lcf",
-    "constcall", "scctco",   "tailrec", "cdfold",   "ifconv",  "inline"};
+    "fold",   "copyprop", "canon",     "cse",    "unreach",  "splice",
+    "dce",    "mem2reg",  "trapelim",  "licm",   "divmagic", "reassoc",
+    "unroll", "lcf",      "constcall", "scctco", "tailrec",  "cdfold",
+    "ifconv", "inline",   "sccp",      "ldelim", "callcse"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
   case 0:
@@ -147,6 +153,15 @@ constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   case 19:
     p.do_inline = on;
     return true;
+  case 20:
+    p.p_sccp = on;
+    return true;
+  case 21:
+    p.p_ldelim = on;
+    return true;
+  case 22:
+    p.p_callcse = on;
+    return true;
   default:
     return false;
   }
@@ -161,7 +176,8 @@ static std::string describe_cfg(const PassCfg &p) {
       p.p_fold,     p.p_copyprop, p.p_canon,   p.p_cse,      p.p_unreach,
       p.p_splice,   p.p_dce,      p.p_mem2reg, p.p_trapelim, p.p_licm,
       p.p_divmagic, p.p_reassoc,  p.p_unroll,  p.p_lcf,      p.p_constcall,
-      p.p_scctco,   p.p_tailrec,  p.p_cdfold,  p.p_ifconv,   p.do_inline};
+      p.p_scctco,   p.p_tailrec,  p.p_cdfold,  p.p_ifconv,   p.do_inline,
+      p.p_sccp,     p.p_ldelim,   p.p_callcse};
   for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
     if (!states[i]) {
       if (!off.empty())
@@ -215,4 +231,11 @@ struct OptStats {
   uint32_t tce_merges{};   // pure-tail SCCs merged into one sel-dispatched fn
   uint32_t cdfolds{};      // countdown loops replaced by exact closed forms
   uint32_t ifconvs{};      // cbrs with provably-binary conds if-converted
+  uint32_t sccp_consts{};  // SCCP: defs proven constant (rewritten to Const)
+  uint32_t sccp_brs{};     // SCCP: branches pruned to unconditional
+  uint32_t ld_fwds{};      // ldelim: loads forwarded from dominating stores
+  uint32_t ld_cses{};      // ldelim: loads CSE'd against dominating loads
+  uint32_t rangecmps{};    // trapelim: compares folded by range proofs
+  uint32_t cmpfacts{};     // fold: compare-domain identities applied
+  uint32_t callcses{};     // callcse: pure calls deduped to dominating ones
 };

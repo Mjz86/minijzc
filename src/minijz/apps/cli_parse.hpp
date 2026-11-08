@@ -381,6 +381,12 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_cdfold = on;
   else if (eq("ifconv"))
     p.p_ifconv = on;
+  else if (eq("sccp"))
+    p.p_sccp = on;
+  else if (eq("ldelim"))
+    p.p_ldelim = on;
+  else if (eq("callcse"))
+    p.p_callcse = on;
   else if (eq("inline"))
     p.do_inline = on;
   else {

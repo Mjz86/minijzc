@@ -9,6 +9,7 @@
 #include "minijz/opt/analysis/intervals.hpp"
 #include "minijz/opt/analysis/trapelim.hpp"
 #include "minijz/opt/mem2reg.hpp"
+#include "minijz/opt/scalar/sccp.hpp"
 #include "minijz/opt/scalar/fold.hpp"
 #include "minijz/opt/scalar/copyprop.hpp"
 #include "minijz/opt/scalar/canon.hpp"
@@ -17,6 +18,7 @@
 #include "minijz/opt/scalar/splice.hpp"
 #include "minijz/opt/scalar/dce.hpp"
 #include "minijz/opt/scalar/ifconv.hpp"
+#include "minijz/opt/scalar/ldelim.hpp"
 #include "minijz/opt/loop/licm.hpp"
 #include "minijz/opt/loop/unroll.hpp"
 #include "minijz/opt/loop/lcf.hpp"
@@ -52,6 +54,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
     bool ch_any = false;
     for (uint32_t it = 0; it < cap; ++it) {
       bool ch = false, c = false;
+#ifndef MJZ_DBG_NO_SCCP
+      if (cfg.p_sccp) {
+        c = opt_sccp(fn, os, cfg.is_main); // conditional + loop-carried consts
+        dbg_pass(cfg.debug, fn, "sccp", c);
+        ch |= c;
+      }
+#endif
       c = opt_constprop(fn, os, cfg.is_main); // fold/identities/branch folds
       dbg_pass(cfg.debug, fn, "fold", c);
       ch |= c;
@@ -122,6 +131,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         An A = analyze(fn);
         c = opt_mem2reg(fn, A, os, cfg.lift_ok, cfg.stkarr_ok);
         dbg_pass(cfg.debug, fn, "mem2reg", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
+      if (cfg.p_ldelim) {
+        An A = analyze(fn);
+        c = opt_ldelim(fn, A, os); // fwd/CSE leftover array loads
+        dbg_pass(cfg.debug, fn, "ldelim", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -211,6 +227,11 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         if (cfg.p_mem2reg) {
           An A = analyze(fn);
           c2 |= opt_mem2reg(fn, A, os, cfg.lift_ok, cfg.stkarr_ok);
+          normalize_phis(fn);
+        }
+        if (cfg.p_ldelim) {
+          An A = analyze(fn);
+          c2 |= opt_ldelim(fn, A, os);
           normalize_phis(fn);
         }
         if (cfg.p_trapelim && t2round < 2) { // restructuring-exposed proofs
