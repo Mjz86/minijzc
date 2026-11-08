@@ -268,6 +268,9 @@ no such file or directory
 CMake Error: Generator: build tool execution failed, command was: nmake -f Makefile /nologo
 PS C:\Users\Mehdi\Documents\code_projects\generic_string_class\minijzc> 
 
+#fix the warings 
+
+
 # add the following optimization passes ( or if present , extend and widen them):
 Do the full 
 

@@ -6,9 +6,9 @@
 // build) and compiled once in tu/cli_app.cpp (multi-TU build) — after
 // cli parsing (cli_parse.hpp) has already validated the options.
 
-#include "minijz/apps/app_api.hpp"
-#include "minijz/apps/cli_run.hpp"
-#include "minijz/base/native_run.hpp"
+#include "../../minijz/apps/app_api.hpp"
+#include "../../minijz/apps/cli_run.hpp"
+#include "../../minijz/base/native_run.hpp"
 
 int minijz_app_main(Cli C) {
   bool have_action =
