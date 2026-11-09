@@ -49,3 +49,5 @@
 build/
 /minijz
 /build-ho
+/build-vs
+/build-win

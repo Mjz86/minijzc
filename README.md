@@ -85,6 +85,8 @@ every TU — the thin entry alone dropped from ~21 s to ~1 s.)
 
 ```sh
 git clone https://github.com/Mjz86/String mjz_lib   # inside this repo
+# cmake --preset windows-llvm  ..
+#cmake --build build-win -j  
 cmake -S . -B build && cmake --build build -j        # default: multi-cpp
 ./build/minijz --selftest        # demos + fuzz(200) + native gate
 ctest --test-dir build -L cx -j4 --output-on-failure  # the 6 constexpr proofs
