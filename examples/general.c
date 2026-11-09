@@ -15,15 +15,17 @@ static int64_t mjz_f1(int64_t r0);
 
 static int64_t mjz_f1(int64_t r0) {
   if (++mjz_depth > 512) { printf("TRAP\n"); exit(1); }
+  /* fn fun: source lines 57..77 */
   int64_t r3;
   int64_t r4;
   int64_t r5;
   int64_t r6;
-  int64_t r7;
   r3 = 511;
   r5 = r0;
 L1:;
+  /* 57:1 */
   if (r5 != 0) goto L4;
+  /* 57:17 */
   MJZ_RET(0);
 L4:;
   r4 = r5 >> (int64_t)((uint64_t)63 & 63);
@@ -35,143 +37,154 @@ L4:;
   r6 = (int64_t)((uint64_t)r6 * (uint64_t)4);
   r4 = (int64_t)((uint64_t)r4 & (uint64_t)r6);
   r4 = (int64_t)((uint64_t)r5 - (uint64_t)r4);
+  /* 58:1 */
   if (r4 != 1) goto L8;
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L20;
-  r6 = r0;
-  r4 = r3;
+  r5 = r0;
 L21:;
-  if (r0 != 0) goto L23;
+  /* 64:14 */
+  if (r5 != 0) goto L23;
+  /* 64:30 */
   MJZ_RET(1);
 L8:;
+  /* 59:1 */
   if (r4 != 2) goto L12;
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L20;
-  r6 = r0;
-  r4 = r3;
+  r5 = r0;
 L39:;
-  if (r0 != 0) goto L41;
+  /* 69:15 */
+  if (r5 != 0) goto L41;
+  /* 69:30 */
   MJZ_RET(2);
 L12:;
+  /* 60:1 */
   if (r4 != 3) goto L16;
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L20;
-  r6 = r0;
-  r4 = r3;
+  r5 = r0;
 L57:;
-  if (r0 != 0) goto L59;
+  /* 74:14 */
+  if (r5 != 0) goto L59;
+  /* 74:30 */
   MJZ_RET(3);
 L16:;
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L20;
-  r4 = r0;
-  r0 = r3;
 L75:;
-  r3 = r4;
 L79:;
 L83:;
-  r5 = r3;
-  r3 = r0;
+  r5 = r0;
   goto L1;
 L23:;
-  r5 = r6 >> (int64_t)((uint64_t)63 & 63);
-  r3 = (int64_t)((uint64_t)r5 & (uint64_t)3);
-  r3 = (int64_t)((uint64_t)r3 + (uint64_t)r6);
-  r3 = r3 >> (int64_t)((uint64_t)2 & 63);
-  r6 = (int64_t)((uint64_t)r6 & (uint64_t)3);
-  r7 = (r6 != 0);
-  r7 = (int64_t)((uint64_t)r7 * (uint64_t)4);
-  r5 = (int64_t)((uint64_t)r5 & (uint64_t)r7);
-  r5 = (int64_t)((uint64_t)r6 - (uint64_t)r5);
-  if (r5 != 1) goto L27;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  r4 = r5 >> (int64_t)((uint64_t)63 & 63);
+  r0 = (int64_t)((uint64_t)r4 & (uint64_t)3);
+  r0 = (int64_t)((uint64_t)r0 + (uint64_t)r5);
+  r0 = r0 >> (int64_t)((uint64_t)2 & 63);
+  r5 = (int64_t)((uint64_t)r5 & (uint64_t)3);
+  r6 = (r5 != 0);
+  r6 = (int64_t)((uint64_t)r6 * (uint64_t)4);
+  r4 = (int64_t)((uint64_t)r4 & (uint64_t)r6);
+  r4 = (int64_t)((uint64_t)r5 - (uint64_t)r4);
+  /* 65:1 */
+  if (r4 != 1) goto L27;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
 L76:;
 L80:;
-  r6 = r3;
+  r5 = r0;
   goto L21;
 L27:;
-  if (r5 != 2) goto L31;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  /* 66:1 */
+  if (r4 != 2) goto L31;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
 L77:;
 L81:;
-  r6 = r3;
+  r5 = r0;
   goto L39;
 L31:;
-  if (r5 != 3) goto L35;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  /* 67:1 */
+  if (r4 != 3) goto L35;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
 L78:;
 L82:;
-  r6 = r3;
+  r5 = r0;
   goto L57;
 L35:;
-  r0 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r0 < 0) goto L20;
-  r4 = r3;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L75;
 L41:;
-  r5 = r6 >> (int64_t)((uint64_t)63 & 63);
-  r3 = (int64_t)((uint64_t)r5 & (uint64_t)3);
-  r3 = (int64_t)((uint64_t)r3 + (uint64_t)r6);
-  r3 = r3 >> (int64_t)((uint64_t)2 & 63);
-  r6 = (int64_t)((uint64_t)r6 & (uint64_t)3);
-  r7 = (r6 != 0);
-  r7 = (int64_t)((uint64_t)r7 * (uint64_t)4);
-  r5 = (int64_t)((uint64_t)r5 & (uint64_t)r7);
-  r5 = (int64_t)((uint64_t)r6 - (uint64_t)r5);
-  if (r5 != 1) goto L45;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  r4 = r5 >> (int64_t)((uint64_t)63 & 63);
+  r0 = (int64_t)((uint64_t)r4 & (uint64_t)3);
+  r0 = (int64_t)((uint64_t)r0 + (uint64_t)r5);
+  r0 = r0 >> (int64_t)((uint64_t)2 & 63);
+  r5 = (int64_t)((uint64_t)r5 & (uint64_t)3);
+  r6 = (r5 != 0);
+  r6 = (int64_t)((uint64_t)r6 * (uint64_t)4);
+  r4 = (int64_t)((uint64_t)r4 & (uint64_t)r6);
+  r4 = (int64_t)((uint64_t)r5 - (uint64_t)r4);
+  /* 70:1 */
+  if (r4 != 1) goto L45;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L76;
 L45:;
-  if (r5 != 2) goto L49;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  /* 71:1 */
+  if (r4 != 2) goto L49;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L77;
 L49:;
-  if (r5 != 3) goto L53;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  /* 72:1 */
+  if (r4 != 3) goto L53;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L78;
 L53:;
-  r0 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r0 < 0) goto L20;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L79;
 L59:;
-  r5 = r6 >> (int64_t)((uint64_t)63 & 63);
-  r3 = (int64_t)((uint64_t)r5 & (uint64_t)3);
-  r3 = (int64_t)((uint64_t)r3 + (uint64_t)r6);
-  r3 = r3 >> (int64_t)((uint64_t)2 & 63);
-  r6 = (int64_t)((uint64_t)r6 & (uint64_t)3);
-  r7 = (r6 != 0);
-  r7 = (int64_t)((uint64_t)r7 * (uint64_t)4);
-  r5 = (int64_t)((uint64_t)r5 & (uint64_t)r7);
-  r5 = (int64_t)((uint64_t)r6 - (uint64_t)r5);
-  if (r5 != 1) goto L63;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  r4 = r5 >> (int64_t)((uint64_t)63 & 63);
+  r0 = (int64_t)((uint64_t)r4 & (uint64_t)3);
+  r0 = (int64_t)((uint64_t)r0 + (uint64_t)r5);
+  r0 = r0 >> (int64_t)((uint64_t)2 & 63);
+  r5 = (int64_t)((uint64_t)r5 & (uint64_t)3);
+  r6 = (r5 != 0);
+  r6 = (int64_t)((uint64_t)r6 * (uint64_t)4);
+  r4 = (int64_t)((uint64_t)r4 & (uint64_t)r6);
+  r4 = (int64_t)((uint64_t)r5 - (uint64_t)r4);
+  /* 75:1 */
+  if (r4 != 1) goto L63;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L80;
 L63:;
-  if (r5 != 2) goto L67;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  /* 76:1 */
+  if (r4 != 2) goto L67;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L81;
 L67:;
-  if (r5 != 3) goto L71;
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r4 < 0) goto L20;
+  /* 77:1 */
+  if (r4 != 3) goto L71;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L82;
 L71:;
-  r0 = (int64_t)((uint64_t)r4 - (uint64_t)1);
-  if (r0 < 0) goto L20;
+  r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
+  if (r3 < 0) goto L20;
   goto L83;
 L20:;
   printf("TRAP\n"); exit(1);
   MJZ_RET(r0);
 }
 int main(void) {
+  /* main: source lines 2..97 */
   int64_t r0;
   int64_t r1;
   int64_t r2;
@@ -180,65 +193,97 @@ int main(void) {
   int64_t r5;
   int64_t r6;
   int64_t r7;
+  /* 6:15 */
   r2 = mjz_input();
   r3 = 511;
 L5:;
+  /* 3:18 */
   if (r2 != 0) goto L8;
+  /* 3:40 */
   r0 = 1;
 L19:;
 L20:;
+  /* 6:1 */
   printf("%lld\n", (long long)r0);
+  /* 14:14 */
   r2 = mjz_input();
   r3 = 511;
 L49:;
+  /* 11:17 */
   if (r2 != 0) goto L52;
+  /* 11:39 */
   r0 = 10;
 L63:;
 L64:;
+  /* 14:1 */
   printf("%lld\n", (long long)r0);
+  /* 25:16 */
   r2 = mjz_input();
   r3 = 511;
 L67:;
+  /* 21:19 */
   if (r2 != 0) goto L70;
+  /* 21:33 */
   printf("%lld\n", (long long)1);
+  /* 21:50 */
   r0 = 1;
 L81:;
 L82:;
+  /* 25:1 */
   printf("%lld\n", (long long)r0);
+  /* 33:16 */
   r2 = mjz_input();
   r3 = 511;
 L85:;
+  /* 29:19 */
   printf("%lld\n", (long long)1);
+  /* 29:29 */
   if (r2 != 0) goto L88;
+  /* 29:51 */
   r0 = 1;
 L99:;
 L100:;
+  /* 33:1 */
   printf("%lld\n", (long long)r0);
+  /* 38:7 */
   r0 = mjz_input();
+  /* 39:1 */
   r1 = 0;
-  r3 = 0;
+  /* 40:1 */
+  r4 = 0;
+  /* 41:1 */
   r2 = 0;
-  r4 = 1000000;
+  /* 42:1 */
+  r3 = 1000000;
 L1:;
+  /* 43:1 */
   if (r1 >= r0) goto L3;
+  /* 44:1 */
   printf("%lld\n", (long long)r1);
+  /* 45:3 */
   r1 = (int64_t)((uint64_t)r1 + (uint64_t)1);
-  r3 = (int64_t)((uint64_t)r3 * (uint64_t)2);
-  r3 = (int64_t)((uint64_t)r3 + (uint64_t)1);
+  /* 46:6 */
+  r4 = (int64_t)((uint64_t)r4 * (uint64_t)2);
+  r4 = (int64_t)((uint64_t)r4 + (uint64_t)1);
+  /* 47:6 */
   r2 = (int64_t)((uint64_t)r2 + (uint64_t)1);
-  r5 = r4 >> (int64_t)((uint64_t)63 & 63);
+  r5 = r3 >> (int64_t)((uint64_t)63 & 63);
   r5 = (int64_t)((uint64_t)r5 & (uint64_t)1);
-  r4 = (int64_t)((uint64_t)r4 + (uint64_t)r5);
-  r4 = r4 >> (int64_t)((uint64_t)1 & 63);
+  r3 = (int64_t)((uint64_t)r3 + (uint64_t)r5);
+  r3 = r3 >> (int64_t)((uint64_t)1 & 63);
   goto L1;
 L8:;
+  /* 3:61 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L12;
+  /* 2:18 */
   if (r2 != 0) goto L15;
+  /* 2:40 */
   r0 = 0;
   goto L20;
 L15:;
+  /* 2:60 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L12;
@@ -247,13 +292,17 @@ L12:;
   printf("TRAP\n"); return 1;
   goto L19;
 L52:;
+  /* 11:60 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L56;
+  /* 10:17 */
   if (r2 != 0) goto L59;
+  /* 10:39 */
   r0 = 0;
   goto L64;
 L59:;
+  /* 10:58 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L56;
@@ -262,14 +311,19 @@ L56:;
   printf("TRAP\n"); return 1;
   goto L63;
 L70:;
+  /* 21:72 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L74;
+  /* 20:19 */
   if (r2 != 0) goto L77;
+  /* 20:33 */
   printf("%lld\n", (long long)0);
+  /* 20:51 */
   r0 = 0;
   goto L82;
 L77:;
+  /* 20:72 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L74;
@@ -278,14 +332,19 @@ L74:;
   printf("TRAP\n"); return 1;
   goto L81;
 L88:;
+  /* 29:73 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L92;
+  /* 28:19 */
   printf("%lld\n", (long long)0);
+  /* 28:29 */
   if (r2 != 0) goto L95;
+  /* 28:51 */
   r0 = 0;
   goto L100;
 L95:;
+  /* 28:72 */
   r2 = (int64_t)((uint64_t)r2 - (uint64_t)1);
   r3 = (int64_t)((uint64_t)r3 - (uint64_t)1);
   if (r3 < 0) goto L92;
@@ -294,13 +353,20 @@ L92:;
   printf("TRAP\n"); return 1;
   goto L99;
 L3:;
-  r0 = (int64_t)((uint64_t)r3 + (uint64_t)r2);
-  r0 = (int64_t)((uint64_t)r4 + (uint64_t)r0);
+  /* 52:7 */
+  r0 = (int64_t)((uint64_t)r4 + (uint64_t)r2);
+  r0 = (int64_t)((uint64_t)r3 + (uint64_t)r0);
+  /* 52:1 */
   printf("%lld\n", (long long)r0);
+  /* 82:11 */
   r0 = mjz_input();
+  /* 82:7 */
   r0 = mjz_f1(r0);
+  /* 82:1 */
   printf("%lld\n", (long long)r0);
+  /* 95:3 */
   r3 = mjz_input();
+  /* 97:7 */
   r0 = mjz_f1(r3);
   r4 = 511;
   r6 = r3;
@@ -309,6 +375,7 @@ L23:;
   r3 = (int64_t)((uint64_t)r5 & (uint64_t)3);
   r3 = (int64_t)((uint64_t)r3 + (uint64_t)r6);
   r3 = r3 >> (int64_t)((uint64_t)2 & 63);
+  /* 87:1 */
   if (r3 != 0) goto L26;
   r1 = (int64_t)((uint64_t)r6 & (uint64_t)3);
   r2 = (r1 != 0);
@@ -316,7 +383,9 @@ L23:;
   r2 = (int64_t)((uint64_t)r5 & (uint64_t)r2);
   r1 = (int64_t)((uint64_t)r1 - (uint64_t)r2);
 L46:;
+  /* 97:7 */
   r0 = (r0 == r1);
+  /* 97:1 */
   printf("%lld\n", (long long)r0);
   return 0;
 L26:;
@@ -325,6 +394,7 @@ L26:;
   r7 = (int64_t)((uint64_t)r7 * (uint64_t)4);
   r5 = (int64_t)((uint64_t)r5 & (uint64_t)r7);
   r5 = (int64_t)((uint64_t)r6 - (uint64_t)r5);
+  /* 88:1 */
   if (r5 != 1) goto L30;
   r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
   if (r4 < 0) goto L42;
@@ -334,11 +404,13 @@ L45:;
   r6 = r3;
   goto L23;
 L30:;
+  /* 89:1 */
   if (r5 != 2) goto L34;
   r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
   if (r4 < 0) goto L42;
   goto L43;
 L34:;
+  /* 90:1 */
   if (r5 != 3) goto L38;
   r4 = (int64_t)((uint64_t)r4 - (uint64_t)1);
   if (r4 < 0) goto L42;
