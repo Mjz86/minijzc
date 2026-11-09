@@ -30,66 +30,72 @@ static void mjz_store(int64_t h, int64_t i, int64_t v) {
 static int64_t mjz_depth = 0;
 #define MJZ_RET(x) do { --mjz_depth; return (int64_t)(x); } while (0)
 
-static int64_t mjz_f1(int64_t r0);
+static int64_t mjz_f1();
 
-static int64_t mjz_f1(int64_t r0) {
+static int64_t mjz_f1() {
   if (++mjz_depth > 512) { printf("TRAP\n"); exit(1); }
-  int64_t r1;
-  r1 = mjz_alloc(2);
+  /* fn h0: source lines 2..14 */
+  int64_t r0;
+  /* 2:10 */
+  r0 = mjz_alloc(2);
+  /* 7:1 */
   printf("%lld\n", (long long)0);
   printf("%lld\n", (long long)0);
+  /* 12:61 */
   printf("TRAP\n"); exit(1);
-  if (r1 >= 1) goto L68;
+  /* 12:50 */
+  if (r0 >= 1) goto L68;
 L69:;
-  if (!((r0 != 0))) goto L37;
-  if (r0 == 0) goto L41;
-  if (r0 == 0 || (79 == INT64_MIN && r0 == -1)) { printf("TRAP\n"); exit(1); }
-  r0 = 79 / r0;
-  if (1 >= r0) goto L41;
-  r0 = 1;
-L42:;
-  if (!((r0 != 0))) goto L37;
-  r0 = 1;
-L38:;
-  if (!((r0 != 0))) goto L45;
-L45:;
+  /* 14:3 */
   MJZ_RET(0);
 L68:;
   goto L69;
-L41:;
-  r0 = 0;
-  goto L42;
-L37:;
-  r0 = 0;
-  goto L38;
   --mjz_depth; return 0;
 }
 int main(void) {
+  /* main: source lines 17..64 */
   int64_t r0;
   int64_t r1;
-  r1 = mjz_f1(-2);
+  /* 17:18 */
+  r1 = mjz_f1();
   r1 = (int64_t)((uint64_t)r1 * (uint64_t)-9);
+  /* 17:1 */
   if (r1 >= -30) goto L2;
+  /* 26:1 */
   printf("%lld\n", (long long)6);
 L3:;
+  /* 31:1 */
   printf("%lld\n", (long long)-5);
+  /* 32:1 */
   printf("%lld\n", (long long)-8);
+  /* 33:1 */
   printf("%lld\n", (long long)-2);
+  /* 34:1 */
   printf("%lld\n", (long long)1);
+  /* 36:1 */
   printf("%lld\n", (long long)8);
+  /* 37:1 */
   printf("%lld\n", (long long)2);
-  r0 = mjz_f1(-4);
+  /* 42:5 */
+  r0 = mjz_f1();
+  /* 42:1 */
   if (!((r0 != 0))) goto L30;
 L31:;
+  /* 63:1 */
   printf("%lld\n", (long long)0);
+  /* 64:11 */
   r0 = mjz_alloc(3);
   return 0;
 L2:;
+  /* 29:1 */
   printf("%lld\n", (long long)0);
   goto L3;
 L30:;
+  /* 50:1 */
   printf("%lld\n", (long long)21);
+  /* 52:1 */
   printf("%lld\n", (long long)1);
+  /* 56:11 */
   r0 = mjz_alloc(3);
   r0 = mjz_alloc(3);
   r0 = mjz_alloc(3);

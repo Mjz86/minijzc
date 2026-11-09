@@ -11,6 +11,8 @@
 #include "../loop/lcf_rt.hpp"
 #include "callcse.hpp"
 #include "deadargs.hpp"
+#include "fnspec.hpp"
+#include "icf.hpp"
 
 struct CallGraph {
   std::vector<std::vector<ulen>> adj{}; // caller -> callees (with dups)
@@ -588,13 +590,32 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
   eliminate_dead_fns(fns, names, ostats, src_index);
   // ---- 9e5: interprocedural dead-argument elimination -------------------
   // (after dead-fn elimination: all inlining/constcall/callcse are done, so
-  // the surviving call sites are final; before the last optimize round, so
-  // callers whose dropped argument expressions turned dead get DCE'd)
+  // the surviving call sites are the final ones; before the last optimize
+  // round, so callers whose dropped argument expressions turned dead get
+  // DCE'd)
   if (cfg.p_deadargs)
     (void)opt_deadargs(fns, ostats);
+  // ---- 9e5b: function specialization ------------------------------------
+  // every-constant argument slot gets a specialized clone (the param bound
+  // to a Const at entry); the dead-fn sweep right after drops generics that
+  // lost all their sites. BEFORE the final round so the clones' bound
+  // constants fold through tier 0 there.
+  if (cfg.p_fnspec) {
+    if (opt_fnspec(fns, names, ostats, src_index))
+      eliminate_dead_fns(fns, names, ostats, src_index);
+  }
   for (uint32_t f = 0; f < fns.size(); ++f) {
     An A{};
     optimize(fns[f], ostats[f], A, main_aware(cfg, f));
+  }
+  // ---- 9e6: identical code folding --------------------------------------
+  // AFTER the final round: bodies are in final shape, so structural
+  // identity == behavioral interchangeability (verified by the partition
+  // refinement inside). Redirecting a call never changes a body, so no
+  // re-optimization is needed; the sweep below deletes the duplicates.
+  if (cfg.p_icf) {
+    if (opt_icf(fns, ostats))
+      eliminate_dead_fns(fns, names, ostats, src_index);
   }
 }
 
@@ -602,15 +623,15 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
 // ---------------------------------------------------------------- runtime-only
 // pass tracing (never on the constexpr path: guarded by cfg.debug, which the
 // compile-time pipeline always leaves at 0)
-inline void print_fn(const Fn &fn,
-                     const char *title); // (defined in prog/runners.hpp)
+inline void print_fn(const Fn &fn, const char *title,
+                     std::string_view src); // (defined in prog/runners.hpp)
 static void dbg_pass_rt(uint8_t debug, const Fn &fn, const char *pass,
                         bool ch) {
   std::printf("  [pass %-9s] %s\n", pass, ch ? "changed" : "fixed");
   if (debug >= 2 && ch) {
     char buf[96];
     std::snprintf(buf, sizeof buf, "IR after %s", pass);
-    print_fn(fn, buf);
+    print_fn(fn, buf, {}); // no source at hand here: no location comments
   }
 }
 // constexpr-safe wrapper: the compile-time pipeline always leaves debug at

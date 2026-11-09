@@ -29,6 +29,8 @@ struct Expr {
   val_t num{};
   uint32_t var{};
   uint32_t l{}, r{}; // child indices into exprs arena
+  uint32_t pos{};    // byte offset of the token starting this expression
+                     // (0 = unset; the parser always sets it)
 };
 enum class Sk : uint8_t {
   Let,
@@ -47,6 +49,7 @@ struct Stmt {
   uint32_t var{};
   uint32_t e{};      // primary expr
   uint32_t a{}, b{}; // Seq: seq_kids index in a; If/While bodies
+  uint32_t pos{};    // byte offset of the token starting this statement
 };
 
 struct FnDef { // a top-level `fn name(params) { body }`

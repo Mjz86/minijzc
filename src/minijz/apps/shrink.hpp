@@ -64,8 +64,8 @@ int run_shrink(const Cli &C, const std::string &path) {
     // NOT find them in the current directory and the run silently "fails"
     std::string stem = "./" + path + ".shrink";
     std::string ref = text_of(oracle);
-    write_file(stem + ".c", emit_c(fns_of(P, 2), P.fn_names));
-    write_file(stem + ".s", emit_x64(fns_of(P, 2), P.fn_names));
+    write_file(stem + ".c", emit_c(fns_of(P, 2), P.fn_names, P.src));
+    write_file(stem + ".s", emit_x64(fns_of(P, 2), P.fn_names, P.src));
     bool bad = false;
     for (int ti = 0; ti < 2 && !bad; ++ti) {
       std::string srcp = ti ? stem + ".s" : stem + ".c";

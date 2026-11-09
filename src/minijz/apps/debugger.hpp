@@ -296,11 +296,11 @@ int run_debugger(const Cli &C, const std::string &src) {
         std::snprintf(t3, sizeof t3, "destroyed [%s]",
                       std::string(P.fn_names[fi]).c_str());
         if (stage == "ssa" || all_stages)
-          print_fn(U.ssa, t1);
+          print_fn(U.ssa, t1, P.src);
         if (stage == "opt" || all_stages)
-          print_fn(U.opt, t2);
+          print_fn(U.opt, t2, P.src);
         if (stage == "dst" || all_stages)
-          print_fn(U.destroyed, t3);
+          print_fn(U.destroyed, t3, P.src);
       };
       if (f < 0 || f >= (long)P.fns.size())
         for (size_t fi = 0; fi < P.fns.size(); ++fi)
@@ -330,14 +330,16 @@ int run_debugger(const Cli &C, const std::string &src) {
       }
     } else if (cmd == "stats") {
       OptStats os = sum_ostats(P);
-      std::printf("  fns: %zu | inlined %u | unrolled %u | dce %u | "
-                  "hoist %u | mem2reg %u | constcalls %u | tces %u | "
-                  "scctco %u | cdfolds %u | ifconv %u | traps killed %u\n",
-                  P.fns.size(), (unsigned)os.inlines, (unsigned)os.unrolls,
-                  (unsigned)os.dce, (unsigned)os.hoisted,
-                  (unsigned)os.mem2reg_lifts, (unsigned)os.constcalls,
-                  (unsigned)os.tces, (unsigned)os.scctco, (unsigned)os.cdfolds,
-                  (unsigned)os.ifconvs, (unsigned)os.traps_killed);
+      std::printf(
+          "  fns: %zu | inlined %u | unrolled %u | dce %u | "
+          "hoist %u | mem2reg %u | constcalls %u | tces %u | "
+          "scctco %u | cdfolds %u | ifconv %u | traps killed %u | "
+          "deadargs %u | fnspec %u | icf %u\n",
+          P.fns.size(), (unsigned)os.inlines, (unsigned)os.unrolls,
+          (unsigned)os.dce, (unsigned)os.hoisted, (unsigned)os.mem2reg_lifts,
+          (unsigned)os.constcalls, (unsigned)os.tces, (unsigned)os.scctco,
+          (unsigned)os.cdfolds, (unsigned)os.ifconvs, (unsigned)os.traps_killed,
+          (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf);
     } else if (cmd == "plan") {
       long f = num(1, 0);
       if (f < 0 || f >= (long)P.fns.size())

@@ -6,6 +6,7 @@
 // it nowhere else.
 
 #include "../ir/instr.hpp"
+#include "../base/srcmap.hpp"
 #include "stack_alloc.hpp"
 #include "emit_plan.hpp"
 
@@ -16,7 +17,8 @@
 #define MJZ_EMIT_FN // runtime-only (string building): plain in both modes
 
 MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
-                                  bool multi_fn) {
+                                  bool multi_fn, const SrcMap &SM,
+                                  std::string_view fname) {
   EmitPlan P = make_emit_plan(fn);
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   // def index (for the unsigned-compare pretty-printer below)
@@ -155,6 +157,30 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
     if (multi_fn)
       s += "  if (++mjz_depth > 512) { printf(\"TRAP\\n\"); exit(1); }\n";
   }
+  // ---- source-location banner: which source lines this fn came from ----
+  // ("a rough idea of what happens": the emitted body below is annotated
+  // with line:col comments whenever the source location CHANGES)
+  {
+    uint32_t lo = NONE, hi = 0;
+    for (const Instr &I : fn.code)
+      if (I.src != NONE) {
+        if (lo == NONE || I.src < lo)
+          lo = I.src;
+        if (I.src > hi)
+          hi = I.src;
+      }
+    if (lo != NONE && SM.ok() && lo <= SM.src.size()) {
+      char b2[96];
+      if (is_main)
+        std::snprintf(b2, sizeof b2, "  /* main: source lines %u..%u */\n",
+                      (unsigned)SM.line(lo), (unsigned)SM.line(hi));
+      else
+        std::snprintf(b2, sizeof b2, "  /* fn %s: source lines %u..%u */\n",
+                      std::string(fname).c_str(), (unsigned)SM.line(lo),
+                      (unsigned)SM.line(hi));
+      s += b2;
+    }
+  }
   // declarations: every slot WRITTEN by a non-dead instruction needs one
   // (written-but-unread slots still exist: e.g. a kept-for-trap Alloc whose
   // handle is never used). Read-only slots cannot exist post-SSA.
@@ -212,7 +238,12 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
       }
     }
   bool saw_exit = false;
-  // body, in layout order: one successor falls through, goto elided
+  // body, in layout order: one successor falls through, goto elided.
+  // A /* line:col */ comment appears whenever the source location of the
+  // emitted instructions CHANGES (consecutive instrs from one source
+  // statement share one comment; pass-synthesized instrs carry no src and
+  // emit none).
+  uint32_t last_src = NONE;
   for (uint32_t b : P.order) {
     if (refd[b]) {
       std::snprintf(buf, sizeof buf, "L%u:;\n", (unsigned)b);
@@ -222,6 +253,15 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
       const Instr &I = fn.code[i];
       if (P.dead[i] || elide[i])
         continue;
+      if (SM.ok() && I.src != NONE && I.src != last_src) {
+        char lb[48];
+        if (SM.at(I.src, lb, sizeof lb)) {
+          s += "  /* ";
+          s += lb;
+          s += " */\n";
+        }
+        last_src = I.src;
+      }
       switch (I.k) {
       case K::Phi:
         break; // destroyed input has none
@@ -569,9 +609,11 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
 // whole-program C: shared helpers, prototypes (mutual recursion is legal),
 // callee bodies first, then main.
 MJZ_EMIT_FN std::string emit_c(const std::vector<Fn> &fns,
-                               const std::vector<std::string_view> &names) {
+                               const std::vector<std::string_view> &names,
+                               std::string_view src) {
   (void)names;
   std::string s{};
+  SrcMap SM{src};
   bool use_arr = false, use_in = false, use_stk = false;
   auto stk_arr_of = [](const Fn &fn, uint32_t v) -> int {
     for (size_t k = 0; k < fn.stk_arrays.size(); ++k)
@@ -665,8 +707,10 @@ MJZ_EMIT_FN std::string emit_c(const std::vector<Fn> &fns,
   if (fns.size() > 1)
     s += "\n";
   for (uint32_t f = 1; f < fns.size(); ++f) // callees first, main last
-    s += emit_c_fn(fns[f], f, false, multi);
-  s += emit_c_fn(fns[0], 0, true, multi);
+    s += emit_c_fn(fns[f], f, false, multi, SM,
+                   f < names.size() ? names[f] : std::string_view{});
+  s += emit_c_fn(fns[0], 0, true, multi, SM,
+                 names.empty() ? std::string_view{} : names[0]);
   return s;
 }
 

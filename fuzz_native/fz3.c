@@ -29,9 +29,13 @@ static void mjz_store(int64_t h, int64_t i, int64_t v) {
 
 
 int main(void) {
+  /* main: source lines 4..41 */
   int64_t r0;
+  /* 4:1 */
   printf("%lld\n", (long long)3);
+  /* 7:1 */
   printf("%lld\n", (long long)6713);
+  /* 41:11 */
   r0 = mjz_alloc(4);
   return 0;
 }

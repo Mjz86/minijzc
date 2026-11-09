@@ -3,18 +3,22 @@
   .globl main
   .type main, @function
 main:
+  # main: source lines 4..41
   pushq %rbp
   movq %rsp, %rbp
   pushq %rbx
   subq $8, %rsp
+  # 4:1
   movq $3, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 7:1
   movq $6713, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 41:11
   movq $4, %rdi
   call mjz_alloc
   movq %rax, %rbx

@@ -49,7 +49,7 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | NOTCOMB %u | "
         "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
         "SCCP %u(+%ubr) | LD-FWD %u | LD-CSE %u | RANGE-CMP %u | "
-        "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u\n"
+        "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u | FNSPEC %u | ICF %u\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
         P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i, (unsigned)os.iters,
@@ -66,8 +66,9 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.scctco_folds, (unsigned)os.sccp_consts,
         (unsigned)os.sccp_brs, (unsigned)os.ld_fwds, (unsigned)os.ld_cses,
         (unsigned)os.rangecmps, (unsigned)os.cmpfacts, (unsigned)os.callcses,
-        (unsigned)os.deadargs, (unsigned)de_c, (unsigned)dz_c, (unsigned)dse,
-        (unsigned)dcy, (unsigned)dfu);
+        (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf,
+        (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
+        (unsigned)dfu);
   }
   if (C.print_ir) {
     for (size_t f = 0; f < P.fns.size(); ++f) {
@@ -78,9 +79,9 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
                     std::string(P.fn_names[f]).c_str());
       std::snprintf(t3, sizeof t3, "destroyed [%s]",
                     std::string(P.fn_names[f]).c_str());
-      print_fn(P.fns[f].ssa, t1);
-      print_fn(P.fns[f].opt, t2);
-      print_fn(P.fns[f].destroyed, t3);
+      print_fn(P.fns[f].ssa, t1, P.src);
+      print_fn(P.fns[f].opt, t2, P.src);
+      print_fn(P.fns[f].destroyed, t3, P.src);
     }
   }
   if (C.no_exec && !C.do_run)
@@ -119,8 +120,8 @@ static void run_matrix(Program &P, const Cli &C, const std::string &stem) {
   // --- write the native sources (always, since we are about to build them)
   std::string c_path = C.out_dir + "/" + stem + ".c";
   std::string s_path = C.out_dir + "/" + stem + ".s";
-  if (!write_file(c_path, emit_c(fns_of(P, 2), P.fn_names)) ||
-      !write_file(s_path, emit_x64(fns_of(P, 2), P.fn_names))) {
+  if (!write_file(c_path, emit_c(fns_of(P, 2), P.fn_names, P.src)) ||
+      !write_file(s_path, emit_x64(fns_of(P, 2), P.fn_names, P.src))) {
     std::printf("error: cannot write %s / %s\n", c_path.c_str(),
                 s_path.c_str());
     return;

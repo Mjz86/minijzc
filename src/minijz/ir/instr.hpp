@@ -153,6 +153,12 @@ struct Instr {
   // skip the guard; the pass pipeline may treat the op as pure/hoistable.
   bool nt{};
   std::vector<uint32_t> args{}; // Call: argument vregs, parameter order
+  // source location: byte offset of the AST token that produced this
+  // instruction (NONE = synthesized by a pass or a builder helper).
+  // Survives every in-place rewrite (passes copy Instr wholesale);
+  // instructions CREATED by passes keep NONE. The C/asm backends and the
+  // IR printers translate it into line:col comments via SrcMap.
+  uint32_t src{NONE};
 };
 struct Block {
   uint32_t begin{}, end{}; // instrs [begin,end)

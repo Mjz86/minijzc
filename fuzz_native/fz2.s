@@ -3,31 +3,38 @@
   .globl main
   .type main, @function
 main:
+  # main: source lines 11..66
   pushq %rbp
   movq %rsp, %rbp
   pushq %rbx
   pushq %r12
   pushq %r13
   subq $8, %rsp
+  # 11:1
   movq $-7, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 12:10
   movq $4, %rdi
   call mjz_alloc
   movq %rax, %rbx
+  # 14:1
   movq $-1, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 16:1
   movq $-7, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 21:1
   movq $6, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 22:7
   jmp mjz_trap
   movq %rbx, %r13
   sarq $63, %r13
@@ -45,85 +52,108 @@ main:
   subq %rcx, %r12
   imulq $-7, %r12
   subq %r12, %rbx
+  # 22:1
   testq %rbx, %rbx
   je .Lb8
+  # 24:1
   movq $-9, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 29:1
   movq $-2, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
 .Lb9:
+  # 36:1
   movq $-3, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 48:1
   movq $-6, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 54:1
   movq $1, %rbx
 .Lb49:
+  # 55:1
   movq $0, %rax
   movq %rbx, %rcx
   cmpq %rcx, %rax
   jge .Lb51
+  # 56:9
   subq $1, %rbx
+  # 57:11
   movq $3, %rdi
   call mjz_alloc
   movq %rax, %r13
+  # 58:10
   movq $1, %rdi
   call mjz_alloc
   movq %rax, %r12
+  # 58:1
   movq %r13, %rdi
   movq $0, %rsi
   movq %r12, %rdx
   call mjz_store
+  # 59:10
   movq $1, %rdi
   call mjz_alloc
   movq %rax, %r12
+  # 59:1
   movq %r13, %rdi
   movq $1, %rsi
   movq %r12, %rdx
   call mjz_store
+  # 60:10
   movq $1, %rdi
   call mjz_alloc
   movq %rax, %r12
+  # 60:1
   movq %r13, %rdi
   movq $2, %rsi
   movq %r12, %rdx
   call mjz_store
   jmp .Lb49
 .Lb8:
+  # 32:10
   movq $2, %rdi
   call mjz_alloc
   movq %rax, %rbx
+  # 33:9
   movq $4, %rdi
   call mjz_alloc
   movq %rax, %r12
+  # 33:1
   movq %rbx, %rdi
   movq $0, %rsi
   movq %r12, %rdx
   call mjz_store
+  # 34:9
   movq $4, %rdi
   call mjz_alloc
   movq %rax, %r12
+  # 34:1
   movq %rbx, %rdi
   movq $1, %rsi
   movq %r12, %rdx
   call mjz_store
   jmp .Lb9
 .Lb51:
+  # 64:1
   movq $-2, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 65:1
   movq $-1, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
+  # 66:1
   movq $7, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax

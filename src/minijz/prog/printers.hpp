@@ -7,6 +7,7 @@
 // its definition is compiled once with the analysis (prog/compile_impl.hpp).
 
 #include "../ir/instr.hpp"
+#include "../base/srcmap.hpp"
 
 #include <cstdio>
 #include <string>
@@ -33,8 +34,10 @@ inline std::string vname(const Fn &fn, uint32_t v) {
 
 void print_analysis(const An &A, const Fn &fn, const char *tag);
 
-inline void print_fn(const Fn &fn, const char *title) {
+inline void print_fn(const Fn &fn, const char *title,
+                     std::string_view src = {}) {
   std::printf("  ---- %s ----\n", title);
+  SrcMap SM{src}; // when given, every instr line gains `; @line:col`
   for (uint32_t b = 0; b < fn.nblocks(); ++b) {
     if (fn.blocks[b].begin == fn.blocks[b].end && fn.succ0(b) == NONE &&
         fn.succ1(b) == NONE && b != 0)
@@ -118,6 +121,11 @@ inline void print_fn(const Fn &fn, const char *title) {
         else
           std::printf("ret %s", vname(fn, I.a).c_str());
         break;
+      }
+      if (SM.ok() && I.src != NONE) {
+        char lb[48];
+        if (SM.at(I.src, lb, sizeof lb))
+          std::printf("  ; @%s", lb);
       }
       std::printf("\n");
     }

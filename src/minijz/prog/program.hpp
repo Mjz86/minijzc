@@ -28,6 +28,10 @@ struct FnUnit {   // one function's journey through the pipeline
 };
 struct Program {
   Parsed P{};
+  std::string_view src{};    // the full source text (byte offsets in
+                             // Instr::src index into this); the buffer must
+                             // outlive the Program, exactly like P.ast.names
+                             // (string_views into it) already do
   std::vector<Fn> ssa_all{}; // pre-opt SSA of EVERY fn (original indices;
                              // the unoptimized runners need the full set even
                              // after the optimizer dropped dead functions)
@@ -108,6 +112,8 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.cmpfacts += U.ostats.cmpfacts;
     t.callcses += U.ostats.callcses;
     t.deadargs += U.ostats.deadargs;
+    t.fnspecs += U.ostats.fnspecs;
+    t.icf += U.ostats.icf;
     if (U.ostats.iters > t.iters)
       t.iters = U.ostats.iters;
   }

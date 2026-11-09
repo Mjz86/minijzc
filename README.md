@@ -16,7 +16,7 @@ src/minijz/           the compiler as a header-only constexpr library
   fwd.hpp               forward declarations (declaration-only contexts)
   graph_lib.hpp         the mjz_lib import, ISOLATED: only the headers that
                         actually need the graph/big-number library include it
-  base/                  pass_cfg (PassCfg + the 20-name toggle table),
+  base/                  pass_cfg (PassCfg + the 26-name toggle table),
                         native_run (find_cc/slurp/run_capture/write_file)
   front/                 lexer, ast, parser
   ir/                    instr (IR core), pred_norm, builder, destruct,
@@ -336,13 +336,20 @@ the ctest/CLI toggle names):
   IR canonicalization (`canon`), dead-PHI elimination (`dce` +
   `fold`), **dead-argument elimination (`deadargs`, interprocedural —
   params unused everywhere incl. mutual-recursion chains are dropped
-  from signatures and every call site)**.
+  from signatures and every call site)**, **identical code folding
+  (`icf`, interprocedural — functions with structurally equivalent
+  normalized bodies merge by partition refinement over callee
+  fingerprints with self-recursion wildcards; mutually recursive
+  twins collapse into one self-recursive function and every caller is
+  retargeted)**, **function specialization (`fnspec`, interprocedural —
+  a parameter holding the same `Const` at every non-recursive call
+  site buys a specialized clone with the constant bound at entry and
+  the argument dropped from the clone's signature)**.
 * still open (the standing wishlist): jump threading, tail
 duplication, loop rotation/simplification/canonicalization proper,
   LCSSA, GVN (beyond the dominator-scoped CSE + ldelim + callcse
   combination), demanded/known bits, MemCpyOpt, argument promotion,
-  identical code folding, function specialization, loop
-  fusion/fission/distribution, loop unswitching/versioning/predication,
+  loop fusion/fission/distribution, loop unswitching/versioning/predication,
   function outlining, Attributor-style inference, GlobalOpt.
 
 The original wishlist (kept verbatim for reference):

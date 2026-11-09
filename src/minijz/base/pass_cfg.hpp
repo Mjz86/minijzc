@@ -1,6 +1,6 @@
 #pragma once
 // === pass_cfg.hpp ========================================
-// PassCfg (-O presets, per-pass toggles), the 23-name toggle table
+// PassCfg (-O presets, per-pass toggles), the 26-name toggle table
 // shared by CLI/fuzzer/--shrink, apply_pass_flag, describe_cfg.
 
 #include "../config.hpp"
@@ -55,6 +55,8 @@ struct PassCfg {
   bool p_unroll{true}, p_lcf{true}, p_constcall{true}, p_tailrec{true},
       p_cdfold{true}, p_ifconv{true}, p_callcse{true};
   bool p_deadargs{true}; // interprocedural dead-argument elimination
+  bool p_fnspec{true};   // interprocedural function specialization
+  bool p_icf{true};      // interprocedural identical code folding
   bool p_scctco{true};   // SCC tail-call collapse (inner-SCC tail calls)
   // interprocedural
   bool do_inline{true};
@@ -75,7 +77,7 @@ struct PassCfg {
         p_sccp = t0;
     p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = p_ldelim = t1;
     p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv =
-        p_callcse = p_deadargs = t2;
+        p_callcse = p_deadargs = p_fnspec = p_icf = t2;
     p_scctco = t2;
     do_inline = t2;
     do_opt = lv != 0;
@@ -86,12 +88,13 @@ struct PassCfg {
 // (ported from the Branchedmain monolith: fuzz random pass configs need a
 // numeric apply + a description; the CLI keeps its string-based
 // set_named_pass, which covers the same set plus 'inline'.)
-inline constexpr uint32_t PASS_TOGGLE_COUNT = 24;
+inline constexpr uint32_t PASS_TOGGLE_COUNT = 26;
 inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
     "fold",   "copyprop", "canon",     "cse",    "unreach",  "splice",
     "dce",    "mem2reg",  "trapelim",  "licm",   "divmagic", "reassoc",
     "unroll", "lcf",      "constcall", "scctco", "tailrec",  "cdfold",
-    "ifconv", "inline",   "sccp",      "ldelim", "callcse",  "deadargs"};
+    "ifconv", "inline",   "sccp",      "ldelim", "callcse",  "deadargs",
+    "fnspec", "icf"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
   case 0:
@@ -166,6 +169,12 @@ constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   case 23:
     p.p_deadargs = on;
     return true;
+  case 24:
+    p.p_fnspec = on;
+    return true;
+  case 25:
+    p.p_icf = on;
+    return true;
   default:
     return false;
   }
@@ -181,7 +190,8 @@ static std::string describe_cfg(const PassCfg &p) {
       p.p_splice,   p.p_dce,      p.p_mem2reg, p.p_trapelim, p.p_licm,
       p.p_divmagic, p.p_reassoc,  p.p_unroll,  p.p_lcf,      p.p_constcall,
       p.p_scctco,   p.p_tailrec,  p.p_cdfold,  p.p_ifconv,   p.do_inline,
-      p.p_sccp,     p.p_ldelim,   p.p_callcse, p.p_deadargs};
+      p.p_sccp,     p.p_ldelim,   p.p_callcse, p.p_deadargs, p.p_fnspec,
+      p.p_icf};
   for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
     if (!states[i]) {
       if (!off.empty())
@@ -243,4 +253,6 @@ struct OptStats {
   uint32_t cmpfacts{};     // fold: compare-domain identities applied
   uint32_t callcses{};     // callcse: pure calls deduped to dominating ones
   uint32_t deadargs{};     // deadargs: parameters removed from fns + call sites
+  uint32_t fnspecs{}; // fnspec: specialized clones created (const arg bound)
+  uint32_t icf{};     // icf: duplicates folded INTO a representative
 };
