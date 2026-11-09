@@ -595,7 +595,7 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
 
   scctco_resucc(f);
   if (dbg >= 2)
-    print_fn(f, "[scctco] collapsed (pre-fold)");
+    print_fn(f, "[scctco] collapsed (pre-fold)", {});
   scctco_fold(f, 1, nparams, os, trapb, dbg);
   scctco_resucc(f);
   return changed;

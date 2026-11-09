@@ -188,13 +188,13 @@ int minijz_app_main(Cli C) {
     } else {
       if (C.emit_c || C.emit_exe) { // exe builds from the emitted C
         std::string p = C.out_dir + "/" + stem + ".c";
-        write_file(p, emit_c(fns_of(P, 2), P.fn_names));
+        write_file(p, emit_c(fns_of(P, 2), P.fn_names, P.src));
         if (!C.quiet && C.emit_c)
           std::printf("wrote %s\n", p.c_str());
       }
       if (C.emit_asm) {
         std::string p = C.out_dir + "/" + stem + ".s";
-        write_file(p, emit_x64(fns_of(P, 2), P.fn_names));
+        write_file(p, emit_x64(fns_of(P, 2), P.fn_names, P.src));
         if (!C.quiet)
           std::printf("wrote %s\n", p.c_str());
       }

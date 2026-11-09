@@ -54,6 +54,7 @@ struct Parser {
 
   // expr := logic
   constexpr uint32_t expr() {
+    const uint32_t p0 = peek().pos; // this expression's source location
     uint32_t lhs = rel();
     if (!ok)
       return 0;
@@ -64,7 +65,7 @@ struct Parser {
         if (!ok)
           return 0;
         uint32_t idx = (uint32_t)a.es.size();
-        a.es.push_back({Ek::And, {}, 0, 0, lhs, rhs});
+        a.es.push_back({Ek::And, {}, 0, 0, lhs, rhs, p0});
         lhs = idx;
       } else if (peek().k == Tk::OrOr) {
         ++ti;
@@ -72,7 +73,7 @@ struct Parser {
         if (!ok)
           return 0;
         uint32_t idx = (uint32_t)a.es.size();
-        a.es.push_back({Ek::Or, {}, 0, 0, lhs, rhs});
+        a.es.push_back({Ek::Or, {}, 0, 0, lhs, rhs, p0});
         lhs = idx;
       } else
         return lhs;
@@ -80,6 +81,7 @@ struct Parser {
   }
   // rel := add (cmp add)?
   constexpr uint32_t rel() {
+    const uint32_t p0 = peek().pos;
     uint32_t lhs = add();
     if (!ok)
       return 0;
@@ -111,11 +113,12 @@ struct Parser {
     if (!ok)
       return 0;
     uint32_t i = (uint32_t)a.es.size();
-    a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs});
+    a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs, p0});
     return i;
   }
   // add := mul (('+'|'-') mul)*
   constexpr uint32_t add() {
+    const uint32_t p0 = peek().pos;
     uint32_t lhs = mul();
     if (!ok)
       return 0;
@@ -132,12 +135,13 @@ struct Parser {
       if (!ok)
         return 0;
       uint32_t idx = (uint32_t)a.es.size();
-      a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs});
+      a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs, p0});
       lhs = idx;
     }
   }
   // mul := unary (('*'|'/'|'%') unary)*
   constexpr uint32_t mul() {
+    const uint32_t p0 = peek().pos;
     uint32_t lhs = unary();
     if (!ok)
       return 0;
@@ -156,21 +160,23 @@ struct Parser {
       if (!ok)
         return 0;
       uint32_t idx = (uint32_t)a.es.size();
-      a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs});
+      a.es.push_back({Ek::Bin, b, 0, 0, lhs, rhs, p0});
       lhs = idx;
     }
   }
   constexpr uint32_t unary() {
     if (accept(Tk::Minus)) {
+      const uint32_t p0 = L.toks[ti - 1].pos; // the '-'
       uint32_t c = unary();
       uint32_t i = (uint32_t)a.es.size();
-      a.es.push_back({Ek::Neg, {}, 0, 0, c, 0});
+      a.es.push_back({Ek::Neg, {}, 0, 0, c, 0, p0});
       return i;
     }
     if (accept(Tk::Not)) {
+      const uint32_t p0 = L.toks[ti - 1].pos; // the '!'
       uint32_t c = unary();
       uint32_t i = (uint32_t)a.es.size();
-      a.es.push_back({Ek::Not, {}, 0, 0, c, 0});
+      a.es.push_back({Ek::Not, {}, 0, 0, c, 0, p0});
       return i;
     }
     return primary();
@@ -180,6 +186,7 @@ struct Parser {
   constexpr uint32_t postfix(uint32_t base) {
     uint32_t lhs = base;
     while (peek().k == Tk::LBr) {
+      const uint32_t p0 = peek().pos; // the '['
       ++ti;
       uint32_t ix = expr();
       if (!ok)
@@ -187,16 +194,17 @@ struct Parser {
       if (!expect(Tk::RBr, "expected ']'"))
         return 0;
       uint32_t i = (uint32_t)a.es.size();
-      a.es.push_back({Ek::Load, {}, 0, 0, lhs, ix});
+      a.es.push_back({Ek::Load, {}, 0, 0, lhs, ix, p0});
       lhs = i;
     }
     return lhs;
   }
   constexpr uint32_t primary() {
     if (peek().k == Tk::Num) {
-      val_t v = eat().num;
+      Tok t = eat();
+      val_t v = t.num;
       uint32_t i = (uint32_t)a.es.size();
-      a.es.push_back({Ek::Num, {}, v, 0, 0, 0});
+      a.es.push_back({Ek::Num, {}, v, 0, 0, 0, t.pos});
       return postfix(i);
     }
     if (peek().k == Tk::Id) {
@@ -212,7 +220,7 @@ struct Parser {
         if (!expect(Tk::RP, "expected ')' after array size"))
           return 0;
         uint32_t i = (uint32_t)a.es.size();
-        a.es.push_back({Ek::Alloc, {}, 0, 0, sz, 0});
+        a.es.push_back({Ek::Alloc, {}, 0, 0, sz, 0, t.pos});
         return postfix(i);
       }
       if (w == "len" && peek().k == Tk::LP) { // len(handle)
@@ -223,7 +231,7 @@ struct Parser {
         if (!expect(Tk::RP, "expected ')' after len argument"))
           return 0;
         uint32_t i = (uint32_t)a.es.size();
-        a.es.push_back({Ek::Len, {}, 0, 0, h, 0});
+        a.es.push_back({Ek::Len, {}, 0, 0, h, 0, t.pos});
         return postfix(i);
       }
       if (w == "input" && peek().k == Tk::LP) { // input()
@@ -231,7 +239,7 @@ struct Parser {
         if (!expect(Tk::RP, "expected '()'"))
           return 0;
         uint32_t i = (uint32_t)a.es.size();
-        a.es.push_back({Ek::Input, {}, 0, 0, 0, 0});
+        a.es.push_back({Ek::Input, {}, 0, 0, 0, 0, t.pos});
         return postfix(i);
       }
       if (peek().k == Tk::LP) { // user function call: name(args...)
@@ -258,8 +266,13 @@ struct Parser {
           }
           a.seq_kids.push_back(std::move(kids));
           uint32_t i = (uint32_t)a.es.size();
-          a.es.push_back(
-              {Ek::Call, {}, 0, fi, (uint32_t)(a.seq_kids.size() - 1), 0});
+          a.es.push_back({Ek::Call,
+                          {},
+                          0,
+                          fi,
+                          (uint32_t)(a.seq_kids.size() - 1),
+                          0,
+                          t.pos});
           return postfix(i);
         }
       }
@@ -271,7 +284,7 @@ struct Parser {
         return 0;
       }
       uint32_t i = (uint32_t)a.es.size();
-      a.es.push_back({Ek::Var, {}, 0, v, 0, 0});
+      a.es.push_back({Ek::Var, {}, 0, v, 0, 0, t.pos});
       return postfix(i);
     }
     if (accept(Tk::LP)) {
@@ -301,6 +314,7 @@ struct Parser {
     return s;
   }
   constexpr uint32_t stmts_until_rb() {
+    const uint32_t p0 = peek().pos; // first stmt of the block
     std::vector<uint32_t> kids{};
     while (peek().k != Tk::RB && peek().k != Tk::End && ok) {
       uint32_t s = stmt();
@@ -310,10 +324,11 @@ struct Parser {
     }
     a.seq_kids.push_back(std::move(kids));
     uint32_t i = (uint32_t)a.ss.size();
-    a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
+    a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0, p0});
     return i;
   }
   constexpr uint32_t stmt() {
+    const uint32_t p0 = peek().pos; // this statement's source location
     switch (peek().k) {
     case Tk::KwRet: {
       ++ti;
@@ -327,7 +342,7 @@ struct Parser {
       if (!expect(Tk::Semi, "expected ';'"))
         return 0;
       uint32_t i = (uint32_t)a.ss.size();
-      a.ss.push_back({Sk::Ret, 0, e, 0, 0});
+      a.ss.push_back({Sk::Ret, 0, e, 0, 0, p0});
       return i;
     }
     case Tk::KwLet: {
@@ -351,7 +366,7 @@ struct Parser {
       if (!expect(Tk::Semi, "expected ';'"))
         return 0;
       uint32_t i = (uint32_t)a.ss.size();
-      a.ss.push_back({Sk::Let, id, e, 0, 0});
+      a.ss.push_back({Sk::Let, id, e, 0, 0, p0});
       return i;
     }
     case Tk::KwPrint: {
@@ -362,7 +377,7 @@ struct Parser {
       if (!expect(Tk::Semi, "expected ';'"))
         return 0;
       uint32_t i = (uint32_t)a.ss.size();
-      a.ss.push_back({Sk::Print, 0, e, 0, 0});
+      a.ss.push_back({Sk::Print, 0, e, 0, 0, p0});
       return i;
     }
     case Tk::KwIf: {
@@ -386,10 +401,11 @@ struct Parser {
         // no else clause: an EMPTY Seq arm (must not alias the then arm!)
         a.seq_kids.push_back({});
         els = (uint32_t)a.ss.size();
-        a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
+        a.ss.push_back(
+            {Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0, p0});
       }
       uint32_t i = (uint32_t)a.ss.size();
-      a.ss.push_back({Sk::If, 0, c, then, els});
+      a.ss.push_back({Sk::If, 0, c, then, els, p0});
       return i;
     }
     case Tk::KwBreak:
@@ -404,7 +420,7 @@ struct Parser {
       if (!expect(Tk::Semi, "expected ';'"))
         return 0;
       uint32_t i = (uint32_t)a.ss.size();
-      a.ss.push_back({is_break ? Sk::Brk : Sk::Cont, 0, 0, 0, 0});
+      a.ss.push_back({is_break ? Sk::Brk : Sk::Cont, 0, 0, 0, 0, p0});
       return i;
     }
     case Tk::KwWhile: {
@@ -422,7 +438,7 @@ struct Parser {
       if (!ok)
         return 0;
       uint32_t i = (uint32_t)a.ss.size();
-      a.ss.push_back({Sk::While, 0, c, body, 0});
+      a.ss.push_back({Sk::While, 0, c, body, 0, p0});
       return i;
     }
     case Tk::LB:
@@ -454,7 +470,7 @@ struct Parser {
         uint32_t i = (uint32_t)a.ss.size();
         // var = base array var; a = seq_kids slot of index exprs; b = value
         a.ss.push_back(
-            {Sk::StoreA, v, 0, (uint32_t)(a.seq_kids.size() - 1), val});
+            {Sk::StoreA, v, 0, (uint32_t)(a.seq_kids.size() - 1), val, p0});
         return i;
       }
       if (!expect(Tk::Assign, "expected '=' in assignment"))
@@ -465,7 +481,7 @@ struct Parser {
       if (!expect(Tk::Semi, "expected ';'"))
         return 0;
       uint32_t i = (uint32_t)a.ss.size();
-      a.ss.push_back({Sk::Assign, v, e, 0, 0});
+      a.ss.push_back({Sk::Assign, v, e, 0, 0, p0});
       return i;
     }
     default:
@@ -588,7 +604,7 @@ struct Parser {
     }
     a.seq_kids.push_back(std::move(kids));
     uint32_t i = (uint32_t)a.ss.size();
-    a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0});
+    a.ss.push_back({Sk::Seq, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0, 0});
     return i;
   }
 };

@@ -27,71 +27,17 @@ static void mjz_store(int64_t h, int64_t i, int64_t v) {
   mjz_arena[h + i] = v;
 }
 
-static int64_t mjz_depth = 0;
-#define MJZ_RET(x) do { --mjz_depth; return (int64_t)(x); } while (0)
 
-static int64_t mjz_f1(int64_t r0);
-
-static int64_t mjz_f1(int64_t r0) {
-  if (++mjz_depth > 512) { printf("TRAP\n"); exit(1); }
-  int64_t r1;
-  r1 = mjz_alloc(2);
-  printf("%lld\n", (long long)0);
-  printf("%lld\n", (long long)0);
-  printf("TRAP\n"); exit(1);
-  if (r1 >= 1) goto L68;
-L69:;
-  if (!((r0 != 0))) goto L37;
-  if (r0 == 0) goto L41;
-  if (r0 == 0 || (79 == INT64_MIN && r0 == -1)) { printf("TRAP\n"); exit(1); }
-  r0 = 79 / r0;
-  if (1 >= r0) goto L41;
-  r0 = 1;
-L42:;
-  if (!((r0 != 0))) goto L37;
-  r0 = 1;
-L38:;
-  if (!((r0 != 0))) goto L45;
-L45:;
-  MJZ_RET(0);
-L68:;
-  goto L69;
-L41:;
-  r0 = 0;
-  goto L42;
-L37:;
-  r0 = 0;
-  goto L38;
-  --mjz_depth; return 0;
-}
 int main(void) {
+  /* main: source lines 22..28 */
   int64_t r0;
-  int64_t r1;
-  r1 = mjz_f1(-2);
-  r1 = (int64_t)((uint64_t)r1 * (uint64_t)-9);
-  if (r1 >= -30) goto L2;
-  printf("%lld\n", (long long)6);
-L3:;
-  printf("%lld\n", (long long)-5);
-  printf("%lld\n", (long long)-8);
-  printf("%lld\n", (long long)-2);
-  printf("%lld\n", (long long)1);
-  printf("%lld\n", (long long)8);
-  printf("%lld\n", (long long)2);
-  r0 = mjz_f1(-4);
-  if (!((r0 != 0))) goto L30;
-L31:;
-  printf("%lld\n", (long long)0);
+  /* 22:10 */
   r0 = mjz_alloc(3);
+  /* 25:10 */
+  r0 = mjz_alloc(6);
+  /* 27:10 */
+  r0 = mjz_alloc(1);
+  /* 28:10 */
+  r0 = mjz_alloc(4);
   return 0;
-L2:;
-  printf("%lld\n", (long long)0);
-  goto L3;
-L30:;
-  printf("%lld\n", (long long)21);
-  printf("%lld\n", (long long)1);
-  r0 = mjz_alloc(3);
-  r0 = mjz_alloc(3);
-  r0 = mjz_alloc(3);
-  goto L31;
 }

@@ -33,6 +33,7 @@
 // ============================================================================
 MJZ_PIPELINE_FN Program compile(std::string_view src, PassCfg cfg) {
   Program P{};
+  P.src = src; // byte offsets in Instr::src index into this text
   P.P = parse(src);
   if (!P.P.ok) {
     P.error = P.P.err.what;

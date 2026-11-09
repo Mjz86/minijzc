@@ -13,11 +13,13 @@
 #ifdef MJZ_MULTI_CPP
 // defined in tu/backends.cpp (via emit_x64_impl.hpp)
 std::string emit_x64(const std::vector<Fn> &fns,
-                     const std::vector<std::string_view> &names);
+                     const std::vector<std::string_view> &names,
+                     std::string_view src = {});
 #else
 // runtime-only (static locals in the codegen); the header-only build still
 // compiles it exactly once — one TU per binary includes the umbrella
 std::string emit_x64(const std::vector<Fn> &fns,
-                     const std::vector<std::string_view> &names);
+                     const std::vector<std::string_view> &names,
+                     std::string_view src = {});
 #include "emit_x64_impl.hpp"
 #endif

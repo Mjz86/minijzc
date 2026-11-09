@@ -14,9 +14,10 @@ struct GenCtx {
   struct FnG { // a generated function available for calls
     std::string name;
     int nparams;
-    int arr_param{-1}; // >= 0: that arg position takes an array handle
-    bool rec{false};   // recursive: call sites must keep tiny constants
-    bool rt{false};    // recursive BUT trip-guard bounded: runtime args safe
+    int arr_param{-1};  // >= 0: that arg position takes an array handle
+    int arr_min_len{1}; // arrays passed there need at least this length
+    bool rec{false};    // recursive: call sites must keep tiny constants
+    bool rt{false};     // recursive BUT trip-guard bounded: runtime args safe
   };
   std::mt19937 rng;
   int counter_id{};
@@ -117,6 +118,20 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
       for (int i = 0; i < (int)fns.size(); ++i)
         if (fns[i].arr_param < 0 || !flat.empty())
           call.push_back(i);
+      // fns needing long-enough arrays (argpromo bait) are callable only
+      // when such an array is in scope
+      for (int i = (int)call.size() - 1; i >= 0; --i) {
+        if (fns[call[i]].arr_min_len <= 1)
+          continue;
+        bool any_long = false;
+        for (int j : flat)
+          if (arrays[j].len >= fns[call[i]].arr_min_len) {
+            any_long = true;
+            break;
+          }
+        if (!any_long)
+          call.erase(call.begin() + i);
+      }
       if (!call.empty()) {
         const FnG &F = fns[call[pick(0, (int)call.size() - 1)]];
         // recursive fns take runtime arguments only when every internal
@@ -129,7 +144,13 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
           if (k)
             out += ", ";
           if (F.arr_param >= 0 && k == F.arr_param) { // the array handle
-            const Arr &A = arrays[flat[pick(0, (int)flat.size() - 1)]];
+            // long-enough arrays only: the callee's fixed indices must be
+            // in bounds (aread-style readers) -- or any array for aget
+            std::vector<int> elig{};
+            for (int j : flat)
+              if (arrays[j].len >= F.arr_min_len)
+                elig.push_back(j);
+            const Arr &A = arrays[elig[pick(0, (int)elig.size() - 1)]];
             out += A.name;
           } else if (F.arr_param >= 0 && k == F.arr_param + 1) {
             const Arr &A = arrays[flat[pick(0, (int)flat.size() - 1)]];
@@ -307,10 +328,10 @@ inline void GenCtx::gen_stmt(int depth) {
     has_brk_cont = true;
     return;
   }
-  // leaves: print / assignment / flat array store / 2-D store
+  // leaves: print / assignment / flat array store / 2-D store / merge elbow
   int r = pick(0, depth <= 0 ? 4 : 10);
   if (r <= (depth <= 0 ? 4 : 3)) {
-    int leaf = pick(0, 5);
+    int leaf = pick(0, 6);
     if (leaf <= 1) { // flat array store: constant / runtime index
       std::vector<int> flat{};
       for (int i = 0; i < (int)arrays.size(); ++i)
@@ -372,6 +393,28 @@ inline void GenCtx::gen_stmt(int depth) {
       std::string e;
       gen_expr(e, 3);
       src += vars[idx[pick(0, (int)idx.size() - 1)]] + " = " + e + ";\n";
+      return;
+    }
+    if (leaf == 6) { // correlated merge: both arms pin the same variable to
+      // constants, and the join's comparison is decidable PER EDGE only (the
+      // hull [lo,hi] stays undecided) -- JUMP THREADING bait. The arms'
+      // constants sit on opposite sides of the threshold, so each edge
+      // threads past the elbow and the redundant branch vanishes
+      std::string n = "j" + std::to_string(counter_id++);
+      int lo = pick(0, 4), hi = pick(5, 9);
+      std::string c;
+      if (vars.empty())
+        c = std::to_string(pick(-9, 9));
+      else
+        gen_expr(c, 2); // runtime-unknown condition
+      src += "let " + n + " = " + std::to_string(lo) + ";\n";
+      src += "if (" + c + ") { " + n + " = " + std::to_string(lo) +
+             "; } else { " + n + " = " + std::to_string(hi) + "; }\n";
+      src += "if (" + n + " < 5) { print " + std::to_string(pick(-9, 9)) +
+             "; } else { print " + std::to_string(pick(-9, 9)) + "; }\n";
+      // deliberately NOT pushed to vars: the merge phi must die at the
+      // elbow (jthread v1 threads only elbows whose defs are not live
+      // past them; a later use of n would keep the phi alive)
       return;
     }
     std::string e; // print (occasionally a raw handle value: stkarr bait)
@@ -525,45 +568,45 @@ inline void GenCtx::gen_fn_defs() {
     src += "}\n";
     vars = std::move(saved_vars);
     arrays = std::move(saved_arrs);
-    fns.push_back({name, np, -1, false});
+    fns.push_back({name, np, -1, 1, false});
   }
   if (pick(0, 3)) { // self recursion (never inlined: SCC self-loop)
     src += "fn rec(n) { if (n <= 0) { return 0; } "
            "return rec(n - 1) + n; }\n";
-    fns.push_back({"rec", 1, -1, true});
+    fns.push_back({"rec", 1, -1, 1, true});
   }
   if (pick(0, 4)) { // mutual recursion (a 2-member SCC, all-tail)
     src += "fn pe(n) { if (n <= 0) { return 1; } return po(n - 1); }\n";
     src += "fn po(n) { if (n <= 0) { return 0; } return pe(n - 1); }\n";
-    fns.push_back({"pe", 1, -1, true, true});
-    fns.push_back({"po", 1, -1, true, true});
+    fns.push_back({"pe", 1, -1, 1, true, true});
+    fns.push_back({"po", 1, -1, 1, true, true});
   }
   if (pick(0, 1)) { // tail recursion with an accumulator: every internal
     // edge is a tail call, so scctco must collapse this into a plain loop
     src += "fn tsum(n, acc) { if (n <= 0) { return acc; } "
            "return tsum(n - 1, acc + n); }\n";
-    fns.push_back({"tsum", 2, -1, true, true});
+    fns.push_back({"tsum", 2, -1, 1, true, true});
   }
   if (pick(0, 2)) { // gcd-style tail call whose FIRST argument is a raw
     // parameter: the collapsed loop must rotate it through the header phi
     // (feeding the original argument back forever is the classic bug)
     src += "fn rgcd(a, b) { if (b == 0) { return a; } "
            "return rgcd(b, a % b); }\n";
-    fns.push_back({"rgcd", 2, -1, true, true});
+    fns.push_back({"rgcd", 2, -1, 1, true, true});
   }
   if (pick(0, 3) == 0) { // flat argument swap across a tail call: BOTH
     // args are raw params, so both rotation phis are exercised
     src += "fn sw(a, b, n) { if (n <= 0) { return a; } "
            "return sw(b, a, n - 1); }\n";
-    fns.push_back({"sw", 3, -1, true, true});
+    fns.push_back({"sw", 3, -1, 1, true, true});
   }
   if (pick(0, 3) == 0) { // a 3-member SCC of tail calls
     src += "fn m3a(n) { if (n == 0) { return 7; } return m3b(n - 1); }\n";
     src += "fn m3b(n) { if (n == 0) { return 8; } return m3c(n - 1); }\n";
     src += "fn m3c(n) { if (n == 0) { return 9; } return m3a(n - 1); }\n";
-    fns.push_back({"m3a", 1, -1, true});
-    fns.push_back({"m3b", 1, -1, true});
-    fns.push_back({"m3c", 1, -1, true});
+    fns.push_back({"m3a", 1, -1, 1, true});
+    fns.push_back({"m3b", 1, -1, 1, true});
+    fns.push_back({"m3c", 1, -1, 1, true});
   }
   if (pick(0, 4) == 0) { // array handles cross frames: aliasing bait for
     // the handle gates (Call args must block stack arrays, Load/Store of a
@@ -571,8 +614,18 @@ inline void GenCtx::gen_fn_defs() {
     // stays RARE to keep mem2reg coverage high elsewhere)
     src += "fn aget(a, i) { return a[i]; }\n";
     src += "fn aset(a, i, v) { a[i] = v; return v; }\n";
-    fns.push_back({"aget", 2, 0, false});
-    fns.push_back({"aset", 3, 0, false});
+    fns.push_back({"aget", 2, 0, 1, false});
+    fns.push_back({"aset", 3, 0, 1, false});
+    has_aparam = true;
+  }
+  if (pick(0, 5) == 0) { // const-index array reader: ARGUMENT PROMOTION bait.
+    // The callee reads only fixed slots, so its array parameter promotes to
+    // scalar elements; the call-site filter (arr_min_len) keeps every index
+    // in bounds, and the materialized loads then lift + const-fold -- with
+    // constant element stores and no other escape the whole call evaluates
+    // at compile time (constcall)
+    src += "fn aread(a) { return a[0] + a[2] * 4; }\n";
+    fns.push_back({"aread", 1, 0, 3, false});
     has_aparam = true;
   }
 }

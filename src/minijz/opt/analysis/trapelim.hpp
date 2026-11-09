@@ -18,8 +18,11 @@
 // either. The same walk folds COMPARISONS the value-range intervals already
 // decide (x.hi < y.lo etc.): comparisons never trap, so a decided outcome is
 // a constant, which the tier-0 fold pass then threads into branches.
-constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
-  Ranges RA = range_analyze(fn, A);
+// `RA` is the caller's range analysis (shared with jthread since the
+// checkpoint-14 battery: a second analysis per optimize call pushed the
+// constexpr proofs' peak memory over the edge).
+constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os,
+                            const Ranges &RA) {
   if (!RA.ok)
     return false;
   AliasInfo AI = alias_analyze(fn);
@@ -43,40 +46,10 @@ constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os) {
   auto nm1 = [](const Iv &i) { return i.bot || i.hi < -1 || i.lo > -1; };
   auto nmin = [](const Iv &i) { return i.bot || i.lo > INT64_MIN; };
   // range-proved comparison folding: comparisons never trap, so an outcome
-  // the intervals already decide is a constant. x.hi < y.lo decides every
-  // ordering; disjoint intervals decide ==/!=; two singletons decide all
-  // six (via the exact evaluator).
+  // the intervals already decide is a constant. (the decision itself lives
+  // in intervals.hpp as iv_decide -- jthread reuses it per-edge.)
   auto fold_cmp = [&](B b, const Iv &x, const Iv &y, val_t &out) -> bool {
-    if (x.bot || y.bot)
-      return false;
-    if (x.lo == x.hi && y.lo == y.hi) { // both singletons: exact
-      Rv r = w_bin(b, x.lo, y.lo);
-      if (r.trap)
-        return false; // unreachable for comparisons; be safe
-      out = r.v;
-      return true;
-    }
-    if (x.hi < y.lo || x.lo > y.hi) { // provably disjoint / ordered
-      switch (b) {
-      case B::Lt:
-      case B::Le:
-        out = (x.hi < y.lo) ? 1 : 0;
-        return true;
-      case B::Gt:
-      case B::Ge:
-        out = (x.hi < y.lo) ? 0 : 1;
-        return true;
-      case B::Eq:
-        out = 0;
-        return true;
-      case B::Ne:
-        out = 1;
-        return true;
-      default:
-        return false;
-      }
-    }
-    return false;
+    return iv_decide(b, x, y, out);
   };
   bool changed = false;
   std::vector<Iv> st(nv);

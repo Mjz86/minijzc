@@ -230,6 +230,44 @@ constexpr void iv_refine(Iv &x, Iv &y, B cmp, bool taken) {
   }
 }
 
+// decide a comparison from intervals alone: writes 0/1 into `out` and
+// returns true when the outcome is provable (both singletons: the exact
+// evaluator; provably disjoint/ordered intervals: the six directions).
+// Shared by trapelim's hull-based compare folding and jthread's
+// edge-sensitive branch resolution.
+constexpr bool iv_decide(B b, const Iv &x, const Iv &y, val_t &out) {
+  if (x.bot || y.bot)
+    return false;
+  if (x.lo == x.hi && y.lo == y.hi) { // both singletons: exact
+    Rv r = w_bin(b, x.lo, y.lo);
+    if (r.trap)
+      return false; // unreachable for comparisons; be safe
+    out = r.v;
+    return true;
+  }
+  if (x.hi < y.lo || x.lo > y.hi) { // provably disjoint / ordered
+    switch (b) {
+    case B::Lt:
+    case B::Le:
+      out = (x.hi < y.lo) ? 1 : 0;
+      return true;
+    case B::Gt:
+    case B::Ge:
+      out = (x.hi < y.lo) ? 0 : 1;
+      return true;
+    case B::Eq:
+      out = 0;
+      return true;
+    case B::Ne:
+      out = 1;
+      return true;
+    default:
+      return false;
+    }
+  }
+  return false;
+}
+
 struct Ranges {
   bool ok{};
   uint32_t nb{}, nv{};

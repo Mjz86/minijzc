@@ -16,6 +16,7 @@
 #include "scalar/cse.hpp"
 #include "scalar/unreach.hpp"
 #include "scalar/splice.hpp"
+#include "scalar/jthread.hpp"
 #include "scalar/dce.hpp"
 #include "scalar/ifconv.hpp"
 #include "scalar/ldelim.hpp"
@@ -117,13 +118,15 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
   };
   any |= tier0();
   // ---- tier 1: middle passes; cheap fixpoint after each round -------------
-  // trapelim runs ONCE per optimize() call: its nt proofs are monotone (a
-  // proof stays valid as the fn shrinks), and its interval analysis is the
-  // most expensive thing in the tier — re-running it every fixpoint round
-  // of every tier re-analysis made pathological inputs ~20x slower for no
-  // additional proofs. Later rounds keep the flags; the tier-2 post-round
-  // re-runs it once more (CFG restructuring can expose new proofs).
+  // trapelim and jthread run ONCE per optimize() call and SHARE one range
+  // analysis (the caller's): the interval state is the most expensive
+  // thing in the tier — re-running it every fixpoint round of every tier
+  // re-analysis made pathological inputs ~20x slower for no additional
+  // proofs, and a SECOND analysis per call pushed the constexpr proofs'
+  // peak memory over the edge. Both passes' facts are monotone; the tier-2
+  // post-round re-run catches restructuring-exposed proofs/elbows.
   bool trapelim_ran = false;
+  bool jthread_ran = false;
   if (cfg.level >= 2) {
     for (uint32_t outer = 0; outer < cap; ++outer) {
       bool ch = false, c = false;
@@ -141,13 +144,27 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         ch |= c;
         normalize_phis(fn);
       }
-      if (cfg.p_trapelim && (outer == 0 || !trapelim_ran)) {
-        An A = analyze(fn);
-        c = opt_trapelim(fn, A, os); // ranges + aliasing -> nt flags
-        dbg_pass(cfg.debug, fn, "trapelim", c);
-        trapelim_ran = true;
-        ch |= c;
-        normalize_phis(fn);
+      {
+        const bool run_te = cfg.p_trapelim && (outer == 0 || !trapelim_ran);
+        const bool run_jt = cfg.p_jthread && (outer == 0 || !jthread_ran);
+        if (run_te || run_jt) { // one analysis for both passes
+          An A = analyze(fn);
+          Ranges RA = range_analyze(fn, A);
+          if (run_te) {
+            c = opt_trapelim(fn, A, os, RA); // ranges + aliasing -> nt
+            dbg_pass(cfg.debug, fn, "trapelim", c);
+            trapelim_ran = true;
+            ch |= c;
+            normalize_phis(fn);
+          }
+          if (run_jt) {
+            c = opt_jthread(fn, A, RA, os); // per-edge elbow threading
+            dbg_pass(cfg.debug, fn, "jthread", c);
+            jthread_ran = true;
+            ch |= c;
+            normalize_phis(fn);
+          }
+        }
       }
 #ifndef MJZ_DBG_NO_LICM
       if (cfg.p_licm) {
@@ -234,9 +251,14 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
           c2 |= opt_ldelim(fn, A, os);
           normalize_phis(fn);
         }
-        if (cfg.p_trapelim && t2round < 2) { // restructuring-exposed proofs
+        if ((cfg.p_trapelim || cfg.p_jthread) && t2round < 2) {
+          // restructuring-exposed proofs/elbows; one shared analysis
           An A = analyze(fn);
-          c2 |= opt_trapelim(fn, A, os);
+          Ranges RA = range_analyze(fn, A);
+          if (cfg.p_trapelim)
+            c2 |= opt_trapelim(fn, A, os, RA);
+          if (cfg.p_jthread)
+            c2 |= opt_jthread(fn, A, RA, os);
           normalize_phis(fn);
         }
         if (cfg.p_licm) {

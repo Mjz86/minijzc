@@ -94,6 +94,15 @@ struct Builder {
     emit({.k = K::Cbr, .a = c, .t = tt, .f = ff});
     finish(tt, ff);
   }
+  constexpr void close_br_at(uint32_t tgt, uint32_t pos) {
+    emit({.k = K::Br, .t = tgt, .src = pos});
+    finish(tgt, NONE);
+  }
+  constexpr void close_cbr_at(uint32_t c, uint32_t tt, uint32_t ff,
+                              uint32_t pos) {
+    emit({.k = K::Cbr, .a = c, .t = tt, .f = ff, .src = pos});
+    finish(tt, ff);
+  }
   constexpr void close_exit() {
     emit({.k = K::Exit});
     finish(NONE, NONE);
@@ -102,68 +111,70 @@ struct Builder {
     if (cur == NONE)
       cur = new_block();
   }
-  constexpr uint32_t const_val(val_t v) {
+  constexpr uint32_t const_val(val_t v, uint32_t pos = NONE) {
     uint32_t d = fresh_temp();
-    emit({.k = K::Const, .dst = d, .c = v});
+    emit({.k = K::Const, .dst = d, .c = v, .src = pos});
     return d;
   }
 
   // returns vreg holding the expression value
   constexpr uint32_t ex(uint32_t ei, const Ast &a) {
     const Expr &e = a.es[ei];
+    const uint32_t p0 = e.pos;
     switch (e.k) {
     case Ek::Num:
-      return const_val(e.num);
+      return const_val(e.num, p0);
     case Ek::Var:
       // A use with no local mapping yet happens for `let x = ... x ...`
       // (the initializer sees the NEW binding, C-style). Storage is
       // zero-initialized, exactly like the AST oracle's env -- read 0.
       if (vmap[e.var] == NONE)
-        return const_val(0);
+        return const_val(0, p0);
       return vmap[e.var];
     case Ek::Neg: {
       uint32_t x = ex(e.l, a);
-      uint32_t z = const_val(0);
+      uint32_t z = const_val(0, p0);
       uint32_t d = fresh_temp();
-      emit({.k = K::Bin, .b = B::Sub, .dst = d, .a = z, .b2 = x});
+      emit({.k = K::Bin, .b = B::Sub, .dst = d, .a = z, .b2 = x, .src = p0});
       return d;
     }
     case Ek::Not: {
       uint32_t x = ex(e.l, a);
-      uint32_t z = const_val(0);
+      uint32_t z = const_val(0, p0);
       uint32_t d = fresh_temp();
-      emit({.k = K::Bin, .b = B::Eq, .dst = d, .a = x, .b2 = z});
+      emit({.k = K::Bin, .b = B::Eq, .dst = d, .a = x, .b2 = z, .src = p0});
       return d;
     }
     case Ek::Bin: {
       uint32_t x = ex(e.l, a);
       uint32_t y = ex(e.r, a);
       uint32_t d = fresh_temp();
-      emit({.k = K::Bin, .b = ir_op(e.b), .dst = d, .a = x, .b2 = y});
+      emit(
+          {.k = K::Bin, .b = ir_op(e.b), .dst = d, .a = x, .b2 = y, .src = p0});
       return d;
     }
     case Ek::Alloc: { // d = alloc(n): fresh handle into the bump arena
       uint32_t n = ex(e.l, a);
       uint32_t d = fresh_temp();
-      emit({.k = K::Alloc, .dst = d, .a = n});
+      emit({.k = K::Alloc, .dst = d, .a = n, .src = p0});
       return d;
     }
     case Ek::Load: { // d = h[i] (bounds-checked, TRAPs when out of range)
       uint32_t h = ex(e.l, a);
       uint32_t i = ex(e.r, a);
       uint32_t d = fresh_temp();
-      emit({.k = K::Load, .dst = d, .a = h, .b2 = i});
+      emit({.k = K::Load, .dst = d, .a = h, .b2 = i, .src = p0});
       return d;
     }
     case Ek::Len: { // d = len(h): 0 unless h is an allocated handle
       uint32_t h = ex(e.l, a);
       uint32_t d = fresh_temp();
-      emit({.k = K::Len, .dst = d, .a = h});
+      emit({.k = K::Len, .dst = d, .a = h, .src = p0});
       return d;
     }
     case Ek::Input: { // d = input(): next integer from the stdin tape
       uint32_t d = fresh_temp();
-      emit({.k = K::Input, .dst = d});
+      emit({.k = K::Input, .dst = d, .src = p0});
       return d;
     }
     case Ek::Call: { // d = f_k(a0, ..): args evaluated left to right
@@ -171,7 +182,7 @@ struct Builder {
       for (uint32_t ke : a.seq_kids[e.l])
         argv.push_back(ex(ke, a));
       uint32_t d = fresh_temp();
-      Instr ci{.k = K::Call, .dst = d, .c = (int64_t)e.var + 1};
+      Instr ci{.k = K::Call, .dst = d, .c = (int64_t)e.var + 1, .src = p0};
       ci.args = std::move(argv);
       emit(ci);
       return d;
@@ -182,15 +193,15 @@ struct Builder {
       uint32_t l = ex(e.l, a);
       uint32_t rb = new_block(), tt = new_block(), ff = new_block(),
                mm = new_block();
-      close_cbr(l, rb, ff);
+      close_cbr_at(l, rb, ff, p0);
       cur = rb;
       uint32_t r = ex(e.r, a);
-      close_cbr(r, tt, ff);
+      close_cbr_at(r, tt, ff, p0);
       cur = tt;
-      emit({.k = K::Const, .dst = res, .c = 1});
+      emit({.k = K::Const, .dst = res, .c = 1, .src = p0});
       close_br(mm);
       cur = ff;
-      emit({.k = K::Const, .dst = res, .c = 0});
+      emit({.k = K::Const, .dst = res, .c = 0, .src = p0});
       close_br(mm);
       cur = mm;
       return res;
@@ -200,15 +211,15 @@ struct Builder {
       uint32_t l = ex(e.l, a);
       uint32_t rb = new_block(), tt = new_block(), ff = new_block(),
                mm = new_block();
-      close_cbr(l, tt, rb); // true short-circuits
+      close_cbr_at(l, tt, rb, p0); // true short-circuits
       cur = rb;
       uint32_t r = ex(e.r, a);
-      close_cbr(r, tt, ff);
+      close_cbr_at(r, tt, ff, p0);
       cur = tt;
-      emit({.k = K::Const, .dst = res, .c = 1});
+      emit({.k = K::Const, .dst = res, .c = 1, .src = p0});
       close_br(mm);
       cur = ff;
-      emit({.k = K::Const, .dst = res, .c = 0});
+      emit({.k = K::Const, .dst = res, .c = 0, .src = p0});
       close_br(mm);
       cur = mm;
       return res;
@@ -219,24 +230,25 @@ struct Builder {
 
   constexpr void st(uint32_t si, const Ast &a) {
     const Stmt &s = a.ss[si];
+    const uint32_t p0 = s.pos;
     switch (s.k) {
     case Sk::Let:
     case Sk::Assign: {
       ensure_open();
       uint32_t v = ex(s.e, a);
-      emit({.k = K::Copy, .dst = map_def(s.var, a), .a = v});
+      emit({.k = K::Copy, .dst = map_def(s.var, a), .a = v, .src = p0});
       break;
     }
     case Sk::Print: {
       ensure_open();
       uint32_t v = ex(s.e, a);
-      emit({.k = K::Print, .a = v});
+      emit({.k = K::Print, .a = v, .src = p0});
       break;
     }
     case Sk::Ret: { // return expr;  -- terminates the block (no successors)
       ensure_open();
       uint32_t v = ex(s.e, a);
-      emit({.k = K::Ret, .a = v});
+      emit({.k = K::Ret, .a = v, .src = p0});
       finish(NONE, NONE);
       break;
     }
@@ -248,12 +260,12 @@ struct Builder {
       for (size_t j = 0; j + 1 < idx.size(); ++j) {
         uint32_t i = ex(idx[j], a); // index exprs left-to-right,
         uint32_t t = fresh_temp();  // intermediate handle loads
-        emit({.k = K::Load, .dst = t, .a = h, .b2 = i});
+        emit({.k = K::Load, .dst = t, .a = h, .b2 = i, .src = p0});
         h = t;
       }
       uint32_t last = ex(idx.back(), a);
       uint32_t v = ex(s.b, a); // value evaluated last (oracle order)
-      emit({.k = K::Store, .a = h, .b2 = last, .c2 = v});
+      emit({.k = K::Store, .a = h, .b2 = last, .c2 = v, .src = p0});
       break;
     }
     case Sk::Seq:
@@ -264,7 +276,7 @@ struct Builder {
       ensure_open();
       uint32_t c = ex(s.e, a);
       uint32_t tb = new_block(), eb = new_block(), jb = new_block();
-      close_cbr(c, tb, eb);
+      close_cbr_at(c, tb, eb, p0);
       cur = tb;
       st(s.a, a);
       ensure_open();
@@ -278,12 +290,12 @@ struct Builder {
     }
     case Sk::Brk: { // break; -> unconditional jump to the loop's exit
       ensure_open();
-      close_br(loop_stack.back().second);
+      close_br_at(loop_stack.back().second, p0);
       break;
     }
     case Sk::Cont: { // continue; -> jump back to the header (re-test)
       ensure_open();
-      close_br(loop_stack.back().first);
+      close_br_at(loop_stack.back().first, p0);
       break;
     }
     case Sk::While: {
@@ -292,7 +304,7 @@ struct Builder {
       close_br(h); // preheader -> header
       cur = h;
       uint32_t c = ex(s.e, a);
-      close_cbr(c, body, after);
+      close_cbr_at(c, body, after, p0);
       cur = body;
       loop_stack.push_back({h, after});
       st(s.a, a);
