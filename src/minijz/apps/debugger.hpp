@@ -334,12 +334,13 @@ int run_debugger(const Cli &C, const std::string &src) {
           "  fns: %zu | inlined %u | unrolled %u | dce %u | "
           "hoist %u | mem2reg %u | constcalls %u | tces %u | "
           "scctco %u | cdfolds %u | ifconv %u | traps killed %u | "
-          "deadargs %u | fnspec %u | icf %u\n",
+          "deadargs %u | fnspec %u | icf %u | jthread %u | argpromo %u\n",
           P.fns.size(), (unsigned)os.inlines, (unsigned)os.unrolls,
           (unsigned)os.dce, (unsigned)os.hoisted, (unsigned)os.mem2reg_lifts,
           (unsigned)os.constcalls, (unsigned)os.tces, (unsigned)os.scctco,
           (unsigned)os.cdfolds, (unsigned)os.ifconvs, (unsigned)os.traps_killed,
-          (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf);
+          (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf,
+          (unsigned)os.jthreads, (unsigned)os.argpromos);
     } else if (cmd == "plan") {
       long f = num(1, 0);
       if (f < 0 || f >= (long)P.fns.size())

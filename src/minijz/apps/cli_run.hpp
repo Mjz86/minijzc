@@ -49,7 +49,8 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | NOTCOMB %u | "
         "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
         "SCCP %u(+%ubr) | LD-FWD %u | LD-CSE %u | RANGE-CMP %u | "
-        "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u | FNSPEC %u | ICF %u\n"
+        "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u | FNSPEC %u | ICF %u | "
+        "JT %u | ARG-PROMO %u\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
         P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i, (unsigned)os.iters,
@@ -67,8 +68,8 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.sccp_brs, (unsigned)os.ld_fwds, (unsigned)os.ld_cses,
         (unsigned)os.rangecmps, (unsigned)os.cmpfacts, (unsigned)os.callcses,
         (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf,
-        (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
-        (unsigned)dfu);
+        (unsigned)os.jthreads, (unsigned)os.argpromos, (unsigned)de_c,
+        (unsigned)dz_c, (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
   }
   if (C.print_ir) {
     for (size_t f = 0; f < P.fns.size(); ++f) {

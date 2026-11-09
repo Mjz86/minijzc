@@ -130,8 +130,10 @@ static void usage() {
       "                    [depth guard] + print(input() & 1))\n"
       "  --enable=P,P2      force passes on (folds, copyprop, canon, cse,\n"
       "  --disable=P,P2     force passes off  unreach, splice, dce, mem2reg,\n"
-      "                    trapelim, licm, divmagic, reassoc, ifconv, unroll,\n"
-      "                    lcf, constcall, scctco, tailrec, cdfold, inline) —\n"
+      "                    trapelim, jthread, licm, divmagic, reassoc, "
+      "ifconv,\n"
+      "                    unroll, lcf, constcall, scctco, tailrec, cdfold,\n"
+      "                    deadargs, fnspec, icf, argpromo, inline) —\n"
       "                    applied on top of the -O preset, so e.g. `-O1\n"
       "                    --enable=lcf` is legal\n"
       "  --unroll=N         full-unroll loops with constant trip count <= N\n"
@@ -393,6 +395,10 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_fnspec = on;
   else if (eq("icf"))
     p.p_icf = on;
+  else if (eq("jthread"))
+    p.p_jthread = on;
+  else if (eq("argpromo"))
+    p.p_argpromo = on;
   else if (eq("inline"))
     p.do_inline = on;
   else {

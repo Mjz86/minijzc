@@ -114,6 +114,8 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.deadargs += U.ostats.deadargs;
     t.fnspecs += U.ostats.fnspecs;
     t.icf += U.ostats.icf;
+    t.jthreads += U.ostats.jthreads;
+    t.argpromos += U.ostats.argpromos;
     if (U.ostats.iters > t.iters)
       t.iters = U.ostats.iters;
   }

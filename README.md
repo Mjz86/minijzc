@@ -16,7 +16,7 @@ src/minijz/           the compiler as a header-only constexpr library
   fwd.hpp               forward declarations (declaration-only contexts)
   graph_lib.hpp         the mjz_lib import, ISOLATED: only the headers that
                         actually need the graph/big-number library include it
-  base/                  pass_cfg (PassCfg + the 26-name toggle table),
+  base/                  pass_cfg (PassCfg + the 28-name toggle table),
                         native_run (find_cc/slurp/run_capture/write_file)
   front/                 lexer, ast, parser
   ir/                    instr (IR core), pred_norm, builder, destruct,
@@ -344,11 +344,21 @@ the ctest/CLI toggle names):
   retargeted)**, **function specialization (`fnspec`, interprocedural —
   a parameter holding the same `Const` at every non-recursive call
   site buys a specialized clone with the constant bound at entry and
-  the argument dropped from the clone's signature)**.
-* still open (the standing wishlist): jump threading, tail
+  the argument dropped from the clone's signature)**, **argument
+  promotion (`argpromo`, interprocedural — a read-only constant-index
+  array parameter becomes scalar element parameters; the callee's Loads
+  become plain param uses and each promoted call site materializes the
+  provably in-bounds element loads right before the call, so arrays that
+  stop escaping lift and constant element stores fold the whole call at
+  compile time)**, **jump threading (`jthread` — a branch edge into an
+  "elbow" block (phis + one comparison + a branch) whose comparison is
+  decidable PER EDGE (the range hull over all preds is not) redirects
+  straight to the taken successor; both edges of a correlated merge
+  thread and the redundant branch vanishes)**.
+* still open (the standing wishlist): tail
 duplication, loop rotation/simplification/canonicalization proper,
   LCSSA, GVN (beyond the dominator-scoped CSE + ldelim + callcse
-  combination), demanded/known bits, MemCpyOpt, argument promotion,
+  combination), demanded/known bits, MemCpyOpt,
   loop fusion/fission/distribution, loop unswitching/versioning/predication,
   function outlining, Attributor-style inference, GlobalOpt.
 

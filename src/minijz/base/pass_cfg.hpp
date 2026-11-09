@@ -1,6 +1,6 @@
 #pragma once
 // === pass_cfg.hpp ========================================
-// PassCfg (-O presets, per-pass toggles), the 26-name toggle table
+// PassCfg (-O presets, per-pass toggles), the 28-name toggle table
 // shared by CLI/fuzzer/--shrink, apply_pass_flag, describe_cfg.
 
 #include "../config.hpp"
@@ -16,7 +16,8 @@
 //   tier 1 "middle"   : mem2reg (array lifting + dead stores + dead
 //                       allocs), ldelim (store->load forwarding + load
 //                       CSE), trapelim(+range analysis + compare
-//                       folding), licm, divmagic, reassoc -- one round
+//                       folding), jthread (per-edge elbow branch
+//                       threading), licm, divmagic, reassoc -- one round
 //                       each, followed by a tier-0 fixpoint, repeated
 //                       until global fixpoint / --fp-limit
 //   tier 2 "expensive": unroll, lcf -- CFG restructuring, run ONLY after
@@ -50,13 +51,14 @@ struct PassCfg {
       p_unreach{true}, p_splice{true}, p_dce{true}, p_sccp{true};
   // tier 1
   bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
-      p_reassoc{true}, p_ldelim{true};
+      p_reassoc{true}, p_ldelim{true}, p_jthread{true};
   // tier 2
   bool p_unroll{true}, p_lcf{true}, p_constcall{true}, p_tailrec{true},
       p_cdfold{true}, p_ifconv{true}, p_callcse{true};
   bool p_deadargs{true}; // interprocedural dead-argument elimination
   bool p_fnspec{true};   // interprocedural function specialization
   bool p_icf{true};      // interprocedural identical code folding
+  bool p_argpromo{true}; // interprocedural argument promotion
   bool p_scctco{true};   // SCC tail-call collapse (inner-SCC tail calls)
   // interprocedural
   bool do_inline{true};
@@ -75,9 +77,10 @@ struct PassCfg {
     bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
     p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce =
         p_sccp = t0;
-    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = p_ldelim = t1;
+    p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = p_ldelim =
+        p_jthread = t1;
     p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv =
-        p_callcse = p_deadargs = p_fnspec = p_icf = t2;
+        p_callcse = p_deadargs = p_fnspec = p_icf = p_argpromo = t2;
     p_scctco = t2;
     do_inline = t2;
     do_opt = lv != 0;
@@ -88,13 +91,13 @@ struct PassCfg {
 // (ported from the Branchedmain monolith: fuzz random pass configs need a
 // numeric apply + a description; the CLI keeps its string-based
 // set_named_pass, which covers the same set plus 'inline'.)
-inline constexpr uint32_t PASS_TOGGLE_COUNT = 26;
+inline constexpr uint32_t PASS_TOGGLE_COUNT = 28;
 inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
-    "fold",   "copyprop", "canon",     "cse",    "unreach",  "splice",
-    "dce",    "mem2reg",  "trapelim",  "licm",   "divmagic", "reassoc",
-    "unroll", "lcf",      "constcall", "scctco", "tailrec",  "cdfold",
-    "ifconv", "inline",   "sccp",      "ldelim", "callcse",  "deadargs",
-    "fnspec", "icf"};
+    "fold",   "copyprop", "canon",     "cse",     "unreach",  "splice",
+    "dce",    "mem2reg",  "trapelim",  "licm",    "divmagic", "reassoc",
+    "unroll", "lcf",      "constcall", "scctco",  "tailrec",  "cdfold",
+    "ifconv", "inline",   "sccp",      "ldelim",  "callcse",  "deadargs",
+    "fnspec", "icf",      "jthread",   "argpromo"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
   case 0:
@@ -175,6 +178,12 @@ constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   case 25:
     p.p_icf = on;
     return true;
+  case 26:
+    p.p_jthread = on;
+    return true;
+  case 27:
+    p.p_argpromo = on;
+    return true;
   default:
     return false;
   }
@@ -191,7 +200,7 @@ static std::string describe_cfg(const PassCfg &p) {
       p.p_divmagic, p.p_reassoc,  p.p_unroll,  p.p_lcf,      p.p_constcall,
       p.p_scctco,   p.p_tailrec,  p.p_cdfold,  p.p_ifconv,   p.do_inline,
       p.p_sccp,     p.p_ldelim,   p.p_callcse, p.p_deadargs, p.p_fnspec,
-      p.p_icf};
+      p.p_icf,      p.p_jthread,  p.p_argpromo};
   for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
     if (!states[i]) {
       if (!off.empty())
@@ -253,6 +262,8 @@ struct OptStats {
   uint32_t cmpfacts{};     // fold: compare-domain identities applied
   uint32_t callcses{};     // callcse: pure calls deduped to dominating ones
   uint32_t deadargs{};     // deadargs: parameters removed from fns + call sites
-  uint32_t fnspecs{}; // fnspec: specialized clones created (const arg bound)
-  uint32_t icf{};     // icf: duplicates folded INTO a representative
+  uint32_t fnspecs{};   // fnspec: specialized clones created (const arg bound)
+  uint32_t icf{};       // icf: duplicates folded INTO a representative
+  uint32_t jthreads{};  // jthread: branch edges threaded past elbows
+  uint32_t argpromos{}; // argpromo: array params promoted to scalar elements
 };

@@ -10,6 +10,7 @@
 #include "../scalar/dce.hpp"
 #include "../loop/lcf_rt.hpp"
 #include "callcse.hpp"
+#include "argpromo.hpp"
 #include "deadargs.hpp"
 #include "fnspec.hpp"
 #include "icf.hpp"
@@ -413,6 +414,22 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
   // ---- 9e1b: SCC tail-call collapse (before the inliner rounds) --------
   if (cfg.p_scctco)
     (void)opt_scc_tailcall(fns, ostats, names, cfg);
+  // ---- 9e7: argument promotion --------------------------------------------
+  // BEFORE the inliner rounds: a tiny constant-index reader would otherwise
+  // be inlined first (the inliner's "always inline tiny" rule) and never
+  // seen as a promotable shape. A promoted parameter becomes k scalar
+  // element params; the callee's Loads become plain param uses; every
+  // promoted site materializes the (provably in-bounds) element loads right
+  // before the call. The tiny CLONE then feeds the inliner as usual -- with
+  // scalar args it inlines cleanly and the caller's loads lift + const-fold;
+  // arrays that stop escaping lift in the re-fold rounds below, and
+  // constcall evaluates the promoted call at compile time when the elements
+  // fold to constants. The dead-fn sweep drops generics that lost all their
+  // sites to the clone.
+  if (cfg.p_argpromo) {
+    if (opt_argpromo(fns, names, ostats, src_index))
+      eliminate_dead_fns(fns, names, ostats, src_index);
+  }
   // ---- interprocedural inlining rounds (SCC-aware; recursive never) -------
   auto inline_rounds = [&](int rounds) {
     if (!cfg.do_inline)
