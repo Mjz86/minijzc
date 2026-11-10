@@ -38,7 +38,11 @@ struct GenCtx {
   bool bkpt_mode{false}; // sprinkle `breakpoint` stmts (seeds >= the floor)
   bool gvn_mode{false};  // plant shadow-pair merges (seeds >= that floor)
   bool unsw_mode{false}; // plant invariant-flag while loops (unswitch bait)
+  bool bif_mode{false};  // plant invariant-inner-if while loops (the
+                         // checkpoint-19 body-if unswitch bait: the header
+                         // test stays variant, the body branch versions)
   int n_unswbait{};      // ... count (for the report)
+  int n_bifbait{};       // body-if bait loops planted (for the report)
   bool cc_mode{false};   // plant short-circuit-condition while loops
                          // (compound unswitch bait: && / || of two invariant
                          // flags; seeds >= that floor)
@@ -515,6 +519,36 @@ inline void GenCtx::gen_stmt(int depth) {
   }
   if (r == 6 && depth >= 2) { // bounded while with a fresh counter
     std::string cn = "c" + std::to_string(counter_id++);
+    if (bif_mode && pick(0, 2) == 0) {
+      // BODY-IF UNSWITCH BAIT (checkpoint 19): the loop's HEAD test is
+      // variant (the counter grows every iteration, so the trivial
+      // unswitcher has nothing to version on), but the body hides an
+      // inner if on an invariant flag (bf never assigned inside:
+      // deliberately NOT pushed to vars, so no generated statement
+      // can touch it) whose BOTH arms stay in-loop and keep the loop
+      // converging -- they just advance the counter by different
+      // strides. The body-if unswitch versions the loop: the true
+      // version runs the +1 arm forever, the false version the +2 arm,
+      // and the exits (the header's arm included) merge through
+      // version-merge blocks. The per-iteration print plus the
+      // post-loop print make the version-dependent values observable:
+      // the exit value of cn can overshoot the bound by 0 or 1
+      // depending on the version, so a miswired merge shows.
+      // (Self-contained and early-returning: the loop needs NO rider
+      // statements -- its own two prints are the observation.)
+      std::string bf = "bf" + std::to_string(counter_id++);
+      std::string bfin = use_input ? "input()" : std::to_string(pick(-3, 3));
+      src += "let " + bf + " = " + bfin + ";\n";
+      src += "let " + cn + " = " + std::to_string(pick(0, 3)) + ";\n";
+      src += "while (" + cn + " < " + std::to_string(pick(4, 7)) + ") {\n";
+      src += "  if (" + bf + " > 0) { " + cn + " = " + cn + " + 1; } else { " +
+             cn + " = " + cn + " + 2; }\n";
+      src += "  print " + cn + ";\n";
+      src += "}\n";
+      src += "print " + cn + ";\n";
+      n_bifbait++;
+      return;
+    }
     if (cc_mode && pick(0, 2) == 0) {
       // COMPOUND-COND UNSWITCH BAIT (checkpoint 18): the loop condition is
       // a SHORT-CIRCUIT of two invariant flags (never assigned inside: fl1
@@ -737,6 +771,9 @@ inline constexpr uint32_t MJZ_UNSWITCH_SEED_FLOOR = 12731;
 // compound-condition while loops (&& / || of two invariant flags: the
 // checkpoint-18 unswitch extension) start here — same discipline
 inline constexpr uint32_t MJZ_CC_SEED_FLOOR = 13331;
+// invariant-inner-if while loops (the checkpoint-19 body-if unswitch
+// bait: a variant head test plus an invariant body branch) start here
+inline constexpr uint32_t MJZ_BIF_SEED_FLOOR = 13631;
 
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
@@ -744,6 +781,7 @@ static GenCtx gen_program(uint32_t seed) {
   g.gvn_mode = seed >= MJZ_GVN_SEED_FLOOR;       // see MJZ_GVN_SEED_FLOOR
   g.unsw_mode = seed >= MJZ_UNSWITCH_SEED_FLOOR; // see MJZ_UNSWITCH_SEED_FLOOR
   g.cc_mode = seed >= MJZ_CC_SEED_FLOOR;         // see MJZ_CC_SEED_FLOOR
+  g.bif_mode = seed >= MJZ_BIF_SEED_FLOOR;       // see MJZ_BIF_SEED_FLOOR
   g.use_input = (seed & 1) != 0;                 // half the programs read stdin
   g.allow_mat = ((seed >> 2) & 7) == 0; // 1/8 of programs grow 2-D arrays
   g.bait = ((seed >> 5) & 3) == 0;      // 1/4 carry deliberate trap bait; the

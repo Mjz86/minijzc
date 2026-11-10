@@ -574,6 +574,136 @@ int main() {
     }
   }
 
+  // ---- checkpoint 19: body-if loop unswitching -------------------------
+  {
+    // (a) the canonical bait: the head test is a real while-condition and
+    // the body hides an invariant if. BOTH versions keep running the
+    // loop, and the exit value of cn DIFFERS between them (the +1 side
+    // lands exactly on the bound, the +2 side can overshoot by one) —
+    // the version-merge blocks carry it, so this is load-bearing
+    {
+      const char *s = "let bf = input();\nlet cn = 0;\n"
+                      "while (cn < 5) {\n"
+                      "  if (bf > 0) { cn = cn + 1; } else { cn = cn + 2; }\n"
+                      "}\n"
+                      "print cn;\n";
+      Program P = compile(s);
+      UT(P.ok, "bif-unswitch: variant-head program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.unswitches > 0, "bif-unswitch: the loop was versioned");
+      UT(os.body_unswitches > 0, "bif-unswitch: the body-if form fired");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 5,
+         "bif-unswitch: true version steps +1 to exactly 5");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 1 && o2.out[0] == 6,
+         "bif-unswitch: false version overshoots to 6 (the VM merge)");
+    }
+    // (b) per-iteration observation inside the loop: both versions print
+    // their own strides; the outputs differ per version and must match
+    // the oracle either way
+    {
+      const char *s = "let bf = input();\nlet cn = 0;\n"
+                      "while (cn < 6) {\n"
+                      "  if (bf > 0) { cn = cn + 1; print cn; }\n"
+                      "  else { cn = cn + 3; print cn; }\n"
+                      "}\n";
+      Program P = compile(s);
+      UT(P.ok, "bif-unswitch: arm-print program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.body_unswitches > 0, "bif-unswitch: arm prints do not block");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {5});
+      UT(o.out.size() == 6 && o.out[0] == 1 && o.out[5] == 6,
+         "bif-unswitch: +1 version prints 1..6");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 2 && o2.out[0] == 3 && o2.out[1] == 6,
+         "bif-unswitch: +3 version prints 3, 6");
+    }
+    // (c) the break-arm read: the guarded break's arm READS the loop
+    // counter (a plain outside use of a loop-defined value) — the VM
+    // below the break arm must merge it, and the post-loop print reads
+    // a 2-pred merge (the header exit AND the break arm) whose delivered
+    // phi is born at the merge
+    {
+      const char *s = "let bf = input();\nlet c = 5;\nlet s = 0;\n"
+                      "while (c > 1) {\n"
+                      "  if (c == 2) { print 900 + c; break; }\n"
+                      "  if (bf > 0) { c = c - 1; } else { c = c - 2; }\n"
+                      "  s = s + c;\n"
+                      "}\n"
+                      "print s * 10 + c;\n";
+      Program P = compile(s);
+      UT(P.ok, "bif-unswitch: break-arm-read program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.body_unswitches > 0, "bif-unswitch: break arms do not block");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 2 && o.out[0] == 902 && o.out[1] == 92,
+         "bif-unswitch: true version breaks at 2 (902, then 92)");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 1 && o2.out[0] == 41,
+         "bif-unswitch: false version runs to the header exit (41)");
+    }
+    // (d) rejection: a WRITTEN flag is not invariant — no versioning,
+    // same math (the counter still bounds the loop)
+    {
+      const char *s =
+          "let cn = 0;\n"
+          "while (cn < 5) {\n"
+          "  if (cn % 2 == 0) { cn = cn + 1; } else { cn = cn + 2; }\n"
+          "}\n"
+          "print cn;\n";
+      Program P = compile(s);
+      UT(P.ok, "bif-unswitch: non-invariant branch compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.unswitches == 0, "bif-unswitch: varying cond left alone");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {});
+      UT(o.out.size() == 1 && o.out[0] == 5,
+         "bif-unswitch: 0,1,3,5 lands on 5");
+    }
+    // (e) rejection: an arm that BREAKS leaves the loop (the then-arm is
+    // outside the natural loop), so both-arms-in-loop fails and the loop
+    // stays whole
+    {
+      const char *s = "let bf = input();\nlet c = 5;\n"
+                      "while (c > 0) {\n"
+                      "  if (bf > 0) { break; }\n"
+                      "  c = c - 1;\n"
+                      "}\n"
+                      "print c;\n";
+      Program P = compile(s);
+      UT(P.ok, "bif-unswitch: break-arm branch compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.body_unswitches == 0, "bif-unswitch: exit branch not versioned");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 5,
+         "bif-unswitch: true breaks at once");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 1 && o2.out[0] == 0,
+         "bif-unswitch: false counts down");
+    }
+    // (f) the invariant branch around a division: each version keeps
+    // ITS OWN arm's division inside it (the versioning must not hoist or
+    // duplicate it); the guarded divisor is the loop counter, so the nt
+    // proofs stay control-flow-sensitive
+    {
+      const char *s = "let bf = input();\nlet c = 5;\nlet s = 0;\n"
+                      "while (c > 0) {\n"
+                      "  if (bf > 0) { s = s + 100 / c; } else { s = s + c; }\n"
+                      "  c = c - 1;\n"
+                      "}\n"
+                      "print s;\n";
+      Program P = compile(s);
+      UT(P.ok, "bif-unswitch: guarded-division program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.body_unswitches > 0, "bif-unswitch: division arms versioned");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1});
+      UT(o.out.size() == 1 && o.out[0] == 228,
+         "bif-unswitch: 100/5+100/4+100/3+100/2+100/1 = 228");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 1 && o2.out[0] == 15, "bif-unswitch: 5+4+3+2+1 = 15");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

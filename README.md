@@ -29,7 +29,9 @@ src/minijz/           the compiler as a header-only constexpr library
   opt/scalar/            fold, copyprop, canon (incl. notcomb), cse, gvn
                         (value numbering: consts + phi congruence + bins),
                         unreach, splice, dce, ifconv
-  opt/loop/              licm, unroll, lcf, lcf_rt
+  opt/loop/              licm, unroll, lcf, lcf_rt, unswitch (+
+                        unswitch_shape: the shared shape/matcher/clone
+                        layer, unswitch_bif: the body-if scan + commit)
   opt/linear/            linform, reassoc, divmagic
   opt/interprocedural/   callgraph (Tarjan + inliner), scctco, scctco_fold,
                         tailrec (tce_self/tce_merge), cdfold
@@ -515,18 +517,55 @@ the ctest/CLI toggle names):
   (the general any-condition simulator) + `lcf_rt.hpp` (the runtime-trip
   guarded closed form) — and the const-call evaluator, which
   historically squatted in `loop/lcf_rt.hpp` under a stale header,
-  moved to its real home `interprocedural/constcall.hpp`.
+  moved to its real home `interprocedural/constcall.hpp`. And
+  (checkpoint 19) **body-if loop unswitching** (the classic LLVM
+  "trivial" unswitch of an invariant INNER branch — still the same
+  `unswitch` toggle): the head test is a REAL while-condition, but a
+  body branch `bif: cbr(INV) A/B` with INV SSA-proven invariant, both
+  arms in-loop and each entered only through bif, versions the loop —
+  `pre: cbr(INV) h / h'`, the original loop becoming the INV-true
+  version (`bif: br A`, B dies) and a full fresh-vreg clone the false
+  one (`bif': br B'`, A' dies). BOTH versions keep running the loop —
+  sound because the original picked the SAME arm every iteration (INV
+  is an SSA value, it cannot change mid-loop) — so no purity gates
+  beyond INV's invariance are needed. Every exit edge (the header's
+  exit arm INCLUDED — no zero-iteration edge is replaced) gets a
+  VERSION-MERGE block: preds {exit source, its clone}, one phi per
+  loop-defined value read at or through the exit target
+  (phi(v, fresh v)), then br to the target; that holds the <=2-preds
+  invariant the 2-arg phi representation needs. Outside reads of
+  loop-defined values are routed by a DELIVERED walk: pure break arms
+  read the VM directly, single-pred chains pass the value up, and a
+  2-pred merge whose values arrive per-pred (the post-loop print when
+  a loop has both a header exit and a guarded break — the SSA builder
+  left those as PLAIN reads because the header phi dominates the whole
+  post-loop region) gets a fresh phi born at the merge. The dead arms
+  and their merge phis degenerate under unreach + copyprop in the same
+  tier round, the way the checkpoint-17/18 abandoned loop bodies do.
+  The new bait exposed (and this checkpoint fixes) a LATENT bug in the
+  LCF general simulator: it evaluated the header test with
+  continue-style polarity only (exit on FALSE), so a break-reshaped
+  loop (the versioned true loop, after entry-threading + splice, can
+  carry the `break` condition AS its header test — exit on TRUE) folded
+  to a zero-trip closed form through the WRONG exit edge; the
+  simulator now takes the loop's own polarity, the way the analytic
+  trip counter has since checkpoint 17. Checkpoint 19's code-quality
+  move: the shape matchers + the clone machinery the three unswitch
+  paths share (the invariant gate, the exit inventory, bmap/fresh
+  allocation, the append-only full-loop clone emission) extract into
+  `opt/loop/unswitch_shape.hpp`, and the body-if scan + commit into
+  `opt/loop/unswitch_bif.hpp` — unswitch.hpp becomes the slim driver.
 * still open (the standing wishlist): tail duplication, loop rotation
   proper, LCSSA (needs undef semantics this IR does not have — a
   loop-exit phi's zero-trip edge has no defined value), demanded/known
   bits, MemCPyOpt, loop fusion/fission/distribution, function
   outlining, Attributor-style inference, GlobalOpt. Notes from the
-  unswitch checkpoints: the natural next step is BODY-IF unswitching
-  (version a loop on an invariant INNER branch: the classic LLVM
-  "trivial unswitch", both versions keep running the loop, each exit
-  gets a version-merge block to hold the ≤2-preds invariant); compound
-  unswitch handles exactly two leaf tests — deeper boolean trees
-  (`a && b && c`) stay unversioned.
+  unswitch checkpoints: body-if unswitching is DONE (checkpoint 19,
+  above) — the natural next step from there is the partial/guarded
+  unswitch family (version on a loop-VARYING branch whose taken arm is
+  cheap to duplicate: tail duplication covers the degenerate case) and
+  loop rotation proper; compound unswitch handles exactly two leaf
+  tests — deeper boolean trees (`a && b && c`) stay unversioned.
 
 ## 4. make the compiler debuggable (breakpoints, diagnostics, pass diffs) — DONE
 
@@ -558,6 +597,11 @@ The checkpoint-15 additions, per the request:
   `opt list`), plus the batch `--opt-diff` CLI flag — the diff shower
   between passes, driven by a runtime-only snapshot hook in
   `PassCfg`/`dbg_pass` that never touches the constexpr path.
+  (checkpoint 19 adds the scripted `bifunswitch_debugger_session`
+  ctest: `opt break unswitch` on the body-if tour demo pauses the
+  timeline exactly where the versioning happens, `opt show` dumps the
+  version-merge blocks, and the five-way check proves the versioned
+  program end to end.)
 
 ## 5. checkpoint 16: Windows builds, GVN, code-quality splits, wider fuzz — DONE
 

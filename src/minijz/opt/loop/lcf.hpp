@@ -263,6 +263,8 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       SI.X = X;
       SI.body = body;
       SI.hterm = hterm;
+      SI.exit_on_true = exit_on_true; // the simulator evaluates the loop's
+      // own polarity (break-style headers exit on TRUE)
       SI.hphis = &hphis;
       SI.inL = &inL;
       SI.kc = &kc;

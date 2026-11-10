@@ -294,5 +294,6 @@ struct OptStats {
   uint32_t argpromos{};  // argpromo: array params promoted to scalar elements
   uint32_t gvns{};       // gvn: values unified (consts, phi pairs, recomputes)
   uint32_t unswitches{}; // unswitch: loops versioned on invariant conds
-  uint32_t lsimps{};     // lsimp: trivial loop-carried phis dissolved
+  uint32_t body_unswitches{}; // unswitch: ... the body-if (trivial) form —
+  uint32_t lsimps{};          // lsimp: trivial loop-carried phis dissolved
 };
