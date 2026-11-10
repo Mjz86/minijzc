@@ -176,7 +176,7 @@ static void dbg_cmd_src(DbgSess &S, const std::vector<std::string> &tok) {
   size_t p0 = 0;
   while (p0 <= S.src.size()) {
     size_t pe = S.src.find('\n', p0);
-    std::string_view row =
+    std::string row =
         S.src.substr(p0, pe == std::string::npos ? S.src.size() - p0 : pe - p0);
     if (!only || (long)ln == only) {
       std::printf("%s%4u | %.*s\n",
