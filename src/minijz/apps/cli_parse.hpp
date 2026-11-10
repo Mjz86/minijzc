@@ -26,7 +26,10 @@ struct Cli {
   std::string exe_name{}; // -o NAME: name of the --emit=exe executable
   bool emit_c{false}, emit_asm{false}, emit_bc{false}, emit_exe{false};
   bool do_run{false}, no_opt{false}, print_ir{false}, print_bc{false};
-  long opt_diff_fn{-1}; // --opt-diff[=FN]: per-pass unified IR diffs
+  long opt_diff_fn{-1}; // --opt-diff[=FN[:PASS]]: per-pass unified IR
+  // diffs; FN picks the fn, the optional :PASS filter shows only that
+  // pass's diff (e.g. --opt-diff=0:gvn)
+  std::string opt_diff_pass{};
   bool no_inline{false};
   bool no_scctco{false};
   bool no_reassoc{false}, no_lcf{false}, no_divmagic{false};
@@ -134,7 +137,8 @@ static void usage() {
       "                    trapelim, jthread, licm, divmagic, reassoc, "
       "ifconv,\n"
       "                    unroll, lcf, constcall, scctco, tailrec, cdfold,\n"
-      "                    deadargs, fnspec, icf, argpromo, inline) —\n"
+      "                    deadargs, fnspec, icf, argpromo, gvn, unswitch,\n"
+      "                    lsimp, inline) —\n"
       "                    applied on top of the -O preset, so e.g. `-O1\n"
       "                    --enable=lcf` is legal\n"
       "  --unroll=N         full-unroll loops with constant trip count <= N\n"
@@ -158,7 +162,11 @@ static void usage() {
       "                    guarded runtime-trip-count closed form)\n"
       "  --no-divmagic      skip div/mod-by-constant -> mulhi+shift lowering\n"
       "  --print-ir        dump SSA (pre/post opt) and destroyed IR\n"
-      "  --opt-diff[=FN]   pass-by-pass IR diff viewer: re-run the pipeline\n"
+      "  --opt-diff[=FN[:PASS]] pass-by-pass IR diff viewer: re-run the\n"
+      "                    pipeline on fn FN (default 0 = main) and print a\n"
+      "                    unified diff after every CHANGING pass; the "
+      "optional\n"
+      "                    :PASS filter narrows it to one pass (e.g. =0:gvn)\n"
       "                    on fn FN (default 0 = main), print the timeline\n"
       "                    and a unified diff after every CHANGING pass\n"
       "  --print-bc        print the bytecode listing\n"
@@ -278,9 +286,12 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
       C.print_ir = true;
     else if (a == "--opt-diff")
       C.opt_diff_fn = 0; // default: main
-    else if (const char *v = val("--opt-diff="))
-      C.opt_diff_fn = atol(v);
-    else if (a == "--print-bc")
+    else if (const char *v = val("--opt-diff=")) {
+      C.opt_diff_fn = atol(v); // FN (garbage -> 0, i.e. main)
+      const char *sep = strchr(v, ':');
+      if (sep) // FN:PASS -- show only PASS's diff in the timeline
+        C.opt_diff_pass = sep + 1;
+    } else if (a == "--print-bc")
       C.print_bc = true;
     else if (a == "--quiet")
       C.quiet = true;
@@ -409,6 +420,10 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_argpromo = on;
   else if (eq("gvn"))
     p.p_gvn = on;
+  else if (eq("unswitch"))
+    p.p_unswitch = on;
+  else if (eq("lsimp"))
+    p.p_lsimp = on;
   else if (eq("inline"))
     p.do_inline = on;
   else {

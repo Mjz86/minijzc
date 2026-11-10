@@ -23,6 +23,8 @@
 #include "scalar/ldelim.hpp"
 #include "loop/licm.hpp"
 #include "loop/unroll.hpp"
+#include "loop/lsimp.hpp"
+#include "loop/unswitch.hpp"
 #include "loop/lcf.hpp"
 #include "loop/lcf_rt.hpp"
 #include "linear/reassoc.hpp"
@@ -185,6 +187,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         normalize_phis(fn);
       }
 #endif
+      if (cfg.p_lsimp) {
+        An A = analyze(fn);
+        c = opt_lsimp(fn, A, os); // trivial loop-carried phis -> entry vals
+        dbg_pass(cfg, fn, "lsimp", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
 #ifndef MJZ_DBG_NO_DIVMAGIC
       if (cfg.p_divmagic) {
         c = opt_divmagic(fn, os); // /constant -> mulhi+shift
@@ -219,6 +228,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
     for (uint32_t outer = 0; outer < cap; ++outer) {
       bool ch = false;
       ++t2round;
+      if (cfg.p_unswitch) {
+        An A0 = analyze(fn); // version loops on invariant header conditions
+        bool c0 = opt_unswitch(fn, A0, os); // BEFORE unroll: the versioned
+        dbg_pass(cfg, fn, "unswitch", c0);  // true-arm loses its exit edge,
+        ch |= c0;                           // so unroll/lcf skip it anyway
+        normalize_phis(fn);
+      }
 #ifndef MJZ_DBG_NO_UNROLL
       if (cfg.p_unroll && cfg.unroll) {
         An A = analyze(fn);

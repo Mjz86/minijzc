@@ -409,6 +409,85 @@ int main() {
     }
   }
 
+  // ---- unswitch + lsimp: loop versioning and canonicalization -------------
+  {
+    // (a) trivial unswitch: an invariant header condition versions the
+    // loop (the false path skips it, the true clone drops the test);
+    // values live past the loop keep their per-path meanings
+    {
+      const char *s = "let f = input();\nlet c = 3;\n"
+                      "while (f > 0) {\n  c = c - 1;\n"
+                      "  if (c == 0) { break; }\n  print c;\n}\n"
+                      "print 1000 + c;\n";
+      Program P = compile(s);
+      UT(P.ok, "unswitch: invariant-flag loop compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.unswitches > 0, "unswitch: the pass actually versioned a loop");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o.out.size() == 1 && o.out[0] == 1003,
+         "unswitch: false path = zero iterations (1003)");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {5});
+      UT(o2.out.size() == 3 && o2.out[0] == 2 && o2.out[1] == 1 &&
+             o2.out[2] == 1000,
+         "unswitch: true path runs the body (2 1 1000)");
+    }
+    // (b) a modified condition is NOT invariant: no versioning, same math
+    {
+      const char *s = "let f = input();\nlet s = 0;\n"
+                      "while (f > 0) { s = s + 3; f = f - 1; }\n"
+                      "print s;\n";
+      Program P = compile(s);
+      UT(P.ok, "unswitch: countdown compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.unswitches == 0, "unswitch: non-invariant cond left alone");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {4});
+      UT(o.out.size() == 1 && o.out[0] == 12, "unswitch: countdown result");
+    }
+    // (c) the break-style trip polarity: a constant while-test folded away
+    // leaves the `break` condition as the header test; the trip count
+    // must be computed with the EXIT-on-true polarity (the latent bug the
+    // unswitch bait window exposed)
+    {
+      const char *s = "let c = 5;\n"
+                      "while (3 > 0) {\n"
+                      "  if (c <= 0) { break; }\n"
+                      "  c = c - 1;\n"
+                      "  print 7;\n"
+                      "}\n";
+      Program P = compile(s);
+      UT(P.ok, "unswitch: break-style loop compiles");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {});
+      UT(o.out.size() == 5, "unswitch: break-style trip count is 5");
+    }
+    // (d) lsimp: a loop-carried phi whose update folded to itself
+    // dissolves to its entry value (dce's cascade usually wins the race;
+    // the lsimp toggle must at least never break the program)
+    {
+      const char *s = "let k = input();\nlet c = 4;\n"
+                      "while (c > 0) { k = k + 0; c = c - 1; }\n"
+                      "print k;\n";
+      Program P = compile(s);
+      UT(P.ok, "lsimp: trivial-phi loop compiles");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {9});
+      UT(o.out.size() == 1 && o.out[0] == 9, "lsimp: k keeps its entry value");
+    }
+    // (e) licm's new header scan: the invariant loop test hoists out of
+    // the header (one compare saved per iteration, the unswitch enabler)
+    {
+      const char *s = "let f = input();\nlet c = 3;\n"
+                      "while (f > 0) {\n  if (c <= 0) { break; }\n"
+                      "  c = c - 1;\n}\n"
+                      "print c;\n";
+      Program P = compile(s);
+      UT(P.ok, "licm: header-hoist program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.hoisted > 0, "licm: the header test hoisted to the preheader");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {2});
+      UT(o.out.size() == 1 && o.out[0] == 0,
+         "licm: hoisted test, same trip (3 decrements to 0)");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

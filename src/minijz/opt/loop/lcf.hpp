@@ -5,6 +5,7 @@
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
 #include "../linear/linform.hpp"
 
@@ -159,11 +160,15 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       if (bad || X == NONE)
         continue;
     }
-    if (hterm.t == X && hterm.f != NONE && inL[hterm.f])
+    bool exit_on_true = false; // set by the arm analysis below
+    if (hterm.t == X && hterm.f != NONE && inL[hterm.f]) {
       body = hterm.f;
-    else if (hterm.f == X && inL[hterm.t])
+      exit_on_true = true; // break-style: TRUE leaves (a folded `break`
+    } // became the header test: constant while-tests
+    else if (hterm.f == X && hterm.t != NONE && inL[hterm.t]) {
       body = hterm.t;
-    else
+      exit_on_true = false; // continue-style: the ordinary while shape
+    } else
       continue;
     if (body == h)
       continue; // self-loop header: rare shape, skip
@@ -489,8 +494,11 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       for (uint64_t k = 0;; ++k) {
         val_t lhs = lhs_is_ind ? iv : bound;
         val_t rhs = lhs_is_ind ? bound : iv;
-        bool go = (C.b == B::Lt) ? (lhs < rhs) : (lhs <= rhs);
-        if (!go) {
+        bool tv = (C.b == B::Lt) ? (lhs < rhs) : (lhs <= rhs);
+        // continue-style runs while TRUE; break-style headers run while
+        // FALSE (the test is an exit condition). N = first EXIT, either way
+        bool exit_now = exit_on_true ? tv : !tv;
+        if (exit_now) {
           N = k;
           break;
         }
@@ -500,6 +508,10 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       }
     }
     const bool ct_trip = (N != ~0ull);
+    if (exit_on_true && !ct_trip)
+      continue; // runtime-trip closed forms assume continue-style tests;
+    // break-style headers (a folded break became the test) would need the
+    // guard inverted -- rare shape, not worth the surgery: leave the loop
     if (ct_trip && N == 0) { // zero trips: test provably false -> exit now
       Instr &T = fn.code[fn.blocks[h].end - 1];
       T.k = K::Br;
@@ -1133,38 +1145,6 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
     return true; // one loop per call: the driver re-analyzes
   }
   return false;
-}
-
-// After passes convert phis to Copy/Const in place, the "all phis first"
-// block invariant breaks — consumers scan until the first non-phi. Restore
-// it by stably moving remaining phis to the front of each block.
-constexpr void normalize_phis(Fn &fn) {
-  for (uint32_t b = 0; b < fn.nblocks(); ++b) {
-    uint32_t begin = fn.blocks[b].begin, end = fn.blocks[b].end;
-    if (end - begin < 2)
-      continue;
-    bool need = false;
-    for (uint32_t i = begin; i < end; ++i) {
-      if (fn.code[i].k == K::Phi)
-        continue;
-      for (uint32_t j = i + 1; j < end; ++j)
-        if (fn.code[j].k == K::Phi) {
-          need = true;
-          break;
-        }
-      break;
-    }
-    if (!need)
-      continue;
-    std::vector<Instr> phis{}, rest{};
-    for (uint32_t i = begin; i < end; ++i)
-      (fn.code[i].k == K::Phi ? phis : rest).push_back(fn.code[i]);
-    uint32_t w = begin;
-    for (const Instr &I : phis)
-      fn.code[w++] = I;
-    for (const Instr &I : rest)
-      fn.code[w++] = I;
-  }
 }
 
 // ============================================================================

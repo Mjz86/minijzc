@@ -49,14 +49,22 @@ constexpr bool opt_licm(Fn &fn, const An &A, OptStats &os) {
     }
     if (outside != 1 || pre == NONE)
       continue;
-    // def block of every vreg (recomputed each hoist round)
+    // def block/instr of every vreg (recomputed each hoist round)
     for (int round = 0; round < 10; ++round) {
       const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-      std::vector<uint32_t> defb(nv, NONE);
+      std::vector<uint32_t> defb(nv, NONE), defi(nv, NONE);
+      std::vector<char> kc(nv, 0);
+      std::vector<val_t> kv(nv, 0);
       for (uint32_t b = 0; b < fn.nblocks(); ++b)
         for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
-          if (fn.code[i].dst != NONE)
+          if (fn.code[i].dst != NONE) {
             defb[fn.code[i].dst] = b;
+            defi[fn.code[i].dst] = i;
+            if (fn.code[i].k == K::Const) {
+              kc[fn.code[i].dst] = 1;
+              kv[fn.code[i].dst] = fn.code[i].c;
+            }
+          }
       auto invariant = [&](uint32_t v) -> bool {
         if (v == NONE)
           return true;
@@ -65,15 +73,22 @@ constexpr bool opt_licm(Fn &fn, const An &A, OptStats &os) {
         uint32_t d = defb[v];
         if (d == NONE)
           return false;
+        if (d != NONE && fn.code[defi[v]].k == K::Const)
+          return true; // a Const's VALUE is position-independent; the
+                       // hoist duplicates it into the preheader below
         if (inL[d])
           return false;             // defined inside: not invariant
         return A.dominates(d, pre); // reachable into preheader
       };
       bool changed = false;
-      for (ulen xb : row) {
-        uint32_t B = (uint32_t)xb;
-        if (B == h)
-          continue; // header holds the phi+cond
+      // scan order: the header FIRST (its phis and terminator are skipped
+      // by the checks below; what remains can be invariant — the while-
+      // lowering computes the loop condition IN the header, so `while
+      // (f > 0)` with f never written inside leaves a pure invariant test
+      // there). Hoisting it to the preheader is the classic unswitch
+      // enabler AND saves one instr per iteration. Then the body blocks.
+      for (uint32_t bi = 0; bi <= (uint32_t)row.size(); ++bi) {
+        uint32_t B = (bi == 0) ? h : (uint32_t)row[bi - 1];
         for (uint32_t i = fn.blocks[B].begin; i < fn.blocks[B].end; ++i) {
           Instr &I = fn.code[i];
           if (I.dst == NONE)
@@ -81,8 +96,19 @@ constexpr bool opt_licm(Fn &fn, const An &A, OptStats &os) {
           if (I.k == K::Phi || I.k == K::Cbr || I.k == K::Br ||
               I.k == K::Print || I.k == K::Exit)
             continue;
-          if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) && !I.nt)
-            continue; // may trap: no hoist (nt: proven safe, hoistable)
+          if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod)) {
+            // nt proofs are CONTROL-FLOW-SENSITIVE: `z != 0 && 42 / z`
+            // proves the division safe only under the guard. Hoisting
+            // the div out of the guarded region breaks the proof's
+            // premise and can manufacture a trap. The one context-free
+            // safety is a CONSTANT divisor outside {0, -1}: no dividend
+            // can trap then (INT64_MIN / -1 is the other trap source).
+            const uint32_t dv = I.b2;
+            const bool safe = dv != NONE && dv < nv && kc[dv] && kv[dv] != 0 &&
+                              kv[dv] != (val_t)-1;
+            if (!safe)
+              continue;
+          }
           if (I.k == K::Const)
             continue; // nothing to gain
           // arena/stdin ops are NOT loop-invariant: Alloc returns a fresh
@@ -101,10 +127,31 @@ constexpr bool opt_licm(Fn &fn, const An &A, OptStats &os) {
           // the preheader itself.
           uint32_t pe_old = fn.blocks[pre].end - 1; // terminator, pre-erase
           Instr copy = I;
+          // operands that are Consts defined INSIDE the loop (the while-
+          // lowering materializes loop-test constants in the header) are
+          // duplicated into the preheader: the value is the same, the
+          // location is not (the original would not dominate the hoist)
+          std::vector<Instr> extra{};
+          auto dup_const = [&](uint32_t &v) {
+            if (v == NONE || v >= nv)
+              return;
+            if (defb[v] != NONE && inL[defb[v]] &&
+                fn.code[defi[v]].k == K::Const) {
+              Instr dc = fn.code[defi[v]];
+              dc.dst = new_anon_vreg(fn, fn.base_of(v));
+              v = dc.dst;
+              extra.push_back(dc);
+            }
+          };
+          dup_const(copy.a);
+          dup_const(copy.b2);
           fn.code.erase(fn.code.begin() + (long)i); // remove from B
           // insertion index in the post-erase vector:
           uint32_t pe = (pe_old > i) ? pe_old - 1 : pe_old;
           fn.code.insert(fn.code.begin() + (long)pe, copy);
+          for (size_t e = extra.size(); e-- > 0;)
+            fn.code.insert(fn.code.begin() + (long)pe, extra[e]);
+          const uint32_t nadd = (uint32_t)extra.size() + 1;
           // range fixup 1: everything after the erased index shifts down
           for (uint32_t x = 0; x < fn.nblocks(); ++x) {
             if (fn.blocks[x].begin > i)
@@ -112,17 +159,18 @@ constexpr bool opt_licm(Fn &fn, const An &A, OptStats &os) {
             if (fn.blocks[x].end > i)
               fn.blocks[x].end--;
           }
-          // range fixup 2: the hoisted instr now lives inside `pre` (before
-          // its terminator); blocks after it shift up
+          // range fixup 2: the hoisted instr (+ duplicated consts) now
+          // live inside `pre` (before its terminator); blocks after them
+          // shift up
           for (uint32_t x = 0; x < fn.nblocks(); ++x) {
             if (x == pre) {
-              fn.blocks[x].end++;
+              fn.blocks[x].end += nadd;
               continue;
             }
             if (fn.blocks[x].begin >= pe + 1)
-              fn.blocks[x].begin++;
+              fn.blocks[x].begin += nadd;
             if (fn.blocks[x].end >= pe + 1)
-              fn.blocks[x].end++;
+              fn.blocks[x].end += nadd;
           }
           os.hoisted++;
           changed = true;

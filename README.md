@@ -16,12 +16,13 @@ src/minijz/           the compiler as a header-only constexpr library
   fwd.hpp               forward declarations (declaration-only contexts)
   graph_lib.hpp         the mjz_lib import, ISOLATED: only the headers that
                         actually need the graph/big-number library include it
-  base/                  pass_cfg (PassCfg + the 29-name toggle table +
+  base/                  pass_cfg (PassCfg + the 31-name toggle table +
                         the runtime-only pass-snapshot hook), native_run
                         (find_cc/slurp/run_capture/write_file — with the
                         Windows portability helpers mjz_devnull/mjz_timeout)
   front/                 lexer, ast, parser, diag (located diagnostics)
-  ir/                    instr (IR core), pred_norm, builder, destruct,
+  ir/                    instr (IR core), pred_norm, phi_norm (the
+                        phis-first invariant), builder, destruct,
                         stats (SsaStats/DestrStats)
   opt/analysis/          an (dominators/loops/SSA), alias, intervals, trapelim
   opt/mem2reg.hpp        array memory -> SSA registers + dead arrays
@@ -320,7 +321,8 @@ bkpts                   the program's language breakpoints (`breakpoint`
                         statements): pc, fn, source line, observed names
 vars [FN]               named slots with live values — what survived
                         optimization (observed values included)
-watch NAME / unwatch    show a variable at every stop
+watch NAME / unwatch    show a variable at every stop; `vm continue`
+                        ALSO stops when a watched value changes
 opt [FN]                pass explorer: re-run the pipeline on a copy with
                         a snapshot after EVERY pass; prints the timeline
 opt show [N]            full IR of snapshot N
@@ -328,7 +330,7 @@ opt diff [A [B]]        unified IR diff between snapshots (names or
                         indices; default first-vs-last)
 opt break PASS          a breakpoint BETWEEN passes: PASS's snapshot +
                         its diff against the previous one
-opt list                the 29-name pass toggle table, on/off
+opt list                the 31-name pass toggle table, on/off
 check                   all five runners + comparison
 vm reset/step/run/continue/until/break/line/unbreak/breaks/state/dis
                         the steppable machine: single-op tracing WITH
@@ -473,12 +475,32 @@ the ctest/CLI toggle names):
   table unifying duplicate Const defs, congruent merge phis of the same
   block (same incoming map), and pure-Bin recomputation with cse's exact
   rules; mutually-referential phi pairs are left to phi-degen/sccp on
-  purpose)**.
-* still open (the standing wishlist): tail
-duplication, loop rotation/simplification/canonicalization proper,
-  LCSSA, demanded/known bits, MemCPyOpt,
-  loop fusion/fission/distribution, loop unswitching/versioning/predication,
-  function outlining, Attributor-style inference, GlobalOpt.
+  purpose)**, and (checkpoint 17) **trivial loop unswitching (`unswitch`,
+  toggle #30 — a loop whose header branches on an SSA-proven
+  loop-invariant condition is versioned on it: the preheader branches,
+  the false path jumps straight to the exit, and the true path is a
+  fresh-vreg clone of the loop with the test gone; internal `break`
+  edges are kept and every exit block's phis rekeyed, and uses of header
+  phis on the false path go through fresh merge phis at the exit)**
+  plus **loop canonicalization (`lsimp`, toggle #31, and the licm header
+  scan — the while-lowering computes the loop condition IN the header,
+  so `while (f > 0)` with f never written inside leaves an invariant
+  test there; licm now scans the header too (duplicating in-loop Const
+  operands into the preheader) which both saves a compare per iteration
+  and is the classic unswitch enabler; lsimp dissolves trivial
+  loop-carried phis (x' = x) to their entry values)**. The same
+  checkpoint fixed two LATENT bugs the new fuzz bait exposed: unroll and
+  lcf computed trip counts with continue-style polarity only, so loops
+  whose header test is an EXIT condition (a constant while-test folded
+  away, splice merged the `break` block up) got zero-trip counts; and
+  licm treated `nt` (trap-impossible PROOFS) as a hoist license even
+  though the proof is control-flow-sensitive (`z != 0 && 42 / z` is only
+  safe UNDER the guard) — now only a constant divisor outside {0, -1}
+  hoists.
+* still open (the standing wishlist): tail duplication, loop rotation
+  proper, LCSSA, demanded/known bits, MemCPyOpt,
+  loop fusion/fission/distribution, function outlining,
+  Attributor-style inference, GlobalOpt.
 
 ## 4. make the compiler debuggable (breakpoints, diagnostics, pass diffs) — DONE
 
@@ -537,6 +559,40 @@ The checkpoint-15 additions, per the request:
   random-config mode draws from the 29-name table, and the new windows
   rotation 12331+ / random-cfg 10801+ ran clean (see the battery note
   in the commit message).
+
+## 6. checkpoint 17: loop unswitching, loop canonicalization, debugger watchpoints — DONE
+
+* **trivial loop unswitching** (`unswitch`, toggle #30, tier 2): versioning
+  loops on SSA-proven invariant header conditions, `break` edges included
+  (exit phis rekeyed to the clones, fresh merge phis carry header-phi
+  entry values on the false path). The enabler was the next bullet; the
+  bait window is seeds >= 12731 (`MJZ_UNSWITCH_SEED_FLOOR`: invariant-flag
+  while loops whose termination rides on a guarded break — 128 of the
+  first 300 new-window programs carry one, 55 loops versioned).
+* **loop canonicalization**: licm now scans loop HEADERS (the while-lowering
+  computes the condition there) and duplicates in-loop Const operands while
+  hoisting — the invariant test lands in the preheader, one compare saved
+  per iteration. `lsimp` (toggle #31) dissolves trivial loop-carried phis.
+* **two latent bugs fixed** (found by the new bait within minutes, both
+  reproducible on checkpoint 16): unroll/lcf trip-count polarity for
+  break-reshaped headers (constant while-tests fold away, splice merges
+  the `break` block up as the header test — the old code read those as
+  zero-trip loops), and licm hoisting guard-protected `nt` Div/Mod out of
+  their guards (nt proofs are control-flow-sensitive; only constant
+  divisors outside {0,-1} hoist now).
+* **debugger**: `watch NAME` became a value-change watchpoint (`vm
+  continue` stops and prints old -> new when a watched slot changes;
+  switching fns re-baselines silently), and `--opt-diff=FN:PASS` filters
+  the batch pass-diff viewer to one pass (e.g. `--opt-diff=0:unswitch`).
+* **code quality**: `opt/loop/loop_shape.hpp` (the loop-recognition layer
+  shared by unroll/lcf/unswitch — scan tables, innermost-first headers,
+  the canonical pre/latch/body/exit shape) and `ir/phi_norm.hpp`
+  (normalize_phis moved out of lcf.hpp to where its consumers live).
+* **fuzz**: the toggle table grew to 31 names (the random-config mode
+  draws from it for new seeds; the fixed rotation adds unswitch/lsimp
+  off-cases 17/18 for seeds >= the floor only, so every committed
+  fixture keeps its exact old config); the rotation window 12731-13030
+  and the random-cfg window 12731+ ran clean, native parity included.
 
 The original wishlist (kept verbatim for reference):
 
