@@ -14,6 +14,7 @@
 #include "scalar/copyprop.hpp"
 #include "scalar/canon.hpp"
 #include "scalar/cse.hpp"
+#include "scalar/gvn.hpp"
 #include "scalar/unreach.hpp"
 #include "scalar/splice.hpp"
 #include "scalar/jthread.hpp"
@@ -85,6 +86,15 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         An A = analyze(fn);
         c = opt_cse(fn, A, os); // dominating recomputation -> reuse
         dbg_pass(cfg, fn, "cse", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
+#endif
+#ifndef MJZ_DBG_NO_GVN
+      if (cfg.p_gvn) {
+        An A = analyze(fn);
+        c = opt_gvn(fn, A, os); // value numbering: consts + phi congruence
+        dbg_pass(cfg, fn, "gvn", c);
         ch |= c;
         normalize_phis(fn);
       }

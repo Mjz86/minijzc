@@ -34,7 +34,9 @@ struct GenCtx {
   bool bait{false};          // deliberate trap bait allowed in this program?
   bool allow_rti{false};     // runtime-index array accesses allowed?
   bool has_div{}, has_mat{}, has_aparam{}; // vocabulary report flags
+  int n_gvnbait{};       // shadow-pair merges planted (GVN phi-congruence bait)
   bool bkpt_mode{false}; // sprinkle `breakpoint` stmts (seeds >= the floor)
+  bool gvn_mode{false};  // plant shadow-pair merges (seeds >= that floor)
   int n_bkpts{};         // sprinkled observation points (for the report)
   explicit GenCtx(uint32_t seed) : rng(seed) {}
   int pick(int lo, int hi) {
@@ -351,7 +353,7 @@ inline void GenCtx::gen_stmt(int depth) {
   // leaves: print / assignment / flat array store / 2-D store / merge elbow
   int r = pick(0, depth <= 0 ? 4 : 10);
   if (r <= (depth <= 0 ? 4 : 3)) {
-    int leaf = pick(0, 6);
+    int leaf = pick(0, gvn_mode ? 7 : 6);
     if (leaf <= 1) { // flat array store: constant / runtime index
       std::vector<int> flat{};
       for (int i = 0; i < (int)arrays.size(); ++i)
@@ -435,6 +437,35 @@ inline void GenCtx::gen_stmt(int depth) {
       // deliberately NOT pushed to vars: the merge phi must die at the
       // elbow (jthread v1 threads only elbows whose defs are not live
       // past them; a later use of n would keep the phi alive)
+      return;
+    }
+    if (leaf == 7) { // shadow pair: TWO variables track the same
+      // expressions through the same if/else, so their merge phis carry
+      // identical incoming maps -- GVN's phi-congruence unifies them and
+      // the downstream use collapses to one value. (The merge is
+      // deliberately NOT foldable per-edge: neither arm's value dominates
+      // the other, so tier-0's dominator-scoped cse cannot see it.) The
+      // arms also print, keeping both live past the join on purpose: a
+      // congruent phi that dies immediately would be dce's problem, not
+      // value numbering's.
+      std::string a = "g" + std::to_string(counter_id++);
+      std::string b = "g" + std::to_string(counter_id++);
+      std::string c;
+      if (vars.empty())
+        c = std::to_string(pick(-9, 9));
+      else
+        gen_expr(c, 2); // runtime-unknown condition
+      int e1 = pick(-9, 9), e2 = pick(-9, 9);
+      if (e1 == e2) // congruence must be the ONLY reason they fold
+        e2 = e1 + pick(1, 4);
+      src += "let " + a + " = " + std::to_string(pick(-9, 9)) + ";\n";
+      src += "let " + b + " = " + std::to_string(pick(-9, 9)) + ";\n";
+      src += "if (" + c + ") { " + a + " = " + std::to_string(e1) + "; " + b +
+             " = " + std::to_string(e1) + "; }\n";
+      src += "else { " + a + " = " + std::to_string(e2) + "; " + b + " = " +
+             std::to_string(e2) + "; }\n";
+      src += "print " + a + " + " + b + ";\n";
+      n_gvnbait++;
       return;
     }
     std::string e; // print (occasionally a raw handle value: stkarr bait)
@@ -654,10 +685,14 @@ inline void GenCtx::gen_fn_defs() {
 // generate byte-identical programs; newer seeds add observation points so
 // the whole backend matrix + native parity runs WITH breakpoints in the mix
 inline constexpr uint32_t MJZ_BKPT_SEED_FLOOR = 12301;
+// shadow-pair merges (GVN phi-congruence bait) start here, one window
+// later: seeds below stay byte-identical to what they always generated
+inline constexpr uint32_t MJZ_GVN_SEED_FLOOR = 12331;
 
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
   g.bkpt_mode = seed >= MJZ_BKPT_SEED_FLOOR; // see MJZ_BKPT_SEED_FLOOR
+  g.gvn_mode = seed >= MJZ_GVN_SEED_FLOOR;   // see MJZ_GVN_SEED_FLOOR
   g.use_input = (seed & 1) != 0;             // half the programs read stdin
   g.allow_mat = ((seed >> 2) & 7) == 0;      // 1/8 of programs grow 2-D arrays
   g.bait = ((seed >> 5) & 3) == 0; // 1/4 carry deliberate trap bait; the

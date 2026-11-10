@@ -62,6 +62,7 @@ int run_shrink(const Cli &C, const std::string &path) {
       return false;
     // NOTE: exe paths must contain a '/', else execvp (via timeout) will
     // NOT find them in the current directory and the run silently "fails"
+    // (on cmd.exe the same './' prefix is harmless)
     std::string stem = "./" + path + ".shrink";
     std::string ref = text_of(oracle);
     write_file(stem + ".c", emit_c(fns_of(P, 2), P.fn_names, P.src));
@@ -70,13 +71,13 @@ int run_shrink(const Cli &C, const std::string &path) {
     for (int ti = 0; ti < 2 && !bad; ++ti) {
       std::string srcp = ti ? stem + ".s" : stem + ".c";
       std::string exe = stem + (ti ? ".a.exe" : ".c.exe");
-      if (std::system(("timeout 60 " + cc + " -w -O0 " + srcp + " -o " + exe +
-                       " 2>/dev/null")
+      if (std::system((mjz_timeout(60, cc + " -w -O0 " + srcp + " -o " + exe) +
+                       std::string(" 2>") + mjz_devnull())
                           .c_str()) != 0)
         continue;
       std::string out_text{};
       int rc =
-          run_capture("timeout 10 " + exe, out_text, stem + ".out", tape_path);
+          run_capture(mjz_timeout(10, exe), out_text, stem + ".out", tape_path);
       if (rc != 0 && (((unsigned)rc >> 8) == 124 || ((unsigned)rc >> 8) == 137))
         out_text += "TIMEOUT\n";
       bad |= (out_text != ref);

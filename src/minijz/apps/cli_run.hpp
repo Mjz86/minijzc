@@ -51,7 +51,7 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
         "SCCP %u(+%ubr) | LD-FWD %u | LD-CSE %u | RANGE-CMP %u | "
         "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u | FNSPEC %u | ICF %u | "
-        "JT %u | ARG-PROMO %u\n"
+        "JT %u | ARG-PROMO %u | GVN %u\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
         P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i, (unsigned)os.iters,
@@ -69,8 +69,9 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.sccp_brs, (unsigned)os.ld_fwds, (unsigned)os.ld_cses,
         (unsigned)os.rangecmps, (unsigned)os.cmpfacts, (unsigned)os.callcses,
         (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf,
-        (unsigned)os.jthreads, (unsigned)os.argpromos, (unsigned)de_c,
-        (unsigned)dz_c, (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
+        (unsigned)os.jthreads, (unsigned)os.argpromos, (unsigned)os.gvns,
+        (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
+        (unsigned)dfu);
   }
   if (C.print_ir) {
     for (size_t f = 0; f < P.fns.size(); ++f) {
@@ -203,8 +204,8 @@ static void run_matrix(Program &P, const Cli &C, const std::string &stem) {
     std::printf("native driver: %s (autodetected: clang++ preferred)\n",
                 cc.c_str());
   // the native binaries read the SAME input() tape the in-process runners
-  // saw (verbatim bytes); with no tape they read /dev/null (EOF -> 0)
-  std::string in_path = "/dev/null";
+  // saw (verbatim bytes); with no tape they read the null device (EOF -> 0)
+  std::string in_path = mjz_devnull();
   if (!C.stdin_text.empty()) {
     std::string p = C.out_dir + "/" + stem + ".in.tmp";
     if (write_file(p, C.stdin_text))
@@ -225,8 +226,8 @@ static void run_matrix(Program &P, const Cli &C, const std::string &stem) {
     for (Job &J : jobs) {
       std::string exe =
           C.out_dir + "/" + stem + "." + J.tag + ".O" + lvl + ".exe";
-      std::string build =
-          "timeout 60 " + cc + " -w -O" + lvl + " " + J.src_path + " -o " + exe;
+      std::string build = mjz_timeout(60, cc + " -w -O" + lvl + " " +
+                                              J.src_path + " -o " + exe);
       if (std::system(build.c_str()) != 0) {
         std::printf("  %-18s %10s  BUILD FAILED (%s -O%s)\n", J.tag, "-",
                     cc.c_str(), lvl.c_str());
@@ -237,7 +238,7 @@ static void run_matrix(Program &P, const Cli &C, const std::string &stem) {
       int rc = 0;
       for (unsigned r = 0; r < (C.repeats ? C.repeats : 1); ++r) {
         t0 = now_ms();
-        rc = run_capture("timeout 20 " + exe, out_text, cap, in_path);
+        rc = run_capture(mjz_timeout(20, exe), out_text, cap, in_path);
         double dt = now_ms() - t0;
         if (dt < best)
           best = dt;

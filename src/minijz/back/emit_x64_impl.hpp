@@ -198,8 +198,9 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   };
   auto rname = [&](uint32_t v) -> const char * { return RREGS[RP.color[v]]; };
   // number of callee-saved registers this function pushes (computed here so
-  // the spill offsets below can skip them)
-  const uint32_t npush = (uint32_t)__builtin_popcount(RP.usedmask);
+  // the spill offsets below can skip them) — std::popcount is the C++20
+  // spelling of __builtin_popcount (MSVC has no builtins)
+  const uint32_t npush = (uint32_t)std::popcount(RP.usedmask);
   auto slot = [&](uint32_t v) -> std::string { // spill home of v
     // MUST live BELOW the pushed callee-saved registers: the pushes occupy
     // -8..-8*npush(%rbp), so spill k goes to -8*(npush+k+1)(%rbp). (The old

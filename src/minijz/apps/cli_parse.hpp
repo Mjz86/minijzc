@@ -407,6 +407,8 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_jthread = on;
   else if (eq("argpromo"))
     p.p_argpromo = on;
+  else if (eq("gvn"))
+    p.p_gvn = on;
   else if (eq("inline"))
     p.do_inline = on;
   else {

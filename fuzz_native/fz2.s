@@ -12,7 +12,6 @@ main:
   pushq %r14
   pushq %r15
   subq $8, %rsp
-  # 8:1
   movq $0, %rbx
 .Lb1:
   # 9:1
@@ -107,21 +106,20 @@ main:
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
-  # 39:1
-  movq $5, %r13
-  movq $2, %r12
+  movq $2, %r13
+  movq $5, %r12
 .Lb29:
   # 40:8
   movq $0, %rax
-  movq %r13, %rcx
+  movq %r12, %rcx
   cmpq %rcx, %rax
   jge .Lb34
   # 40:32
-  cmpq $0, %r12
+  cmpq $0, %r13
   je .Lb37
   # 40:43
   movq $23, %rax
-  movq %r12, %rcx
+  movq %r13, %rcx
   testq %rcx, %rcx
   jz mjz_trap
   movabsq $0x8000000000000000, %rdx
@@ -142,7 +140,7 @@ main:
 .Lb39:
   # 40:26
   movq %r14, %rcx
-  movq %r12, %r14
+  movq %r13, %r14
   subq %rcx, %r14
   # 40:19
   movq %r14, %rcx
@@ -157,13 +155,13 @@ main:
   testq %r14, %r14
   je .Lb31
   # 41:8
-  subq $1, %r13
+  subq $1, %r12
   # 42:11
   movq $1, %rdi
   call mjz_alloc
   movq %rax, %r14
   # 43:7
-  addq $1, %r12
+  addq $1, %r13
   jmp .Lb29
 .Lb19:
   # 35:1
@@ -177,15 +175,12 @@ main:
   call mjz_store
   jmp .Lb20
 .Lb27:
-  # 38:10
   movq $0, %r12
   jmp .Lb28
 .Lb37:
-  # 40:32
   movq $1, %r14
   jmp .Lb39
 .Lb34:
-  # 40:8
   movq $0, %r14
   jmp .Lb35
 .Lb31:
@@ -193,40 +188,40 @@ main:
   movq %rbx, %rdi
   movq $1, %rsi
   call mjz_load
-  movq %rax, %r13
+  movq %rax, %r12
   # 45:10
-  movq %r13, %rdi
+  movq %r12, %rdi
   movq $0, %rsi
   call mjz_load
-  movq %rax, %r13
+  movq %rax, %r12
   # 45:1
-  testq %r13, %r13
+  testq %r12, %r12
   je .Lb45
   # 46:20
-  movq %r12, %rdi
+  movq %r13, %rdi
   call mjz_len
-  movq %rax, %r13
+  movq %rax, %r12
   # 46:13
-  movq %r13, %rcx
-  movq $1, %r13
-  subq %rcx, %r13
+  movq %r12, %rcx
+  movq $1, %r12
+  subq %rcx, %r12
   # 46:34
-  movq %r12, %rdi
+  movq %r13, %rdi
   call mjz_len
   movq %rax, %r14
   # 46:45
   movq %rbx, %rdi
   call mjz_len
-  movq %rax, %r12
+  movq %rax, %r13
   # 46:34
   movq %r14, %rax
-  movq %r12, %rcx
+  movq %r13, %rcx
   cmpq %rcx, %rax
   setne %dl
-  movzbq %dl, %r12
+  movzbq %dl, %r13
   # 46:12
-  movq %r12, %rax
-  movq %r13, %rcx
+  movq %r13, %rax
+  movq %r12, %rcx
   cmpq %rcx, %rax
   setle %dl
   movzbq %dl, %r12
@@ -352,17 +347,15 @@ main:
   xorl %edi, %edi
   call exit
 .Lb45:
+  movq %r13, %r12
   jmp .Lb46
 .Lb49:
-  # 47:8
   movq $0, %r12
   jmp .Lb50
 .Lb53:
-  # 49:9
   movq $0, %r13
   jmp .Lb54
 .Lb57:
-  # 50:8
   movq $0, %r12
   jmp .Lb58
 mjz_trap:

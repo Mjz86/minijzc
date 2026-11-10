@@ -98,26 +98,27 @@ L8:;
 }
 int main(void) {
   /* main: source lines 4..49 */
-  int64_t r0;
-  int64_t r1;
   int64_t r2;
   int64_t r3;
   int64_t r4;
+  int64_t r5;
+  int64_t r6;
+  int64_t r7;
   /* 4:1 */
   printf("%lld\n", (long long)0);
   /* 8:10 */
-  r1 = mjz_input();
-  if (r1 != 0) goto L97;
+  r2 = mjz_input();
+  if (r2 != 0) goto L97;
 L97:;
   /* 8:1 */
   printf("%lld\n", (long long)0);
   /* 9:13 */
-  r1 = mjz_input();
-  if (!((r1 != 0))) goto L100;
+  r2 = mjz_input();
+  if (!((r2 != 0))) goto L100;
   /* 9:24 */
-  r0 = mjz_len(0);
+  r2 = mjz_len(0);
   /* 9:13 */
-  if (!((r0 != 0))) goto L100;
+  if (!((r2 != 0))) goto L100;
 L101:;
   /* 15:1 */
   printf("%lld\n", (long long)11);
@@ -125,78 +126,77 @@ L101:;
   /* 17:1 */
   printf("%lld\n", (long long)0);
   /* 35:10 */
-  r0 = mjz_alloc(2);
+  r2 = mjz_alloc(2);
   /* 37:34 */
-  r3 = mjz_input();
+  r6 = mjz_input();
   /* 37:6 */
-  if (0 > r3) goto L73;
+  if (0 > r6) goto L73;
   /* 37:49 */
-  r2 = mjz_arena[r0 + 1];
+  r6 = mjz_arena[r2 + 1];
   /* 37:47 */
-  r2 = (int64_t)((uint64_t)r2 + (uint64_t)-7);
+  r6 = (int64_t)((uint64_t)r6 + (uint64_t)-7);
   /* 37:6 */
-  if (!((r2 != 0))) goto L73;
-  r2 = 1;
+  if (!((r6 != 0))) goto L73;
+  r6 = 1;
 L74:;
   /* 37:1 */
-  if (!((r2 != 0))) goto L76;
+  if (!((r6 != 0))) goto L76;
   /* 38:13 */
-  r2 = mjz_len(r0);
+  r6 = mjz_len(r2);
   /* 38:23 */
-  r3 = mjz_len(r0);
+  r7 = mjz_len(r2);
   /* 38:13 */
-  r2 = (r2 < r3);
+  r6 = (r6 < r7);
   /* 38:11 */
-  if (r2 < 1) goto L83;
+  if (r6 < 1) goto L83;
 L83:;
 L77:;
   /* 41:33 */
-  r4 = mjz_arena[r0 + 1];
+  r7 = mjz_arena[r2 + 1];
   /* 41:27 */
-  r3 = (int64_t)((uint64_t)r4 * (uint64_t)5);
+  r5 = (int64_t)((uint64_t)r7 * (uint64_t)5);
   /* 41:10 */
-  r2 = (r3 <= 19394);
+  r5 = (r5 <= 19394);
   /* 41:7 */
-  r2 = (int64_t)((uint64_t)0 - (uint64_t)r2);
+  r5 = (int64_t)((uint64_t)0 - (uint64_t)r5);
   /* 41:1 */
-  printf("%lld\n", (long long)r2);
+  printf("%lld\n", (long long)r5);
   /* 42:10 */
-  r2 = mjz_alloc(2);
+  r5 = mjz_alloc(2);
   /* 43:9 */
-  r4 = mjz_alloc(3);
+  r7 = mjz_alloc(3);
   /* 43:1 */
-  mjz_arena[r2 + 0] = r4;
+  mjz_arena[r5 + 0] = r7;
   /* 44:9 */
-  r4 = mjz_alloc(3);
+  r7 = mjz_alloc(3);
   /* 44:1 */
-  mjz_arena[r2 + 1] = r4;
+  mjz_arena[r5 + 1] = r7;
   /* 45:1 */
-  mjz_store(r0, 3, -7);
+  mjz_store(r2, 3, -7);
   /* 46:8 */
-  r1 = mjz_load(r0, 2);
+  r3 = mjz_load(r2, 2);
   /* 46:18 */
-  r2 = mjz_input();
+  r4 = mjz_input();
   /* 46:15 */
-  r2 = mjz_f2(r2);
+  r4 = mjz_f2(r4);
   /* 46:6 */
-  r1 = (int64_t)((uint64_t)r1 + (uint64_t)r2);
+  r3 = (int64_t)((uint64_t)r3 + (uint64_t)r4);
   /* 46:1 */
-  if (!((r1 != 0))) goto L87;
+  if (!((r3 != 0))) goto L87;
   /* 47:46 */
-  r1 = mjz_input();
+  r3 = mjz_input();
   /* 47:43 */
-  r1 = mjz_f1(r1);
+  r3 = mjz_f1(r3);
   /* 47:65 */
-  r1 = mjz_arena[r0 + 1];
+  r3 = mjz_arena[r2 + 1];
 L88:;
   /* 49:1 */
-  mjz_arena[r0 + 1] = 0;
+  mjz_arena[r2 + 1] = 0;
   return 0;
 L100:;
   goto L101;
 L73:;
-  /* 37:6 */
-  r2 = 0;
+  r6 = 0;
   goto L74;
 L76:;
   goto L77;

@@ -16,16 +16,18 @@ src/minijz/           the compiler as a header-only constexpr library
   fwd.hpp               forward declarations (declaration-only contexts)
   graph_lib.hpp         the mjz_lib import, ISOLATED: only the headers that
                         actually need the graph/big-number library include it
-  base/                  pass_cfg (PassCfg + the 28-name toggle table +
+  base/                  pass_cfg (PassCfg + the 29-name toggle table +
                         the runtime-only pass-snapshot hook), native_run
-                        (find_cc/slurp/run_capture/write_file)
+                        (find_cc/slurp/run_capture/write_file — with the
+                        Windows portability helpers mjz_devnull/mjz_timeout)
   front/                 lexer, ast, parser, diag (located diagnostics)
   ir/                    instr (IR core), pred_norm, builder, destruct,
                         stats (SsaStats/DestrStats)
   opt/analysis/          an (dominators/loops/SSA), alias, intervals, trapelim
   opt/mem2reg.hpp        array memory -> SSA registers + dead arrays
-  opt/scalar/            fold, copyprop, canon (incl. notcomb), cse, unreach,
-                        splice, dce, ifconv
+  opt/scalar/            fold, copyprop, canon (incl. notcomb), cse, gvn
+                        (value numbering: consts + phi congruence + bins),
+                        unreach, splice, dce, ifconv
   opt/loop/              licm, unroll, lcf, lcf_rt
   opt/linear/            linform, reassoc, divmagic
   opt/interprocedural/   callgraph (Tarjan + inliner), scctco, scctco_fold,
@@ -44,7 +46,9 @@ src/minijz/           the compiler as a header-only constexpr library
                         repl), app_api (the extern app boundary),
                         app_main (the shared main body), demo, fuzz_gen,
                         fuzz_run (parallel differential fuzzer), shrink,
-                        debugger (the interactive session)
+                        debugger + dbg_support (the interactive session:
+                        command handlers + the machines/breakpoint-scan/
+                        naming/snapshot support layer)
   tests/cx_tours.hpp    the constexpr/compile-time tour battery
 src/minijz.hpp         umbrella (single-TU / constexpr build)
 src/tu/*.cpp           the multi-cpp translation units (9 REAL TUs)
@@ -113,9 +117,10 @@ Options and presets:
   `--preset fuzz-wide` — a 2000-seed sharded ctest window.
 * Windows (see the dedicated section below): `--preset windows-llvm`
   (MinGW Makefiles + clang++), `--preset windows-ninja` (Ninja + clang++),
-  `--preset vs-clang` (VS 2022 generator + the clang-cl toolset). They
-  carry a host condition, so `cmake --list-presets` only offers them on
-  Windows.
+  `--preset vs-clang` (VS 2022 generator + the clang-cl toolset),
+  `--preset vs-msvc` (VS 2022 + plain cl.exe), `--preset windows-gcc`
+  (MinGW Makefiles + g++, for MSYS2 / w64devkit). They carry a host
+  condition, so `cmake --list-presets` only offers them on Windows.
 * `-DMINIJZ_MULTI_CPP=OFF` — single translation unit (the header-only
   constexpr form).
 * `-DMINIJZ_EXT_WARNINGS=ON` — the extended warning battery (per-compiler
@@ -174,7 +179,8 @@ What is in place now:
    `cmake --preset windows-llvm` (MinGW Makefiles + clang++ — no MSVC
    needed), `cmake --preset windows-ninja` (Ninja + clang++),
    `cmake --preset vs-clang` (VS 2022 generator + the clang-cl
-   toolset, for machines with VS installed).
+   toolset, for machines with VS installed), `cmake --preset vs-msvc`
+   (VS 2022 + plain cl.exe), `cmake --preset windows-gcc` (MinGW + g++).
 3. Manual equivalent of the first recipe:
    `cmake -G "MinGW Makefiles" -DCMAKE_CXX_COMPILER=clang++ -S . -B build`.
 4. Or: install VS Build Tools and configure from an "x64 Native Tools"
@@ -185,6 +191,47 @@ clang-cl is a first-class config now: every quoted include resolves in
 its includer's own directory (see warnings.txt), so the old
 `-Wmicrosoft-include` noise is gone — only genuinely portable includes
 remain (`include_portability` is a ctest `regr` gate).
+
+### Checkpoint 16: the build itself is now Windows-clean
+
+The "it doesn't compile on Windows" report had four distinct causes,
+all fixed:
+
+1. **MSVC dialect**: the constexpr-proof budgets now spell themselves
+   per compiler (`/constexpr:depth8192 /constexpr:steps4000000000` for
+   cl vs `-fconstexpr-*` for the GNU drivers); `/utf-8` is added for
+   MSVC (the comments are UTF-8); the cx ctest checks build as
+   object-library targets under the VS generators (so cl gets its
+   INCLUDE/LIB environment set up by the generator instead of a raw
+   `cl` that cannot even find `<stdint.h>`); and the clang++
+   auto-preference now stays out of the way of Visual Studio generators
+   (which pass MSVC-style flags that the GNU clang++ driver rejects).
+2. **libc++ `std::atomic_ref`**: upstream mjz_lib references it
+   unconditionally, and libc++ never shipped it (it was removed from
+   the final C++20 text) — so EVERY libc++ toolchain (LLVM-MinGW, MSYS2
+   CLANG64, `clang++ -stdlib=libc++`) died inside the import. The
+   committed bridge `src/mjz_lib/alllib_import.hpp` now carries a
+   gated single-threaded stand-in (sound here: the compiler never
+   shares a refcounted object across threads) that switches itself off
+   if libc++ ever grows the real one.
+3. **MSVC-hostile builtins**: `__builtin_popcount`/
+   `__builtin_clzll` became the C++20 `<bit>` `std::popcount`/
+   `std::countl_zero` (identical semantics, every compiler).
+4. **Shell dialect** in the native-parity harness: `command -v` →
+   `where`, `/dev/null` → `nul`, `timeout 60 ...` (a coreutils killer)
+   → dropped on Windows (cmd's `timeout` is a SLEEP), `mkdir -p` →
+   `std::filesystem::create_directories`. The five bash-based ctest
+   gates register only when bash exists (Git-Bash/WSL/MSYS all work),
+   so a bash-less Windows box gets a clean `ctest` instead of five
+   failures.
+
+Verified by cross-compiling in CI style: all 9 TUs + the header-only
+`main.cpp` + `tests/unit_tests.cpp` compile AND LINK into a PE32+
+x86-64 `minijz.exe` for `x86_64-windows-gnu` (the LLVM-MinGW/CLANG64
+class of toolchains — the strictest portability case, libc++
+included). The MSVC path follows the documented cl option syntax; both
+new presets (`vs-msvc`, `windows-gcc`) cover the remaining toolchain
+families.
 
 ## The compile-time proof
 
@@ -279,7 +326,7 @@ opt diff [A [B]]        unified IR diff between snapshots (names or
                         indices; default first-vs-last)
 opt break PASS          a breakpoint BETWEEN passes: PASS's snapshot +
                         its diff against the previous one
-opt list                the 28-name pass toggle table, on/off
+opt list                the 29-name pass toggle table, on/off
 check                   all five runners + comparison
 vm reset/step/run/continue/until/break/line/unbreak/breaks/state/dis
                         the steppable machine: single-op tracing WITH
@@ -419,11 +466,15 @@ the ctest/CLI toggle names):
   "elbow" block (phis + one comparison + a branch) whose comparison is
   decidable PER EDGE (the range hull over all preds is not) redirects
   straight to the taken successor; both edges of a correlated merge
-  thread and the redundant branch vanishes)**.
+  thread and the redundant branch vanishes)**, and (checkpoint 16)
+  **global value numbering (`gvn` — one dominator-scoped value-number
+  table unifying duplicate Const defs, congruent merge phis of the same
+  block (same incoming map), and pure-Bin recomputation with cse's exact
+  rules; mutually-referential phi pairs are left to phi-degen/sccp on
+  purpose)**.
 * still open (the standing wishlist): tail
 duplication, loop rotation/simplification/canonicalization proper,
-  LCSSA, GVN (beyond the dominator-scoped CSE + ldelim + callcse
-  combination), demanded/known bits, MemCpyOpt,
+  LCSSA, demanded/known bits, MemCPyOpt,
   loop fusion/fission/distribution, loop unswitching/versioning/predication,
   function outlining, Attributor-style inference, GlobalOpt.
 
@@ -455,6 +506,35 @@ The checkpoint-15 additions, per the request:
   CLI flag — the diff shower between passes, driven by a runtime-only
   snapshot hook in `PassCfg`/`dbg_pass` that never touches the constexpr
   path.
+
+## 5. checkpoint 16: Windows builds, GVN, code-quality splits, wider fuzz — DONE
+
+* **the cmake now compiles on Windows** (the report's headline): four
+  distinct root causes fixed — the MSVC flag dialect (constexpr budgets,
+  /utf-8, object-library cx checks, no clang++ hijack under VS
+  generators), the libc++ `std::atomic_ref` hole in upstream mjz_lib
+  (gated stand-in in the committed bridge), MSVC-hostile builtins
+  (-> C++20 `<bit>`), and the shell dialect of the native-parity
+  harness (`where`/`nul`/no coreutils `timeout`/`std::filesystem`
+  mkdir). New presets `vs-msvc` and `windows-gcc` join windows-llvm /
+  windows-ninja / vs-clang. Verified end to end by cross-compiling all
+  9 TUs + the header-only form + unit tests into a PE32+ Windows exe
+  (see the Windows toolchains section's checkpoint-16 subsection).
+* **GVN proper** (`gvn`, toggle #29): dominator-scoped value numbering
+  unifying duplicate Consts, congruent merge phis, and pure-Bin
+  recomputation; 14 new unit checks; fuzz rotation case 16 disables it.
+* **code quality**: the 1214-line `apps/debugger.hpp` split into
+  `dbg_support.hpp` (machines/breakpoint scan/naming/snapshots) +
+  `debugger.hpp` (the `DbgSess` session + one small static handler per
+  command family + a thin tokenize-dispatch loop); the 675-line
+  `run_debugger` is gone. Behavior byte-identical (both scripted
+  debugger ctest sessions pass unchanged).
+* **fuzzers expanded**: shadow-pair merges planted in every seed >=
+  12331 (`MJZ_GVN_SEED_FLOOR`; phi-congruence bait — 91 of the first
+  150 new-window programs carry one), rotation now 17-way, the
+  random-config mode draws from the 29-name table, and the new windows
+  rotation 12331+ / random-cfg 10801+ ran clean (see the battery note
+  in the commit message).
 
 The original wishlist (kept verbatim for reference):
 

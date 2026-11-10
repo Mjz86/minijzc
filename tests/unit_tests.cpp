@@ -351,6 +351,64 @@ int main() {
     }
   }
 
+  // ---- gvn: value numbering (consts + phi congruence + bins) ---------------
+  {
+    // (a) congruent merge phis unify: two vars tracking the same values
+    // through the same if/else are ONE value after -O3, and the sum of
+    // the pair doubles one phi instead of adding two distinct ones
+    {
+      const char *s = "let a = 0;\nlet b = 0;\n"
+                      "if (input()) { a = 5; b = 5; } else { a = 7; b = 7; }\n"
+                      "print a + b;\n";
+      Program P = compile(s);
+      UT(P.ok, "gvn: shadow-pair program compiles");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1});
+      UT(o.out.size() == 1 && o.out[0] == 10, "gvn: shadow-pair result (10)");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 1 && o2.out[0] == 14, "gvn: shadow-pair result (14)");
+      OptStats os = sum_ostats(P);
+      UT(os.gvns > 0, "gvn: the pass actually unified something");
+    }
+    // (b) duplicate constants across blocks fold to one def
+    {
+      const char *s = "let x = 3;\nif (input()) { x = 9; } else { x = 9; }\n"
+                      "print x;\n";
+      Program P = compile(s);
+      UT(P.ok, "gvn: dup-const program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.gvns > 0, "gvn: duplicate consts were unified");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1});
+      UT(o.out.size() == 1 && o.out[0] == 9, "gvn: dup-const result");
+    }
+    // (c) a loop's counter and accumulator must NOT unify (the regression
+    // that motivated the conservative taint guard: phis referencing each
+    // other's results stay put)
+    {
+      const char *s = "let x = 0;\nlet i = 0;\n"
+                      "while (i < 4) { x = x + i; i = i + 1; }\n"
+                      "print x;\n";
+      Program P = compile(s);
+      UT(P.ok, "gvn: loop program compiles");
+      RunOut o = run_prog(fns_of(P, 1), 200000, {});
+      UT(o.out.size() == 1 && o.out[0] == 6, "gvn: loop still counts to 6");
+    }
+    // (d) the toggle: --disable=gvn keeps the program correct, just fatter
+    {
+      const char *s = "let a = 0;\nlet b = 0;\n"
+                      "if (input()) { a = 5; b = 5; } else { a = 7; b = 7; }\n"
+                      "print a + b;\n";
+      PassCfg cfg{};
+      cfg.set_level(3);
+      cfg.p_gvn = false;
+      Program P = compile(s, cfg);
+      OptStats os = sum_ostats(P);
+      UT(os.gvns == 0, "gvn: the toggle turns the pass off");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1});
+      UT(o.out.size() == 1 && o.out[0] == 10,
+         "gvn: disabled pass, same result");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

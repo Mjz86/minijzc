@@ -297,7 +297,6 @@ main:
 .Lb100:
   jmp .Lb101
 .Lb73:
-  # 37:6
   movq $0, %r12
   jmp .Lb74
 .Lb76:

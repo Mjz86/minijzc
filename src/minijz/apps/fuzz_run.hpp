@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 
@@ -51,8 +52,9 @@ struct FuzzStats {
   long cmpfacts{}, callcses{};
   long deadargs{};
   long fnspecs{}, icf{};
-  long jthreads{}, argpromos{};
+  long jthreads{}, argpromos{}, gvns{};
   long div_progs{}, mat_progs{}, aparam_progs{};
+  long gvn_progs{}, gvn_baits{};
 };
 static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.cases += b.cases;
@@ -92,10 +94,13 @@ static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.fnspecs += b.fnspecs;
   a.icf += b.icf;
   a.jthreads += b.jthreads;
+  a.gvns += b.gvns;
   a.argpromos += b.argpromos;
   a.div_progs += b.div_progs;
   a.mat_progs += b.mat_progs;
   a.aparam_progs += b.aparam_progs;
+  a.gvn_progs += b.gvn_progs;
+  a.gvn_baits += b.gvn_baits;
 }
 
 // how many workers --fuzz should use when the flag was not given:
@@ -138,7 +143,7 @@ static PassCfg fuzz_cfg_for(long seed, bool random_configs) {
   PassCfg cfg{};
   cfg.set_level(3);
   cfg.fp_limit = 8; // fuzz programs are pathological: cap fixpoint depth
-  switch (seed % 16) {
+  switch (seed % 17) {
   case 0:
     cfg.p_scctco = false;
     break; // no SCC tail-call collapse
@@ -193,9 +198,12 @@ static PassCfg fuzz_cfg_for(long seed, bool random_configs) {
   case 15:
     cfg.p_jthread = false;
     break; // no jump threading (elbow branches stay)
+  case 16:
+    cfg.p_gvn = false;
+    break; // no value numbering (duplicate consts/phis stay)
   }
   // (ported from Branchedmain) --fuzz-cfg=random: additionally disable a
-  // random 1..4 of the 28 toggles and pick a random tier, exposing pass
+  // random 1..4 of the 29 toggles and pick a random tier, exposing pass
   // INTERACTION bugs the fixed rotation never reaches
   if (random_configs) {
     auto pick32 = [](uint32_t &rng) -> uint32_t {
@@ -259,6 +267,10 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
     F.mat_progs++;
   if (g.has_aparam)
     F.aparam_progs++;
+  if (g.n_gvnbait > 0) {
+    F.gvn_progs++;
+    F.gvn_baits += g.n_gvnbait;
+  }
   {
     OptStats os = sum_ostats(P);
     F.inlined_total += os.inlines;
@@ -286,6 +298,7 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
     F.icf += os.icf;
     F.jthreads += os.jthreads;
     F.argpromos += os.argpromos;
+    F.gvns += os.gvns;
   }
   RunOut oracle = run_ast(P.P.ast, P.P.root, 200000, g.ins);
   RunOut plain = run_prog(fns_of(P, 0), 200000, g.ins);
@@ -384,8 +397,8 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
         for (const char *lvl : {"0", "2"}) {
           std::string exe = stem + "." + tags[ti] + ".O" + lvl + ".exe";
           std::string srcp = ti ? s_path : c_path;
-          std::string build = "timeout 60 " + ctx.cc + " -w -O" + lvl + " " +
-                              srcp + " -o " + exe;
+          std::string build = mjz_timeout(60, ctx.cc + " -w -O" + lvl + " " +
+                                                  srcp + " -o " + exe);
           if (std::system(build.c_str()) != 0) {
             std::lock_guard<std::mutex> lk(ctx.mu);
             std::printf("NATIVE BUILD FAILED seed %ld (%s -O%s)\n", seed,
@@ -398,7 +411,7 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
           }
           std::string cap = stem + ".out";
           std::string out_text{};
-          int rc = run_capture("timeout 20 " + exe, out_text, cap, tape);
+          int rc = run_capture(mjz_timeout(20, exe), out_text, cap, tape);
           bool timed_out = (rc != 0 && (((unsigned)rc >> 8) == 124 ||
                                         ((unsigned)rc >> 8) == 137));
           if (timed_out)
@@ -447,10 +460,11 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
               "SCCP consts: %ld (brs: %ld) | load fwd/CSE: %ld/%ld | "
               "range-cmps: %ld | cmp-facts: %ld | call-CSE: %ld | "
               "dead-args: %ld | fnspec: %ld | icf: %ld | "
-              "jthreads: %ld | argpromos: %ld | "
+              "jthreads: %ld | argpromos: %ld | gvns: %ld | "
               "native-checked (C+asm x -O0/-O2): %ld\n"
               "  vocabulary: w/ div/mod: %ld | w/ 2-D arrays: %ld | "
-              "w/ array params: %ld | w/ breakpoints: %ld (%ld pts)\n"
+              "w/ array params: %ld | w/ breakpoints: %ld (%ld pts) | "
+              "w/ shadow merges: %ld (%ld pairs)\n"
               "  wall: %.1fs on %ld job%s\n",
               F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
               F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
@@ -459,9 +473,9 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
               F.gensims, F.traps_killed, F.scctco_total, F.scctco_fold_total,
               F.sccp_consts, F.sccp_brs, F.ld_fwds, F.ld_cses, F.rangecmps,
               F.cmpfacts, F.callcses, F.deadargs, F.fnspecs, F.icf, F.jthreads,
-              F.argpromos, F.native_checked, F.div_progs, F.mat_progs,
-              F.aparam_progs, F.bkpt_progs, F.bkpts, secs, jobs,
-              jobs == 1 ? "" : "s");
+              F.argpromos, F.gvns, F.native_checked, F.div_progs, F.mat_progs,
+              F.aparam_progs, F.bkpt_progs, F.bkpts, F.gvn_progs, F.gvn_baits,
+              secs, jobs, jobs == 1 ? "" : "s");
   CHECK(mismatches == 0, "fuzz must be clean");
 }
 
@@ -486,7 +500,9 @@ void run_fuzz(long n, const std::string &cc_in, long fuzz_native,
   ctx.native_left.store(fuzz_native);
   if (fuzz_native > 0 && !ctx.cc.empty()) {
     ctx.ndir = out_dir + "/fuzz_native";
-    std::system(("mkdir -p '" + ctx.ndir + "'").c_str());
+    // portable mkdir -p (cmd.exe has no -p; C++ filesystem has both)
+    std::error_code ec{};
+    std::filesystem::create_directories(ctx.ndir, ec);
   }
   long report_every = n / 40;
   if (report_every < 25)

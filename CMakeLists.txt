@@ -33,12 +33,18 @@ endif()
 # ---------------------------------------------------------------------------
 # compiler preference: unless the user pinned one (-DCMAKE_CXX_COMPILER=...,
 # $CXX, or a toolchain file), prefer clang++ (README note: "make cmake
-# detect and use clang"), falling back to the platform default (g++ / MSVC)
+# detect and use clang"), falling back to the platform default (g++ / MSVC).
+# NEVER under a Visual Studio generator: those pass MSVC-style flags to
+# whatever compiler they drive, and the GNU-style clang++ driver rejects
+# them (the "it doesn't compile on Windows" trap: clang++ on PATH + VS
+# generator = "unknown argument" storms). Use the vs-clang preset instead
+# (it selects the clang-cl TOOLSET through the generator's own machinery).
 # ---------------------------------------------------------------------------
 find_program(MJZ_CLANGXX NAMES clang++ clang++-20 clang++-19 clang++-18
                                  clang++-17 clang++-16)
 if(MJZ_CLANGXX AND NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX}
-   AND NOT DEFINED ENV{CXXFLAGS})
+   AND NOT DEFINED ENV{CXXFLAGS}
+   AND NOT CMAKE_GENERATOR MATCHES "Visual Studio")
   set(CMAKE_CXX_COMPILER "${MJZ_CLANGXX}" CACHE FILEPATH "C++ compiler")
   message(STATUS "minijzc: no compiler pinned -> clang++ (${MJZ_CLANGXX});"
                  " override with -DCMAKE_CXX_COMPILER=... if unwanted")
@@ -56,12 +62,23 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# g++ and clang++ spell the constexpr budget differently (README notes):
-# per-proof limits, applied wherever the cx checks are compiled
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+# g++, clang++ and MSVC spell the constexpr budget differently (README
+# notes): per-proof limits, applied wherever the cx checks are compiled
+if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+  # cl.exe: /constexpr:depth<N> and /constexpr:steps<N> (appended directly,
+  # no space). cl has no -fconstexpr-anything; passing GNU flags would only
+  # spray D9002 warnings.
+  set(MJZ_CX_LIMITS /constexpr:depth8192 /constexpr:steps4000000000)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   set(MJZ_CX_LIMITS -fconstexpr-steps=4000000000)
 else()
   set(MJZ_CX_LIMITS -fconstexpr-depth=8192 -fconstexpr-ops-limit=4000000000)
+endif()
+
+# MSVC reads the sources as UTF-8 (the comments use em-dashes and other
+# non-ASCII); without /utf-8 it emits C4819 and may mis-tokenize them.
+if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+  add_compile_options(/utf-8)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -159,19 +176,40 @@ enable_testing()
 
 # ---------------------------------------------------------------------------
 # constexpr proof checks: each MJZ_CX_CHECK=k is its own compiler invocation
-# (each proof retains its full constant-expression state until end-of-TU)
+# (each proof retains its full constant-expression state until end-of-TU).
+# GNU-style drivers get the historical direct command line; MSVC gets an
+# EXCLUDE_FROM_ALL object library + a ctest that builds it (the generator
+# then sets up INCLUDE/LIB for cl itself -- a raw `cl` from ctest would not
+# find even <stdint.h>).
 # ---------------------------------------------------------------------------
-foreach(k ${MJZ_CX_CHECKS})
-  add_test(NAME cx_check_${k}
-    COMMAND ${CMAKE_CXX_COMPILER} -std=c++${MINIJZ_CXX_STANDARD} -O0
-      -I${CMAKE_CURRENT_SOURCE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/src
-      -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
-      -DMJZ_CX_CHECK=${k} ${MJZ_CX_LIMITS}
-      -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/constexpr_check.cpp
-      -o ${CMAKE_CURRENT_BINARY_DIR}/cx${k}.o)
-  set_tests_properties(cx_check_${k} PROPERTIES TIMEOUT 600 LABELS cx
-    RUN_SERIAL TRUE) # each proof holds up to ~4 GiB of constexpr state
-endforeach()
+if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+  foreach(k ${MJZ_CX_CHECKS})
+    add_library(cx_obj_${k} OBJECT EXCLUDE_FROM_ALL
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/constexpr_check.cpp)
+    target_compile_definitions(cx_obj_${k} PRIVATE MJZ_CX_CHECK=${k})
+    target_include_directories(cx_obj_${k} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib)
+    target_compile_options(cx_obj_${k} PRIVATE ${MJZ_CX_LIMITS})
+    add_test(NAME cx_check_${k}
+      COMMAND ${CMAKE_COMMAND}
+        --build ${CMAKE_BINARY_DIR} --target cx_obj_${k} --config $<CONFIG>)
+    set_tests_properties(cx_check_${k} PROPERTIES TIMEOUT 600 LABELS cx
+      RUN_SERIAL TRUE) # each proof holds up to ~4 GiB of constexpr state
+  endforeach()
+else()
+  foreach(k ${MJZ_CX_CHECKS})
+    add_test(NAME cx_check_${k}
+      COMMAND ${CMAKE_CXX_COMPILER} -std=c++${MINIJZ_CXX_STANDARD} -O0
+        -I${CMAKE_CURRENT_SOURCE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/src
+        -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
+        -DMJZ_CX_CHECK=${k} ${MJZ_CX_LIMITS}
+        -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/constexpr_check.cpp
+        -o ${CMAKE_CURRENT_BINARY_DIR}/cx${k}.o)
+    set_tests_properties(cx_check_${k} PROPERTIES TIMEOUT 600 LABELS cx
+      RUN_SERIAL TRUE) # each proof holds up to ~4 GiB of constexpr state
+  endforeach()
+endif()
 
 # ---------------------------------------------------------------------------
 # differential fuzz tests: ctest -R fuzz  (seeds via -DFUZZ_SEEDS=start:count)
@@ -224,6 +262,14 @@ set_tests_properties(general_examples PROPERTIES TIMEOUT 120 LABELS fuzz)
 # examples/BUGFIXES.md) through --check-all, the hand-written stress battery,
 # and header self-containment (README: "not dependent on include order")
 # ---------------------------------------------------------------------------
+# the script-based gates need bash; on Windows without Git-Bash/WSL in PATH
+# they are skipped with a note instead of failing (the compile itself is
+# what "works on Windows" means here; the gates run everywhere bash exists)
+find_program(MJZ_BASH bash)
+if(NOT MJZ_BASH)
+  message(STATUS "bash not found: stress/header-order/include-portability"
+                 " and the scripted debugger sessions are skipped")
+endif()
 file(GLOB MJZ_BUGREPRO RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} bugrepro/*.mjz)
 foreach(f ${MJZ_BUGREPRO})
   string(REGEX REPLACE "bugrepro/|\\.mjz$" "" nm ${f})
@@ -237,38 +283,44 @@ foreach(f ${MJZ_BUGREPRO})
     PROPERTIES TIMEOUT 120 LABELS regr)
 endforeach()
 
+if(MJZ_BASH)
 add_test(NAME stress_battery
   COMMAND ${CMAKE_COMMAND} -E env MINIJZ_BIN=$<TARGET_FILE:minijz>
-          bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/stress.sh)
+          ${MJZ_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/stress.sh)
 set_tests_properties(stress_battery PROPERTIES TIMEOUT 1800 LABELS regr)
 
 add_test(NAME header_order
-  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/header_order_test.sh)
+  COMMAND ${MJZ_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/header_order_test.sh)
 set_tests_properties(header_order PROPERTIES TIMEOUT 900 LABELS regr)
 
 # every quoted include resolves in its includer's directory (the
 # -Wmicrosoft-include class from warnings.txt, kept dead -- see
 # scripts/include_portability_test.sh)
 add_test(NAME include_portability
-  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/include_portability_test.sh)
+  COMMAND ${MJZ_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/include_portability_test.sh)
 set_tests_properties(include_portability PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
 
 # a scripted --debugger session: the interactive facility is itself a
 # regression gate (IR dump, single-step, full state, five-way check)
+if(MJZ_BASH)
 add_test(NAME debugger_session
-  COMMAND bash -c [==[printf 'fns\nvm reset\nvm step 5\nvm state\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
-          bash $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/tco_parity.mjz
+  COMMAND ${MJZ_BASH} -c [==[printf 'fns\nvm reset\nvm step 5\nvm state\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/tco_parity.mjz
           ${CMAKE_CURRENT_SOURCE_DIR}/examples/general.in)
 set_tests_properties(debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
 
 # checkpoint 15: the breakpoint statement + the pass explorer, as a scripted
 # session (language-bkpt stops with observed values, vars/watch, source-line
 # breakpoints, the opt timeline / diff / pass-breakpoint views, five-way
 # check on a program that is breakpoint-dense end to end)
+if(MJZ_BASH)
 add_test(NAME bkpt_debugger_session
-  COMMAND bash -c [==[printf 'bkpts\nsrc\nvm continue\nvm continue\nvars\nwatch i\nvm continue\nvm unbreak *\nvm line 14\nvm breaks\nvm unbreak *\nvm continue\nvm continue\nvm run\nopt\nopt break sccp\nopt diff sccp fold\nopt list\ncheck\nquit\n' | "$1" "$2" --debugger]==]
-          bash $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/bkpt_tour.mjz)
+  COMMAND ${MJZ_BASH} -c [==[printf 'bkpts\nsrc\nvm continue\nvm continue\nvars\nwatch i\nvm continue\nvm unbreak *\nvm line 14\nvm breaks\nvm unbreak *\nvm continue\nvm continue\nvm run\nopt\nopt break sccp\nopt diff sccp fold\nopt list\ncheck\nquit\n' | "$1" "$2" --debugger]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/bkpt_tour.mjz)
 set_tests_properties(bkpt_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
 
 # bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that
 # hung the compiler — crossed phi-degenerate copies + copyprop, no dce

@@ -31,12 +31,14 @@ static void mjz_store(int64_t h, int64_t i, int64_t v) {
 int main(void) {
   /* main: source lines 22..28 */
   int64_t r0;
+  int64_t r1;
+  int64_t r2;
   /* 22:10 */
   r0 = mjz_alloc(3);
   /* 25:10 */
-  r0 = mjz_alloc(6);
+  r2 = mjz_alloc(6);
   /* 27:10 */
-  r0 = mjz_alloc(1);
+  r1 = mjz_alloc(1);
   /* 28:10 */
   r0 = mjz_alloc(4);
   return 0;

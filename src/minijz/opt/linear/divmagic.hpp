@@ -66,8 +66,8 @@ constexpr bool build_divmagic(Fn &fn, const Instr &I, val_t D,
   const uint32_t sg = tmp(); // n >>a 63 (all-ones when negative)
   bin(B::AShr, sg, n, c63);
   uint32_t q = NONE;
-  if ((Dam & (Dam - 1)) == 0) { // |D| = 2^t
-    uint32_t t = 63 - (uint32_t)__builtin_clzll(Dam);
+  if ((Dam & (Dam - 1)) == 0) {                        // |D| = 2^t
+    uint32_t t = 63 - (uint32_t)std::countl_zero(Dam); // C++20 <bit>
     uint32_t cm = konst((val_t)(Dam - 1));
     uint32_t bias = tmp();
     bin(B::And, bias, sg, cm);

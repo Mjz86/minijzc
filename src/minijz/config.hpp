@@ -362,6 +362,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <bit>
 #include <chrono>
 #include <fstream>
 #include <random>
