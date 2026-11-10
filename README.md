@@ -327,7 +327,9 @@ opt show [N]            full IR of snapshot N
 opt diff [A [B]]        unified IR diff between snapshots (names or
                         indices; default first-vs-last)
 opt break PASS          a breakpoint BETWEEN passes: PASS's snapshot +
-                        its diff against the previous one
+                        its diff against the previous one — and ARMED:
+                        the next `opt [FN]` PAUSES the timeline after it
+opt continue            disarm the pass breakpoint + collect in full
 opt list                the 31-name pass toggle table, on/off
 check                   all five runners + comparison
 vm reset/step/run/continue/until/break/line/unbreak/breaks/state/dis
@@ -494,11 +496,37 @@ the ctest/CLI toggle names):
   licm treated `nt` (trap-impossible PROOFS) as a hoist license even
   though the proof is control-flow-sensitive (`z != 0 && 42 / z` is only
   safe UNDER the guard) — now only a constant divisor outside {0, -1}
-  hoists.
+  hoists. And (checkpoint 18) **compound-condition loop unswitching**
+  (the same `unswitch` toggle, extended): the while-lowering spreads
+  `while (a && b)` / `while (a || b)` over a diamond — the header tests
+  a, the elbow tests b, the 1/0 blocks feed the merge whose phi+cbr IS
+  the loop's exit edge. When BOTH leaf tests are invariant, the whole
+  guard chain is versioned as one (`&&`: pre: cbr a -> g2: cbr b ->
+  clone / fx: br exit; `||`: the true arms short-circuit into the loop
+  through a dedicated entry block), the true clone bypasses the entire
+  diamond straight into the body, and the value branch's exit edge
+  becomes the zero-iteration edge (exit phis keyed to it take the header
+  phis' ENTRY values, keyed to the new false-side block). The diamond
+  blocks must be pure (Const/Copy/Bin, nt on Div/Mod) — skipped side
+  effects on the zero-iteration path would be a miscompile, and the
+  invariance checks already reject anything that computes the conditions
+  in-loop. Checkpoint 18's code-quality move: `opt/loop/lcf.hpp`
+  (previously ~1150 lines) now splits into the driver + `lcf_sim.hpp`
+  (the general any-condition simulator) + `lcf_rt.hpp` (the runtime-trip
+  guarded closed form) — and the const-call evaluator, which
+  historically squatted in `loop/lcf_rt.hpp` under a stale header,
+  moved to its real home `interprocedural/constcall.hpp`.
 * still open (the standing wishlist): tail duplication, loop rotation
-  proper, LCSSA, demanded/known bits, MemCPyOpt,
-  loop fusion/fission/distribution, function outlining,
-  Attributor-style inference, GlobalOpt.
+  proper, LCSSA (needs undef semantics this IR does not have — a
+  loop-exit phi's zero-trip edge has no defined value), demanded/known
+  bits, MemCPyOpt, loop fusion/fission/distribution, function
+  outlining, Attributor-style inference, GlobalOpt. Notes from the
+  unswitch checkpoints: the natural next step is BODY-IF unswitching
+  (version a loop on an invariant INNER branch: the classic LLVM
+  "trivial unswitch", both versions keep running the loop, each exit
+  gets a version-merge block to hold the ≤2-preds invariant); compound
+  unswitch handles exactly two leaf tests — deeper boolean trees
+  (`a && b && c`) stay unversioned.
 
 ## 4. make the compiler debuggable (breakpoints, diagnostics, pass diffs) — DONE
 
@@ -524,10 +552,12 @@ The checkpoint-15 additions, per the request:
   disassembly, numbered `src`; optimization side — the pass explorer
   (`opt` timeline with per-pass snapshots, `opt show`, `opt diff`'s
   unified IR diff between ANY two passes, `opt break PASS` as a
-  breakpoint BETWEEN passes, `opt list`), plus the batch `--opt-diff`
-  CLI flag — the diff shower between passes, driven by a runtime-only
-  snapshot hook in `PassCfg`/`dbg_pass` that never touches the constexpr
-  path.
+  breakpoint BETWEEN passes — checkpoint 18: it ARMS, and the next
+  `opt [FN]` collection actually PAUSES there (the timeline truncates
+  after that pass, its diff is shown, `opt continue` collects in full),
+  `opt list`), plus the batch `--opt-diff` CLI flag — the diff shower
+  between passes, driven by a runtime-only snapshot hook in
+  `PassCfg`/`dbg_pass` that never touches the constexpr path.
 
 ## 5. checkpoint 16: Windows builds, GVN, code-quality splits, wider fuzz — DONE
 

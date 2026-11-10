@@ -5,7 +5,7 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
-#include "../loop/lcf_rt.hpp" // fn_pure_closure (the purity oracle)
+#include "constcall.hpp" // fn_pure_closure (the purity oracle)
 
 // --- 9e3b. PURE-CALL CSE (interprocedural)
 // ------------------------------------- A call to a PURE function

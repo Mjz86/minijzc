@@ -488,6 +488,92 @@ int main() {
     }
   }
 
+  // ---- checkpoint 18: compound-condition loop unswitching -----------------
+  {
+    // (a) `while (a && b)` with both flags invariant: the whole guard
+    // chain is versioned (preheader cbr a -> g2: cbr b -> clone / fx ->
+    // exit); all three polarity paths keep the original semantics and
+    // the value live past the loop is the ENTRY value on zero-iteration
+    // paths
+    {
+      const char *s = "let f = input();\nlet g = input();\nlet c = 5;\n"
+                      "while (f > 0 && g > 0) {\n  if (c <= 0) { break; }\n"
+                      "  c = c - 1;\n  print c;\n}\n"
+                      "print 1000 + c;\n";
+      Program P = compile(s);
+      UT(P.ok, "cc-unswitch: && program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.unswitches > 0, "cc-unswitch: the && guard chain versioned");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3, 2});
+      UT(o.out.size() == 6 && o.out[0] == 4 && o.out[4] == 0 &&
+             o.out[5] == 1000,
+         "cc-unswitch: && true path runs the body (4..0, 1000)");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0, 2});
+      UT(o2.out.size() == 1 && o2.out[0] == 1005,
+         "cc-unswitch: && first-false = zero iterations (entry c)");
+      RunOut o3 = run_prog(fns_of(P, 1), 100000, {3, 0});
+      UT(o3.out.size() == 1 && o3.out[0] == 1005,
+         "cc-unswitch: && second-false = zero iterations (entry c)");
+    }
+    // (b) `while (a || b)`: the true arms short-circuit into the loop,
+    // both-false exits at zero iterations
+    {
+      const char *s = "let f = input();\nlet g = input();\nlet c = 5;\n"
+                      "while (f > 0 || g > 0) {\n  if (c <= 0) { break; }\n"
+                      "  c = c - 1;\n  print c;\n}\n"
+                      "print 1000 + c;\n";
+      Program P = compile(s);
+      UT(P.ok, "cc-unswitch: || program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.unswitches > 0, "cc-unswitch: the || guard chain versioned");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {0, 5});
+      UT(o.out.size() == 6 && o.out[5] == 1000,
+         "cc-unswitch: || one-true path runs the body");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0, 0});
+      UT(o2.out.size() == 1 && o2.out[0] == 1005,
+         "cc-unswitch: || both-false = zero iterations");
+      RunOut o3 = run_prog(fns_of(P, 1), 100000, {7, 0});
+      UT(o3.out.size() == 6 && o3.out[5] == 1000,
+         "cc-unswitch: || other-true path runs the body");
+    }
+    // (c) a WRITTEN flag is not invariant: no versioning, same math
+    // (the counter still bounds the loop; f's decrement terminates it)
+    {
+      const char *s = "let f = input();\nlet g = input();\nlet s = 0;\n"
+                      "while (f > 0 && g > 0) { s = s + 2; f = f - 1; }\n"
+                      "print s;\n";
+      Program P = compile(s);
+      UT(P.ok, "cc-unswitch: non-invariant && compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.unswitches == 0, "cc-unswitch: written cond left alone");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {4, 9});
+      UT(o.out.size() == 1 && o.out[0] == 8,
+         "cc-unswitch: non-invariant && result (4 trips x 2)");
+    }
+    // (d) the && guard around a division: the guard is control-flow
+    // sensitive, the condition chain is pure, the versioning must not
+    // move the division (the && diamond's blocks are pure; this pins
+    // the division staying under the guard; the counter bounds the loop)
+    {
+      const char *s = "let z = input();\nlet s = 0;\n"
+                      "let fl = input();\nlet gl = input();\nlet c = 3;\n"
+                      "while (fl > 0 && gl > 0) {\n"
+                      "  if (z != 0) { s = s + 100 / z; }\n"
+                      "  s = s + 1;\n"
+                      "  c = c - 1;\n"
+                      "  if (c <= 0) { break; }\n}\n"
+                      "print s;\n";
+      Program P = compile(s);
+      UT(P.ok, "cc-unswitch: guarded-division && compiles");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {0, 1, 1});
+      UT(o.out.size() == 1 && o.out[0] == 3,
+         "cc-unswitch: z=0 guards the division (3 iters x +1)");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {2, 1, 1});
+      UT(o2.out.size() == 1 && o2.out[0] == 153,
+         "cc-unswitch: z=2 divides per iteration (3 x 51)");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

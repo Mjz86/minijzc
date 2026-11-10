@@ -8,7 +8,7 @@
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
 #include "../scalar/dce.hpp"
-#include "../loop/lcf_rt.hpp"
+#include "constcall.hpp"
 #include "callcse.hpp"
 #include "argpromo.hpp"
 #include "deadargs.hpp"
