@@ -278,7 +278,6 @@ main:
   movq %rax, %rbx
   jmp .Lb40
 .Lb62:
-  # 43:15
   movq $0, %r12
   jmp .Lb63
 mjz_trap:

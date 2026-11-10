@@ -79,6 +79,11 @@ constexpr bool opt_deadargs(std::vector<Fn> &fns,
           if (v != NONE && v < P)
             alive[g][v] = 1; // hard use (operand of anything)
         }
+        if (I.k == K::Bkpt) {       // observed at a debugging breakpoint: a
+          for (uint32_t v : I.args) // hard use too (the value must survive
+            if (v != NONE && v < P) // so the debugger can show it)
+              alive[g][v] = 1;
+        }
         if (I.k == K::Call) {
           uint32_t h = (uint32_t)I.c;
           if (h >= n)

@@ -3,3 +3,4 @@
 
 // the one stable external symbol for the app layer (see cx_tours.hpp tail)
 bool cx_pipeline_rt() { return cx_pipeline(); }
+bool cx_bkpt_rt() { return cx_bkpt(); }

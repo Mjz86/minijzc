@@ -475,6 +475,9 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                       V(I.a).c_str());
         s += buf;
         break;
+      case K::Bkpt: // observation point: no code (the line:col comment
+        s += "  /* breakpoint */\n"; // above already locates it); observed
+        break;                       // values are debug-only, not printed
       case K::Exit:
         saw_exit = true;
         s += "  return 0;\n";

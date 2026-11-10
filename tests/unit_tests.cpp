@@ -237,6 +237,178 @@ int main() {
        "bug4 regression: NOT-of-compare at equality points");
   }
 
+  // ---- N. the breakpoint statement (debug-only observation points) --------
+  {
+    // (a) invisibility: adding breakpoints must not change ANY runner's
+    // output — the same program with and without `breakpoint` lines
+    const char *plain = "fn add(x, y) { return x + y; }\n"
+                        "let a = array(2);\n"
+                        "a[0] = 7;\n"
+                        "a[1] = 9;\n"
+                        "let s = 0;\n"
+                        "let i = 0;\n"
+                        "while (i < 3) {\n"
+                        "  s = s + add(a[i % 2], i);\n"
+                        "  i = i + 1;\n"
+                        "}\n"
+                        "print s;\n";
+    const char *brked = "fn add(x, y) { breakpoint x; return x + y; }\n"
+                        "let a = array(2);\n"
+                        "a[0] = 7;\n"
+                        "a[1] = 9;\n"
+                        "breakpoint a;\n"
+                        "let s = 0;\n"
+                        "let i = 0;\n"
+                        "while (i < 3) {\n"
+                        "  breakpoint s, i;\n"
+                        "  s = s + add(a[i % 2], i);\n"
+                        "  i = i + 1;\n"
+                        "}\n"
+                        "breakpoint s;\n"
+                        "print s;\n";
+    Program Pp = compile(plain);
+    Program Pb = compile(brked);
+    UT(Pp.ok && Pb.ok, "both breakpoint variants compile");
+    RunOut want = run_prog(fns_of(Pp, 1), 1000000, {});
+    RunOut oracle = run_ast(Pb.P.ast, Pb.P.root, 1000000, {});
+    RunOut plainS = run_prog(fns_of(Pb, 0), 1000000, {});
+    RunOut opt = run_prog(fns_of(Pb, 1), 1000000, {});
+    RunOut low = run_prog(fns_of(Pb, 2), 1000000, {});
+    RunOut vm = vm_run(emit_bytecode(fns_of(Pb, 2)), 1000000, {});
+    UT(same_run(want, oracle) && same_run(want, plainS) &&
+           same_run(want, opt) && same_run(want, low) && same_run(want, vm),
+       "breakpoints are no-ops in every runner (parity)");
+    UT(want.out.size() == 1 && want.out[0] == 26, "expected value 26");
+    // (b) durability: breakpoints + their observe lists survive -O3
+    uint32_t bks = 0, with_args = 0, allocs = 0;
+    for (const Fn &F : fns_of(Pb, 1))
+      for (const Instr &I : F.code) {
+        if (I.k == K::Bkpt) {
+          ++bks;
+          if (!I.args.empty())
+            ++with_args;
+        }
+        if (I.k == K::Alloc)
+          ++allocs;
+      }
+    UT(bks >= 4, "breakpoints survive the optimizer (>= 4 sites)");
+    UT(with_args >= 4, "observe lists survive the optimizer");
+    UT(allocs >= 1, "observed array stays in the arena (not lifted)");
+    // (c) deadargs keeps a breakpoint-observed param alive
+    {
+      PassCfg cfg{};
+      cfg.set_level(3);
+      cfg.do_inline = false; // keep the fn around so nparams is observable
+      cfg.p_deadargs = true;
+      const char *da = "fn f(x, y) { breakpoint x; return y; }\n"
+                       "print f(input(), 3);\n";
+      Program Pd = compile(da, cfg);
+      UT(Pd.ok, "deadargs+breakpoint program compiles");
+      bool kept = false;
+      for (const FnUnit &U : Pd.fns) // the surviving f: its observed param
+        if (U.opt.nparams >= 2)      // must still be a parameter (x kept)
+          for (const Instr &I : U.opt.code)
+            if (I.k == K::Bkpt && !I.args.empty())
+              kept = true;
+      UT(kept, "deadargs keeps breakpoint-observed params (hard use)");
+      RunOut od = run_ast(Pd.P.ast, Pd.P.root, 100000, {5});
+      RunOut cd = run_prog(fns_of(Pd, 1), 100000, {5});
+      UT(same_run(od, cd) && cd.out.at(0) == 3, "observed-param fn runs");
+    }
+    // (d) bare breakpoints are legal everywhere a statement is
+    {
+      const char *bare = "breakpoint;\nif (1) { breakpoint; }\nprint 1;\n";
+      Program Pb2 = compile(bare);
+      UT(Pb2.ok, "bare breakpoint compiles");
+      RunOut ob = run_prog(fns_of(Pb2, 1), 100000, {});
+      UT(ob.out.size() == 1 && ob.out[0] == 1, "bare breakpoint runs");
+      uint32_t n = 0;
+      for (const Fn &F : fns_of(Pb2, 1))
+        for (const Instr &I : F.code)
+          if (I.k == K::Bkpt)
+            ++n;
+      UT(n == 2, "both bare breakpoints survive (DCE roots)");
+    }
+    // (e) parse errors for the statement itself
+    {
+      Program Pe = compile("breakpoint nosuch;\n");
+      UT(!Pe.ok && Pe.errpos != 0, "breakpoint observes must be declared");
+      Program Pe2 = compile("breakpoint 5;\n");
+      UT(!Pe2.ok, "breakpoint list takes names, not expressions");
+    }
+    // (f) diagnostics carry positions (located errors + traps)
+    {
+      Program Pe = compile("print zzz;\n");
+      UT(!Pe.ok && Pe.errpos == 6, "undeclared var error position");
+      Program Pa = compile("fn f(a, b) { return a; }\nprint f(1);\n");
+      UT(!Pa.ok && Pa.errpos == 31, "arity error at the call site");
+      const char *dz = "let z = 0;\nprint 5 / z;\n";
+      Program Pz = compile(dz);
+      RunOut rz = run_prog(fns_of(Pz, 1), 100000, {});
+      UT(rz.trapped && rz.trap_src != NONE && rz.trap_kind &&
+             std::string(rz.trap_kind) == "division by zero",
+         "located trap: kind + source offset recorded");
+    }
+  }
+
+  // ---- gvn: value numbering (consts + phi congruence + bins) ---------------
+  {
+    // (a) congruent merge phis unify: two vars tracking the same values
+    // through the same if/else are ONE value after -O3, and the sum of
+    // the pair doubles one phi instead of adding two distinct ones
+    {
+      const char *s = "let a = 0;\nlet b = 0;\n"
+                      "if (input()) { a = 5; b = 5; } else { a = 7; b = 7; }\n"
+                      "print a + b;\n";
+      Program P = compile(s);
+      UT(P.ok, "gvn: shadow-pair program compiles");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1});
+      UT(o.out.size() == 1 && o.out[0] == 10, "gvn: shadow-pair result (10)");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 1 && o2.out[0] == 14, "gvn: shadow-pair result (14)");
+      OptStats os = sum_ostats(P);
+      UT(os.gvns > 0, "gvn: the pass actually unified something");
+    }
+    // (b) duplicate constants across blocks fold to one def
+    {
+      const char *s = "let x = 3;\nif (input()) { x = 9; } else { x = 9; }\n"
+                      "print x;\n";
+      Program P = compile(s);
+      UT(P.ok, "gvn: dup-const program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.gvns > 0, "gvn: duplicate consts were unified");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1});
+      UT(o.out.size() == 1 && o.out[0] == 9, "gvn: dup-const result");
+    }
+    // (c) a loop's counter and accumulator must NOT unify (the regression
+    // that motivated the conservative taint guard: phis referencing each
+    // other's results stay put)
+    {
+      const char *s = "let x = 0;\nlet i = 0;\n"
+                      "while (i < 4) { x = x + i; i = i + 1; }\n"
+                      "print x;\n";
+      Program P = compile(s);
+      UT(P.ok, "gvn: loop program compiles");
+      RunOut o = run_prog(fns_of(P, 1), 200000, {});
+      UT(o.out.size() == 1 && o.out[0] == 6, "gvn: loop still counts to 6");
+    }
+    // (d) the toggle: --disable=gvn keeps the program correct, just fatter
+    {
+      const char *s = "let a = 0;\nlet b = 0;\n"
+                      "if (input()) { a = 5; b = 5; } else { a = 7; b = 7; }\n"
+                      "print a + b;\n";
+      PassCfg cfg{};
+      cfg.set_level(3);
+      cfg.p_gvn = false;
+      Program P = compile(s, cfg);
+      OptStats os = sum_ostats(P);
+      UT(os.gvns == 0, "gvn: the toggle turns the pass off");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1});
+      UT(o.out.size() == 1 && o.out[0] == 10,
+         "gvn: disabled pass, same result");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

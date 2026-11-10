@@ -2,7 +2,10 @@
 // === native_run.hpp ========================================
 // native build & run harness: find_cc, slurp_file, parse_inputs,
 // run_capture, write_file -- shared by --run, the fuzzer and
-// --shrink.
+// --shrink. Windows notes: system() goes through cmd.exe there, which
+// has no `command -v`, no /dev/null (it is `nul`) and whose `timeout`
+// is a SLEEP command, not coreutils' killer -- the helpers below hide
+// those three differences behind one portable spelling each.
 
 #include "../config.hpp"
 
@@ -30,7 +33,46 @@ static std::string slurp_file(const std::string &path) {
   return std::string((std::istreambuf_iterator<char>(f)),
                      std::istreambuf_iterator<char>());
 }
+// cmd.exe's null device; POSIX shells spell it /dev/null
+static inline const char *mjz_devnull() {
+#ifdef _WIN32
+  return "nul";
+#else
+  return "/dev/null";
+#endif
+}
+// "timeout SECS cmd" on POSIX (coreutils); on Windows cmd's `timeout` is a
+// SLEEP (it would wait SECS and never run cmd), so native invocations run
+// bare there -- in-process runs are bounded by the step budget either way,
+// and a hung native build is a compiler bug the parity gate will name.
+static inline std::string mjz_timeout(int secs, const std::string &cmd) {
+#ifdef _WIN32
+  (void)secs;
+  return cmd;
+#else
+  return "timeout " + std::to_string(secs) + " " + cmd;
+#endif
+}
 static std::string find_cc() {
+#ifdef _WIN32
+  // no `command -v` in cmd.exe; `where` probes PATH (and PATHEXT, so "g++"
+  // finds g++.exe). Only GNU-style drivers (clang++/g++/clang/gcc -- the
+  // windows-llvm / windows-ninja presets install exactly those) accept the
+  // -O0/-o spelling the harness builds; plain cl.exe does not.
+  auto has = [](const char *cc) {
+    std::string cmd = std::string("where ") + cc + " >nul 2>&1";
+    return std::system(cmd.c_str()) == 0;
+  };
+  if (has("clang++"))
+    return "clang++"; // preferred: user-requested driver
+  if (has("g++"))
+    return "g++";
+  if (has("clang"))
+    return "clang";
+  if (has("gcc"))
+    return "gcc";
+  return "";
+#else
   auto has = [](const char *cc) {
     std::string cmd = std::string("command -v ") + cc + " >/dev/null 2>&1";
     return std::system(cmd.c_str()) == 0;
@@ -42,6 +84,7 @@ static std::string find_cc() {
   if (has("cc"))
     return "cc";
   return "";
+#endif
 }
 // parse whitespace-separated integers; stop at the first non-number (the
 // same place scanf in the native builds gives up, so the tape stays in sync)
@@ -70,7 +113,7 @@ static int run_capture(const std::string &cmd, std::string &out,
   std::string full = cmd;
   if (!in_path.empty())
     full += " < " + in_path;
-  full += " > " + cap_path + " 2>/dev/null";
+  full += std::string(" > ") + cap_path + " 2>" + mjz_devnull();
   int rc = std::system(full.c_str());
   out = slurp_file(cap_path);
   return rc;

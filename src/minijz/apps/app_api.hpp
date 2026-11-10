@@ -18,6 +18,7 @@ void run_demos();
 int run_shrink(const Cli &C, const std::string &path);
 // the constexpr-tour battery entry, runtime flavor (tu/cxtours.cpp)
 bool cx_pipeline_rt();
+bool cx_bkpt_rt();
 // the differential fuzzer (tu/fuzz.cpp)
 void run_fuzz(long n, const std::string &cc, long fuzz_native,
               const std::string &out_dir, long from, bool random_configs,

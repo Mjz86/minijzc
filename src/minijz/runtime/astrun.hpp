@@ -95,6 +95,8 @@ struct AstRun {
       }
       if (r.trap) {
         R.trapped = true;
+        R.trap_src = e.pos;
+        R.trap_kind = "division by zero";
         dead = true;
         out = 0;
         return false;
@@ -137,6 +139,8 @@ struct AstRun {
       Rv r = R.arena_alloc(n);
       if (r.trap) {
         R.trapped = true;
+        R.trap_src = e.pos;
+        R.trap_kind = "invalid array size";
         dead = true;
         out = 0;
         return false;
@@ -153,6 +157,8 @@ struct AstRun {
       Rv r = R.arena_load(h, i);
       if (r.trap) {
         R.trapped = true;
+        R.trap_src = e.pos;
+        R.trap_kind = "index out of bounds";
         dead = true;
         out = 0;
         return false;
@@ -181,6 +187,8 @@ struct AstRun {
       }
       if (depth >= MJZ_MAX_CALL_DEPTH) {
         R.trapped = true;
+        R.trap_src = e.pos;
+        R.trap_kind = "recursion depth exceeded";
         dead = true;
         out = 0;
         return false;
@@ -262,6 +270,7 @@ struct AstRun {
         Rv r = R.arena_load(h, i);
         if (r.trap) {
           R.trapped = true;
+          R.trap_src = s.pos;
           dead = true;
           return false;
         }
@@ -275,6 +284,8 @@ struct AstRun {
         return false;
       if (!R.arena_store(h, last, v)) {
         R.trapped = true;
+        R.trap_src = s.pos;
+        R.trap_kind = "index out of bounds";
         dead = true;
         return false;
       }
@@ -291,6 +302,10 @@ struct AstRun {
       return true; // the enclosing While consumes the flag
     case Sk::Cont:
       continued = true;
+      return true;
+    case Sk::Bkpt:
+      // observation point: no effect on the oracle's output (the debugger
+      // is the only consumer; every runner agrees it is a no-op)
       return true;
     case Sk::While: {
       for (;;) {

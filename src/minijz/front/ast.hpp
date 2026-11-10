@@ -42,13 +42,15 @@ enum class Sk : uint8_t {
   StoreA,
   Ret,
   Brk,
-  Cont
+  Cont,
+  Bkpt // `breakpoint;` or `breakpoint x, y, arr;` — an observation point
 };
 struct Stmt {
   Sk k{};
   uint32_t var{};
   uint32_t e{};      // primary expr
-  uint32_t a{}, b{}; // Seq: seq_kids index in a; If/While bodies
+  uint32_t a{}, b{}; // Seq: seq_kids index in a; If/While bodies; Bkpt:
+                     // seq_kids slot of observed AST var ids
   uint32_t pos{};    // byte offset of the token starting this statement
 };
 

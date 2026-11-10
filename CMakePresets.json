@@ -103,6 +103,37 @@
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       }
+    },
+    {
+      "name": "vs-msvc",
+      "displayName": "Windows: Visual Studio 2022 + plain MSVC (cl.exe)",
+      "description": "the pure-MSVC build: /std:c++20, /utf-8, /constexpr:steps budgets (see CMakeLists.txt); the cx proof checks become object libraries so the generator sets up INCLUDE/LIB for cl",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build-msvc",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-gcc",
+      "displayName": "Windows: MinGW Makefiles + g++ (MSYS2 / w64devkit)",
+      "description": "no LLVM needed: plain MinGW g++; the harness's native parity runner finds it via `where g++`",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build-mingw",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
     }
   ],
   "buildPresets": [
@@ -114,6 +145,8 @@
     { "name": "fuzz-wide", "configurePreset": "fuzz-wide" },
     { "name": "windows-llvm", "configurePreset": "windows-llvm" },
     { "name": "windows-ninja", "configurePreset": "windows-ninja" },
-    { "name": "vs-clang", "configurePreset": "vs-clang" }
+    { "name": "vs-clang", "configurePreset": "vs-clang" },
+    { "name": "vs-msvc", "configurePreset": "vs-msvc" },
+    { "name": "windows-gcc", "configurePreset": "windows-gcc" }
   ]
 }

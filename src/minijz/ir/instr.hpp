@@ -27,8 +27,15 @@ enum class K : uint8_t {
          // elimination to materialize the exact
          // recursion budget; pure within a fn
   Call,
-  Ret // functions: c = callee fn index (args in
-      // Instr::args); Ret never appears in main
+  Ret, // functions: c = callee fn index (args in
+       // Instr::args); Ret never appears in main
+  Bkpt // `breakpoint x, y;` — a debugging observation point. args = the
+       // observed vregs (scalars or array handles): real USES, so the
+       // optimizer keeps the values alive (DCE roots; observed arrays stay
+       // in the arena, un-promoted by mem2reg). Executing it is a NO-OP for
+       // program output in every runner (parity unchanged); the debugger
+       // VM stops there and shows the observed values. dst is always NONE
+       // and src carries the statement's source offset
 };
 enum class B : uint8_t {
   Add,

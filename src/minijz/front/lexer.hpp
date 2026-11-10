@@ -20,6 +20,7 @@ enum class Tk : uint8_t {
   KwRet,
   KwBreak,
   KwCont,
+  KwBkpt,
   Plus,
   Minus,
   Star,
@@ -121,6 +122,8 @@ constexpr Lexed lex(std::string_view src) {
         k = Tk::KwBreak;
       else if (w == "continue")
         k = Tk::KwCont;
+      else if (w == "breakpoint")
+        k = Tk::KwBkpt;
       L.toks.push_back({k, p, 0, p, i});
       continue;
     }

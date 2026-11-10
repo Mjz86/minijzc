@@ -41,7 +41,7 @@ static int64_t mjz_f8(int64_t r0);
 
 static int64_t mjz_f1(int64_t r0, int64_t r1) {
   if (++mjz_depth > 512) { printf("TRAP\n"); exit(1); }
-  /* fn h0: source lines 15..16 */
+  /* fn h0: source lines 2..16 */
   /* 15:1 */
   printf("%lld\n", (long long)0);
   /* 16:3 */
@@ -158,198 +158,199 @@ int main(void) {
   int64_t r0;
   int64_t r1;
   int64_t r2;
-  int64_t r3;
-  int64_t r4;
   int64_t r5;
   int64_t r6;
   int64_t r7;
+  int64_t r8;
+  int64_t r9;
+  int64_t r10;
+  int64_t r11;
+  int64_t r12;
+  int64_t r13;
+  int64_t r14;
+  int64_t r15;
+  int64_t r16;
+  int64_t r17;
   /* 26:1 */
   printf("%lld\n", (long long)6);
   /* 27:1 */
   printf("%lld\n", (long long)5);
   /* 29:10 */
-  r0 = mjz_alloc(4);
+  r6 = mjz_alloc(4);
   /* 44:10 */
-  r0 = mjz_alloc(2);
-  /* 45:1 */
-  r1 = 2;
+  r7 = mjz_alloc(2);
+  r6 = 2;
 L18:;
   /* 46:1 */
-  if (0 >= r1) goto L20;
+  if (0 >= r6) goto L20;
   /* 47:8 */
-  r1 = (int64_t)((uint64_t)r1 - (uint64_t)1);
+  r6 = (int64_t)((uint64_t)r6 - (uint64_t)1);
   /* 56:43 */
-  r2 = mjz_f5(0, 0, 4);
+  r11 = mjz_f5(0, 0, 4);
   /* 56:69 */
-  r2 = mjz_f1(2, -3);
+  r11 = mjz_f1(2, -3);
   /* 56:88 */
-  r2 = (r1 < -5);
+  r11 = (r6 < -5);
   /* 56:87 */
-  r2 = (int64_t)((uint64_t)r2 + (uint64_t)1);
+  r11 = (int64_t)((uint64_t)r11 + (uint64_t)1);
   /* 56:81 */
-  r2 = mjz_f4(r2, 6);
+  r11 = mjz_f4(r11, 6);
   goto L18;
 L20:;
   /* 58:10 */
-  r1 = mjz_f4(5, 7);
-  if (r1 != 0) goto L39;
+  r11 = mjz_f4(5, 7);
+  if (r11 != 0) goto L39;
 L39:;
   /* 58:59 */
-  r3 = mjz_len(r0);
+  r11 = mjz_len(r7);
   /* 58:54 */
-  r2 = (int64_t)((uint64_t)-3 - (uint64_t)r3);
+  r11 = (int64_t)((uint64_t)-3 - (uint64_t)r11);
   /* 58:53 */
-  r2 = r2 / 5;
+  r11 = r11 / 5;
   /* 58:8 */
-  r1 = (r2 < 1);
+  r11 = (r11 < 1);
   /* 58:1 */
-  printf("%lld\n", (long long)r1);
+  printf("%lld\n", (long long)r11);
   /* 59:15 */
-  r2 = mjz_f2(6);
+  r12 = mjz_f2(6);
   /* 59:10 */
-  r1 = (int64_t)((uint64_t)r2 + (uint64_t)-5);
+  r12 = (int64_t)((uint64_t)r12 + (uint64_t)-5);
   /* 59:9 */
-  if (!((r1 != 0))) goto L52;
+  if (!((r12 != 0))) goto L52;
 L52:;
   /* 59:42 */
-  r2 = mjz_load(r0, 0);
+  r12 = mjz_load(r7, 0);
   /* 59:40 */
-  r2 = (r2 == 9);
+  r12 = (r12 == 9);
   /* 59:63 */
-  r4 = mjz_len(r0);
-  r4 = (int64_t)((uint64_t)r4 - (uint64_t)-16);
+  r10 = mjz_len(r7);
+  r14 = (int64_t)((uint64_t)r10 - (uint64_t)-16);
   /* 59:62 */
-  r4 = (0 < r4);
+  r14 = (0 < r14);
   /* 59:115 */
-  r7 = mjz_load(r0, 0);
+  r17 = mjz_load(r7, 0);
   /* 59:105 */
-  r6 = (int64_t)((uint64_t)r7 * (uint64_t)16492);
+  r16 = (int64_t)((uint64_t)r17 * (uint64_t)16492);
   /* 59:93 */
-  r5 = (-26831 < r6);
+  r15 = (-26831 < r16);
   /* 59:55 */
-  r3 = mjz_f5(8, r4, r5);
-  r3 = (15083 < r3);
+  r14 = mjz_f5(8, r14, r15);
+  r14 = (15083 < r14);
   /* 59:39 */
-  r2 = (int64_t)((uint64_t)r2 + (uint64_t)r3);
+  r12 = (int64_t)((uint64_t)r12 + (uint64_t)r14);
   /* 59:8 */
-  r1 = (int64_t)((uint64_t)0 - (uint64_t)r2);
+  r12 = (int64_t)((uint64_t)0 - (uint64_t)r12);
   /* 59:1 */
-  printf("%lld\n", (long long)r1);
+  printf("%lld\n", (long long)r12);
   /* 62:16 */
   printf("%lld\n", (long long)5);
   /* 64:14 */
-  r2 = mjz_len(r0);
-  r2 = (-2 < r2);
+  r15 = mjz_len(r7);
+  r15 = (-2 < r15);
   /* 64:32 */
-  r3 = mjz_len(r0);
-  if (!((r3 != 0))) goto L62;
+  r16 = mjz_len(r7);
+  if (!((r16 != 0))) goto L62;
   /* 64:43 */
-  r3 = mjz_f4(8, 4);
+  r13 = mjz_f4(8, 4);
   /* 64:32 */
-  if (!((r3 != 0))) goto L62;
-  r3 = 1;
+  if (!((r13 != 0))) goto L62;
+  r13 = 1;
 L63:;
   /* 64:13 */
-  r2 = (int64_t)((uint64_t)r2 - (uint64_t)r3);
+  r13 = (int64_t)((uint64_t)r15 - (uint64_t)r13);
   /* 64:60 */
-  r1 = mjz_len(-2);
-  if (!((r1 != 0))) goto L66;
-  r1 = 1;
+  r14 = mjz_len(-2);
+  if (!((r14 != 0))) goto L66;
+  r14 = 1;
 L67:;
   /* 64:59 */
-  r1 = (r1 < 1);
+  r14 = (r14 < 1);
   /* 64:12 */
-  r1 = (r2 < r1);
+  r13 = (r13 < r14);
   /* 65:26 */
-  if (r1 == 0) goto L74;
+  if (r13 == 0) goto L74;
   /* 65:38 */
-  if (r1 == 0 || (10 == INT64_MIN && r1 == -1)) { printf("TRAP\n"); return 1; }
-  r3 = 10 / r1;
+  if (r13 == 0 || (10 == INT64_MIN && r13 == -1)) { printf("TRAP\n"); return 1; }
+  r14 = 10 / r13;
   /* 65:26 */
-  if (3 >= r3) goto L74;
-  r3 = 1;
+  if (3 >= r14) goto L74;
+  r14 = 1;
 L75:;
   /* 65:23 */
-  r3 = (int64_t)((uint64_t)0 - (uint64_t)r3);
-  r3 = (4 < r3);
+  r14 = (int64_t)((uint64_t)0 - (uint64_t)r14);
+  r14 = (4 < r14);
   /* 65:14 */
-  r2 = mjz_f4(0, r3);
+  r14 = mjz_f4(0, r14);
   /* 65:13 */
-  r2 = (r1 < r2);
+  r14 = (r13 < r14);
   /* 65:98 */
-  r3 = mjz_f8(3);
+  r9 = mjz_f8(3);
   /* 65:12 */
-  r3 = (int64_t)((uint64_t)r2 * (uint64_t)r3);
+  r9 = (int64_t)((uint64_t)r14 * (uint64_t)r9);
   /* 66:11 */
-  r2 = mjz_alloc(2);
+  r8 = mjz_alloc(2);
   /* 67:15 */
-  r0 = mjz_load(r0, 0);
+  r7 = mjz_load(r7, 0);
   /* 67:7 */
-  r0 = (int64_t)((uint64_t)r1 * (uint64_t)r0);
+  r7 = (int64_t)((uint64_t)r13 * (uint64_t)r7);
   /* 67:6 */
-  if (r0 != 0) goto L81;
+  if (r7 != 0) goto L81;
   /* 67:24 */
-  r0 = (int64_t)((uint64_t)r3 * (uint64_t)-9);
+  r7 = (int64_t)((uint64_t)r9 * (uint64_t)-9);
   /* 67:6 */
-  if (r0 != 0) goto L81;
-  r0 = 0;
+  if (r7 != 0) goto L81;
+  r7 = 0;
 L83:;
   /* 67:1 */
-  if (!((r0 != 0))) goto L85;
-  /* 68:1 */
-  r0 = 0;
+  if (!((r7 != 0))) goto L85;
+  r5 = 0;
 L87:;
   /* 69:1 */
-  if (r0 >= 4) goto L89;
+  if (r5 >= 4) goto L89;
   /* 70:9 */
-  r0 = (int64_t)((uint64_t)r0 + (uint64_t)1);
+  r5 = (int64_t)((uint64_t)r5 + (uint64_t)1);
   /* 72:6 */
-  if (r0 != 0) goto L91;
+  if (r5 != 0) goto L91;
   /* 72:18 */
-  if (r0 == 0 || (18 == INT64_MIN && r0 == -1)) { printf("TRAP\n"); return 1; }
-  r1 = 18 / r0;
+  if (r5 == 0 || (18 == INT64_MIN && r5 == -1)) { printf("TRAP\n"); return 1; }
+  r7 = 18 / r5;
   /* 72:6 */
-  if (r1 < 1) goto L91;
-  r1 = 0;
+  if (r7 < 1) goto L91;
+  r7 = 0;
 L93:;
   /* 72:1 */
-  if (!((r1 != 0))) goto L95;
-  /* 72:35 */
-  r1 = 4;
+  if (!((r7 != 0))) goto L95;
+  r7 = 4;
 L96:;
   /* 73:1 */
-  if (r1 >= 5) goto L98;
+  if (r7 >= 5) goto L98;
   /* 73:16 */
   printf("%lld\n", (long long)-8);
 L99:;
   goto L87;
 L62:;
-  /* 64:32 */
-  r3 = 0;
+  r13 = 0;
   goto L63;
 L66:;
-  /* 64:60 */
-  r1 = 0;
+  r14 = 0;
   goto L67;
 L74:;
-  /* 65:26 */
-  r3 = 0;
+  r14 = 0;
   goto L75;
 L81:;
-  /* 67:6 */
-  r0 = 1;
+  r7 = 1;
   goto L83;
 L85:;
   /* 76:10 */
-  r0 = mjz_load(r2, 0);
+  r2 = mjz_load(r8, 0);
   /* 76:16 */
   r1 = mjz_f1(5, -3);
   /* 76:7 */
-  r0 = (int64_t)((uint64_t)r0 - (uint64_t)r1);
+  r1 = (int64_t)((uint64_t)r2 - (uint64_t)r1);
   /* 76:6 */
-  r0 = r0 % -5;
+  r1 = r1 % -5;
   /* 76:1 */
-  if (!((r0 != 0))) goto L101;
+  if (!((r1 != 0))) goto L101;
   /* 77:11 */
   r0 = mjz_alloc(1);
 L102:;
@@ -360,12 +361,10 @@ L101:;
 L89:;
   goto L86;
 L91:;
-  /* 72:6 */
-  r1 = 1;
+  r7 = 1;
   goto L93;
 L95:;
-  /* 72:53 */
-  r1 = 7;
+  r7 = 7;
   goto L96;
 L98:;
   /* 73:35 */

@@ -56,6 +56,8 @@ int minijz_app_main(Cli C) {
     CHECK(cx_pipeline_rt(),
           "the full pipeline (incl. destruction + VM) must work");
     std::printf("(pipeline self-check passed)\n\n");
+    CHECK(cx_bkpt_rt(), "breakpoints: no-op for output, durable through -O3");
+    std::printf("(breakpoint self-check passed)\n\n");
 #endif
     run_demos();
     std::printf("\n");

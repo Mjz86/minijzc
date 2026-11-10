@@ -298,6 +298,19 @@ struct Builder {
       close_br_at(loop_stack.back().first, p0);
       break;
     }
+    case Sk::Bkpt: {
+      // observation point: args = local vregs of the observed vars. Vars not
+      // yet mapped in THIS fn (declared later in the block) cannot be shown
+      // at runtime — the use-before-def read would be 0 — so they are simply
+      // not observed (a bare stop point remains).
+      ensure_open();
+      Instr bi{.k = K::Bkpt, .src = p0};
+      for (uint32_t av : a.seq_kids[s.a])
+        if (vmap[av] != NONE)
+          bi.args.push_back(vmap[av]);
+      emit(bi);
+      break;
+    }
     case Sk::While: {
       ensure_open();
       uint32_t h = new_block(), body = new_block(), after = new_block();

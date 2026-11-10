@@ -652,11 +652,14 @@ static void dbg_pass_rt(uint8_t debug, const Fn &fn, const char *pass,
   }
 }
 // constexpr-safe wrapper: the compile-time pipeline always leaves debug at
-// 0, so the early return keeps constant evaluation away from the printf
-// tracer (an unreached branch in a constexpr function is legal)
-constexpr void dbg_pass(uint8_t debug, const Fn &fn, const char *pass,
+// 0 and the hook null, so the early return keeps constant evaluation away
+// from the printf tracer and the snapshot collector (an unreached branch
+// in a constexpr function is legal)
+constexpr void dbg_pass(const PassCfg &cfg, const Fn &fn, const char *pass,
                         bool ch) {
-  if (debug < 1)
+  if (cfg.snap_hook) // runtime-only: debugger `opt` / --opt-diff snapshots
+    cfg.snap_hook(pass, ch, fn, cfg.snap_ctx);
+  if (cfg.debug < 1)
     return;
-  dbg_pass_rt(debug, fn, pass, ch);
+  dbg_pass_rt(cfg.debug, fn, pass, ch);
 }

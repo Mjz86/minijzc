@@ -54,6 +54,23 @@ static std::string emit_bc_listing(const std::vector<uint8_t> &c) {
         s += buf;
         pc += 8;
         break;
+      case Bc::Bkpt: {
+        uint32_t n = bc_rd_u32(c, pc);
+        pc += 4;
+        std::snprintf(buf, sizeof buf, " %u slot%s", (unsigned)n,
+                      n == 1 ? "" : "s");
+        s += buf;
+        for (uint32_t k = 0; k < n; ++k, pc += 4) {
+          if (k >= 8)
+            continue; // render at most 8; ALWAYS advance past the operand
+          std::snprintf(buf, sizeof buf, " s%u", (unsigned)bc_rd_u32(c, pc));
+          s += buf;
+        }
+        if (n > 8)
+          s += " ...";
+        s += "\n";
+        break;
+      }
       default:
         s += "\n";
         break;

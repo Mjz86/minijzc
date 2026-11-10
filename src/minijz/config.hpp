@@ -362,6 +362,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <bit>
 #include <chrono>
 #include <fstream>
 #include <random>
@@ -406,6 +407,12 @@ struct Rv {                             // result of one arithmetic op
 // const-call evaluator, the frame guard and the VM share this one constant
 inline constexpr uint32_t MJZ_MAX_CALL_DEPTH = 512;
 
+// scratch buffer for the ONE dynamic compile diagnostic (call arity: it
+// names the function and both counts). A plain inline variable: runtime
+// only — the constexpr proofs never hit the error path — and program
+// lifetime, so Program::error may point into it exactly like a literal.
+inline char mjz_errbuf[128]{};
+
 // the arena: 2^21 int64 slots = 16 MiB; CAP must match what the C/asm
 // backends emit (see opt/analysis/alias.hpp)
 inline constexpr val_t MJZ_ARENA_CAP = 2097152;
@@ -418,6 +425,12 @@ struct RunOut {
   std::vector<val_t> out{};
   bool trapped{};
   bool timeout{};
+  // source offset + category of the trapping instruction (SSA interpreter
+  // and AST oracle only — the VM/ native builds keep plain TRAP): for
+  // located runtime diagnostics ("division by zero at 7:3").
+  // trap_kind points at a static string; NONE/null = unknown.
+  uint32_t trap_src{NONE};
+  const char *trap_kind{};
   // array arena (grows during execution; mirrors the C/asm static arenas)
   std::vector<val_t> a_data{}; // the slots (zero-initialized by resize)
   std::vector<val_t> a_lenv{}; // len[handle]; 0 = not an allocated handle

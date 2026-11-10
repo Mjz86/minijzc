@@ -151,7 +151,6 @@ mjz_f1:
   testq %rbx, %rbx
   jne .LF1_20
 .LF1_20:
-  # 11:1
   movq $1, %rbx
   jmp .LF1_3
 .LF1_9:
@@ -170,7 +169,6 @@ mjz_f1:
 .LF1_13:
   jmp .LF1_14
 .LF1_17:
-  # 11:25
   movq $0, %r12
   jmp .LF1_18
 .LF1_5:
@@ -330,7 +328,6 @@ mjz_f2:
   testq %rbx, %rbx
   jne .LF2_20
 .LF2_20:
-  # 11:1
   movq $1, %rbx
   jmp .LF2_3
 .LF2_9:
@@ -349,7 +346,6 @@ mjz_f2:
 .LF2_13:
   jmp .LF2_14
 .LF2_17:
-  # 11:25
   movq $0, %r12
   jmp .LF2_18
 .LF2_5:
@@ -509,7 +505,6 @@ mjz_f3:
   testq %rbx, %rbx
   jne .LF3_20
 .LF3_20:
-  # 11:1
   movq $1, %rbx
   jmp .LF3_3
 .LF3_9:
@@ -528,7 +523,6 @@ mjz_f3:
 .LF3_13:
   jmp .LF3_14
 .LF3_17:
-  # 11:25
   movq $0, %r12
   jmp .LF3_18
 .LF3_5:
@@ -889,7 +883,6 @@ main:
   # 57:10
   cmpq $2, %r12
   jl .Lb58
-  movq $0, %r12
 .Lb60:
   # 57:1
   movq $1, %rsi
@@ -1233,13 +1226,10 @@ main:
   call printf
   jmp .Lb56
 .Lb58:
-  # 57:10
-  movq $1, %r12
   jmp .Lb60
 .Lb92:
   jmp .Lb93
 .Lb95:
-  # 74:51
   movq $1, %r15
   jmp .Lb97
 .Lb101:

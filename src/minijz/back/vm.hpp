@@ -46,7 +46,10 @@ enum class Bc : uint8_t {
   Lshr,
   Asr,
   MulHi, // optimizer-lowered bit ops
-  Depth  // push the frame count (call depth)
+  Depth, // push the frame count (call depth)
+  Bkpt   // breakpoint v1 v2 ... vk: observation point; v* are SLOT ids
+         // (u32 count follows the opcode). No effect on execution —
+         // the debugger stops on it and reads the slots
 };
 constexpr const char *bc_name(Bc op) {
   switch (op) {
@@ -116,6 +119,8 @@ constexpr const char *bc_name(Bc op) {
     return "mulhi";
   case Bc::Depth:
     return "depth";
+  case Bc::Bkpt:
+    return "bkpt";
   }
   return "?";
 }
@@ -217,12 +222,18 @@ constexpr uint32_t bc_instr_size(const Instr &I) {
     return 1 + 4 + 4 + 5 * (uint32_t)I.args.size() + 5;
   case K::Ret:
     return (I.a == NONE ? 9 : 5) + 1; // (Push|Load),Ret
+  case K::Bkpt:
+    return 1 + 4 + 4 * (uint32_t)I.args.size(); // Bkpt,n,slots*
   }
   return 0;
 }
 // layout: [u32 nfns][nfns x (u32 code_off, u32 nslots)][code...]
 // fns[0] is the main body; block jumps are absolute byte offsets.
-constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
+// srcs (optional out): per-byte source offsets — every byte of an emitted
+// op carries the IR instr's src (NONE when synthesized). The debugger uses
+// it for line breakpoints and step traces; normal runs never build it.
+constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns,
+                                             std::vector<uint32_t> *srcs) {
   const uint32_t nf = (uint32_t)fns.size();
   std::vector<std::vector<uint32_t>> off(nf);
   std::vector<uint32_t> fn_off(nf, 0);
@@ -355,11 +366,29 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
         case K::Exit:
           c.push_back((uint8_t)Bc::Halt);
           break;
+        case K::Bkpt:
+          c.push_back((uint8_t)Bc::Bkpt);
+          bc_put_u32(c, (uint32_t)I.args.size());
+          for (uint32_t av : I.args)
+            bc_put_u32(c, slot_id(fns[f], av));
+          break;
+        }
+        if (srcs) { // every byte of the op maps to this instr's source
+          while (srcs->size() < c.size())
+            srcs->push_back(I.src);
         }
       }
     }
   }
+  if (srcs)
+    while (srcs->size() < c.size())
+      srcs->push_back(NONE);
   return c;
+}
+
+// the historical one-argument form (no source map)
+constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
+  return emit_bytecode(fns, nullptr);
 }
 
 // ============================================================================
@@ -714,6 +743,15 @@ constexpr bool vm_step_op(VmCtx &S) {
   case Bc::Depth: // frame count incl. main — same convention as every
     S.st.push_back((val_t)S.frames.size()); // runner (SSA interp: stack.size)
     break;
+  case Bc::Bkpt: { // observation point: counts as one IR step (matches
+    if (++S.steps > S.step_limit) { // the interpreters), then skipped
+      S.timeout = true;
+      R.timeout = true;
+      return false;
+    }
+    S.pc += 4 + 4 * (size_t)bc_rd_u32(c, S.pc);
+    break;
+  }
   }
   return true;
 }
@@ -786,6 +824,8 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
           (I.k == K::Br) ? I.t : ((stack.back().val[I.a] != 0) ? I.t : I.f);
       if (next >= F.nblocks()) {
         R.trapped = true;
+        R.trap_src = I.src;
+        R.trap_kind = "corrupt branch target";
         return R;
       }
       // stage phi values of `next` for this edge: read all, then write all
@@ -815,7 +855,9 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
     case K::Ret: {
       val_t rv = (I.a == NONE) ? 0 : stack.back().val[I.a];
       if (resumes.empty() || stack.size() < 2) {
-        R.trapped = true; // return with no caller (main has no Ret)
+        R.trapped = true;
+        R.trap_src = I.src; // return with no caller (main has no Ret)
+        R.trap_kind = "return without caller";
         return R;
       }
       Resume rs = resumes.back();
@@ -834,12 +876,16 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       // depth cap: 512 CALLEE activations (the oracle/native convention;
       // stack.size() counts main's frame, hence the strict >)
       if (stack.size() > MJZ_MAX_CALL_DEPTH) {
-        R.trapped = true; // recursion depth cap (matches native guards)
+        R.trapped = true;
+        R.trap_src = I.src; // recursion depth cap (matches native guards)
+        R.trap_kind = "recursion depth exceeded";
         return R;
       }
       uint32_t g = (uint32_t)I.c;
       if (g >= fns.size() || I.args.size() != fns[g].nparams) {
         R.trapped = true;
+        R.trap_src = I.src;
+        R.trap_kind = "bad call";
         return R;
       }
       resumes.push_back({cur_fn, cur_blk, (uint32_t)(i + 1), I.dst});
@@ -934,6 +980,8 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       }
       if (r.trap) {
         R.trapped = true;
+        R.trap_src = I.src;
+        R.trap_kind = "division by zero";
         return R;
       }
       stack.back().val[I.dst] = r.v;
@@ -947,6 +995,8 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       Rv r = R.arena_alloc(stack.back().val[I.a]);
       if (r.trap) {
         R.trapped = true;
+        R.trap_src = I.src;
+        R.trap_kind = "invalid array size";
         return R;
       }
       stack.back().val[I.dst] = r.v;
@@ -957,6 +1007,8 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       Rv r = R.arena_load(stack.back().val[I.a], stack.back().val[I.b2]);
       if (r.trap) {
         R.trapped = true;
+        R.trap_src = I.src;
+        R.trap_kind = "index out of bounds";
         return R;
       }
       stack.back().val[I.dst] = r.v;
@@ -967,6 +1019,8 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       if (!R.arena_store(stack.back().val[I.a], stack.back().val[I.b2],
                          stack.back().val[I.c2])) {
         R.trapped = true;
+        R.trap_src = I.src;
+        R.trap_kind = "index out of bounds";
         return R;
       }
       break;
@@ -982,6 +1036,8 @@ constexpr RunOut run_prog(const std::vector<Fn> &fns,
       stack.back().val[I.dst] = (val_t)stack.size();
       stack.back().has[I.dst] = 1;
       break;
+    case K::Bkpt: // observation point: no output, no state change (the
+      break;      // debugger VM stops on the Bc::Bkpt op before it)
     }
     ++i;
   }
