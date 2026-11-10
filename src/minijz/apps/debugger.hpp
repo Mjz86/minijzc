@@ -31,6 +31,10 @@ struct DbgSess {
   std::vector<uint32_t> pcsrc; // per-byte source offsets (line bps, steps)
   std::vector<DbgBk> bkpts;    // the language breakpoints (breakpoint x;)
   std::vector<std::string> watches;
+  // value-change watchpoint state: last-seen value per watched name
+  // (per current fn; switching fns refreshes silently)
+  std::vector<std::pair<std::string, val_t>> wlast{};
+  uint32_t wlast_fn{NONE};
   std::vector<Snap> snaps; // the `opt` explorer's snapshot stack
   size_t snap_fn{0};
 
@@ -98,6 +102,79 @@ struct DbgSess {
                     (unsigned)f);
     }
   }
+  // value-change watchpoints: resolve every watched name in the CURRENT
+  // fn's frame and compare against the last-seen values. Returns true (and
+  // prints the change) when any watched value changed; switching to a
+  // different fn refreshes the snapshot silently (slots are per-fn).
+  bool watch_step() {
+    if (watches.empty() || D.S.frames.empty() || !D.S.started)
+      return false;
+    uint32_t f = D.S.fn_at(D.S.pc);
+    if (f >= P.fns.size())
+      return false;
+    if (f != wlast_fn) { // fn switch: re-baseline, no report
+      wlast_fn = f;
+      wlast.clear();
+      std::vector<std::string> names = dbg_slot_names(P, f);
+      const std::vector<val_t> &fr = D.S.frames.back();
+      for (const std::string &w : watches)
+        for (size_t s = 0; s < names.size() && s < fr.size(); ++s)
+          if (names[s] == w) {
+            wlast.push_back({w, fr[s]});
+            break;
+          }
+      return false;
+    }
+    std::vector<std::string> names = dbg_slot_names(P, f);
+    const std::vector<val_t> &fr = D.S.frames.back();
+    std::vector<char> mh = dbg_slot_may_handle(P, f);
+    bool changed = false;
+    for (const std::string &w : watches) {
+      val_t now = 0;
+      long slot = -1;
+      for (size_t s = 0; s < names.size() && s < fr.size(); ++s)
+        if (names[s] == w) {
+          now = fr[s];
+          slot = (long)s;
+          break;
+        }
+      val_t before = 0;
+      bool seen = false;
+      for (auto &kv : wlast)
+        if (kv.first == w) {
+          before = kv.second;
+          seen = true;
+          break;
+        }
+      if ((seen && before != now) || (!seen && slot >= 0)) {
+        std::printf(
+            "* watch %s changed: %s -> %s [pc %zu, %s]\n", w.c_str(),
+            seen ? dbg_val(D.S, before, false).c_str() : "<not live>",
+            slot >= 0
+                ? dbg_val(D.S, now, slot < (long)mh.size() && mh[slot]).c_str()
+                : "<not live>",
+            D.S.pc, loc_str(D.S.pc).c_str());
+        changed = true;
+      }
+      if (slot >= 0) { // refresh the baseline
+        bool had = false;
+        for (auto &kv : wlast)
+          if (kv.first == w) {
+            kv.second = now;
+            had = true;
+          }
+        if (!had)
+          wlast.push_back({w, now});
+      } else {
+        for (size_t k = 0; k < wlast.size();)
+          if (wlast[k].first == w)
+            wlast.erase(wlast.begin() + (long)k);
+          else
+            ++k;
+      }
+    }
+    return changed;
+  }
   // the run/continue stop engine: stops BEFORE executing the op at pc when
   // it is a manual bp, a line bp or a language breakpoint; `resume_pc`
   // exempts the pc we stopped at for exactly one op (classic `continue`)
@@ -135,6 +212,10 @@ struct DbgSess {
       ++ops;
       if (D.S.halted || D.S.trapped || D.S.timeout)
         break;
+      if (watch_step()) { // value-change watchpoint fired
+        report_watches();
+        return;
+      }
       if (D.S.pc == D.resume_pc) { // just executed the resumed stop op
         D.resume_pc = (size_t)-1;
         continue;
@@ -398,7 +479,8 @@ static void dbg_cmd_watch(DbgSess &S, const std::vector<std::string> &tok) {
         return;
       }
     S.watches.push_back(tok[1]);
-    std::printf("watching %s (shown at every stop; try `vm continue`)\n",
+    std::printf("watching %s (shown at every stop; `vm continue` also stops "
+                "when it changes)\n",
                 tok[1].c_str());
   } else if (tok[1] == "*") {
     S.watches.clear();
@@ -520,7 +602,7 @@ static void dbg_cmd_opt(DbgSess &S, const std::vector<std::string> &tok) {
         cfg.p_tailrec,  cfg.p_cdfold,   cfg.p_ifconv,    cfg.do_inline,
         cfg.p_sccp,     cfg.p_ldelim,   cfg.p_callcse,   cfg.p_deadargs,
         cfg.p_fnspec,   cfg.p_icf,      cfg.p_jthread,   cfg.p_argpromo,
-        cfg.p_gvn};
+        cfg.p_gvn,      cfg.p_unswitch, cfg.p_lsimp};
     std::printf("pass toggle table (%u names, -O%u):\n",
                 (unsigned)PASS_TOGGLE_COUNT, (unsigned)cfg.level);
     for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
@@ -555,6 +637,8 @@ static void dbg_cmd_vm(DbgSess &S, const std::vector<std::string> &tok) {
   const std::string &sub = tok.size() > 1 ? tok[1] : "";
   if (sub == "reset") {
     dbg_vm_reset(S.D, S.C.steps, S.C.inputs);
+    S.wlast.clear(); // watch baselines die with the machine state
+    S.wlast_fn = NONE;
     std::printf("machine reset: pc=%zu, %u fn(s), %zu slots in main\n",
                 S.D.S.pc, S.D.S.nfns(),
                 S.D.S.frames.empty() ? 0 : S.D.S.frames[0].size());

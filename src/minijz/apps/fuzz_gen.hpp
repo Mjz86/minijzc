@@ -37,6 +37,8 @@ struct GenCtx {
   int n_gvnbait{};       // shadow-pair merges planted (GVN phi-congruence bait)
   bool bkpt_mode{false}; // sprinkle `breakpoint` stmts (seeds >= the floor)
   bool gvn_mode{false};  // plant shadow-pair merges (seeds >= that floor)
+  bool unsw_mode{false}; // plant invariant-flag while loops (unswitch bait)
+  int n_unswbait{};      // ... count (for the report)
   int n_bkpts{};         // sprinkled observation points (for the report)
   explicit GenCtx(uint32_t seed) : rng(seed) {}
   int pick(int lo, int hi) {
@@ -509,7 +511,22 @@ inline void GenCtx::gen_stmt(int depth) {
   }
   if (r == 6 && depth >= 2) { // bounded while with a fresh counter
     std::string cn = "c" + std::to_string(counter_id++);
-    if (pick(0, 2) == 0) {
+    if (unsw_mode && pick(0, 2) == 0) {
+      // UNSWITCH BAIT: the loop condition is a flag that SSA proves
+      // loop-invariant (never assigned inside: fl deliberately NOT
+      // pushed to vars, so no generated statement can touch it), so
+      // licm hoists the test out of the header and unswitch versions
+      // the loop on it. Termination rides on the guarded break: the
+      // counter decrements to 0 no matter what fl holds.
+      std::string fl = "fl" + std::to_string(counter_id++);
+      std::string finit = use_input ? "input()" : std::to_string(pick(-3, 3));
+      src += "let " + fl + " = " + finit + ";\n";
+      src += "let " + cn + " = " + std::to_string(pick(1, 5)) + ";\n";
+      src += "while (" + fl + " > 0) {\n";
+      src += "  if (" + cn + " <= 0) { break; }\n";
+      src += "  " + cn + " = " + cn + " - 1;\n";
+      n_unswbait++;
+    } else if (pick(0, 2) == 0) {
       // count UP to a bound; the increment comes first, so a guarded
       // 'continue' cannot spin (same argument as the countdown below)
       src += "let " + cn + " = 0;\n";
@@ -688,14 +705,18 @@ inline constexpr uint32_t MJZ_BKPT_SEED_FLOOR = 12301;
 // shadow-pair merges (GVN phi-congruence bait) start here, one window
 // later: seeds below stay byte-identical to what they always generated
 inline constexpr uint32_t MJZ_GVN_SEED_FLOOR = 12331;
+// invariant-flag while loops (unswitch bait: licm hoists the header
+// test, unswitch versions the loop) start here — same discipline
+inline constexpr uint32_t MJZ_UNSWITCH_SEED_FLOOR = 12731;
 
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
-  g.bkpt_mode = seed >= MJZ_BKPT_SEED_FLOOR; // see MJZ_BKPT_SEED_FLOOR
-  g.gvn_mode = seed >= MJZ_GVN_SEED_FLOOR;   // see MJZ_GVN_SEED_FLOOR
-  g.use_input = (seed & 1) != 0;             // half the programs read stdin
-  g.allow_mat = ((seed >> 2) & 7) == 0;      // 1/8 of programs grow 2-D arrays
-  g.bait = ((seed >> 5) & 3) == 0; // 1/4 carry deliberate trap bait; the
+  g.bkpt_mode = seed >= MJZ_BKPT_SEED_FLOOR;     // see MJZ_BKPT_SEED_FLOOR
+  g.gvn_mode = seed >= MJZ_GVN_SEED_FLOOR;       // see MJZ_GVN_SEED_FLOOR
+  g.unsw_mode = seed >= MJZ_UNSWITCH_SEED_FLOOR; // see MJZ_UNSWITCH_SEED_FLOOR
+  g.use_input = (seed & 1) != 0;                 // half the programs read stdin
+  g.allow_mat = ((seed >> 2) & 7) == 0; // 1/8 of programs grow 2-D arrays
+  g.bait = ((seed >> 5) & 3) == 0;      // 1/4 carry deliberate trap bait; the
   // rest run to completion so the deep optimizer paths stay covered
   g.allow_rti = ((seed >> 8) & 3) == 0; // 1/4 use runtime array indices; the
   // rest keep every index constant, so lifting / dead-array / const-call

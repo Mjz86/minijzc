@@ -81,6 +81,7 @@ constexpr bool opt_unroll(Fn &fn, const An &A, OptStats &os, uint32_t limit) {
     const Instr hterm = fn.code[fn.blocks[h].end - 1];
     if (hterm.k != K::Cbr)
       continue;
+    bool exit_on_true = false; // set by the arm analysis below
     // the only exit edge is the header's; find the exit and the body arm
     uint32_t X = NONE, body = NONE;
     {
@@ -108,11 +109,14 @@ constexpr bool opt_unroll(Fn &fn, const An &A, OptStats &os, uint32_t limit) {
       if (bad || X == NONE)
         continue;
     }
-    if (hterm.t == X && hterm.f != NONE && inL[hterm.f])
+    if (hterm.t == X && hterm.f != NONE && inL[hterm.f]) {
       body = hterm.f;
-    else if (hterm.f == X && inL[hterm.t])
+      exit_on_true = true; // break-style: the TRUE arm leaves the loop
+    } else if (hterm.f == X && hterm.t != NONE && inL[hterm.t]) {
       body = hterm.t;
-    else
+      exit_on_true = false; // continue-style: test TRUE runs the body,
+    } // FALSE exits (the ordinary while shape)
+    else // both arms in-loop: no header exit at all
       continue;
     if (body == h)
       continue; // self-loop header: skip this rare shape
@@ -204,9 +208,13 @@ constexpr bool opt_unroll(Fn &fn, const An &A, OptStats &os, uint32_t limit) {
       for (uint32_t k = 0;; ++k) {
         val_t lhs = lhs_is_ind ? iv : bound;
         val_t rhs = lhs_is_ind ? bound : iv;
-        bool go = (C.b == B::Lt) ? (lhs < rhs) : (lhs <= rhs);
+        bool tv = (C.b == B::Lt) ? (lhs < rhs) : (lhs <= rhs); // test value
+        // continue-style loops run while the test is TRUE; break-style
+        // headers (a folded `break` became the header test) run while
+        // it is FALSE. K = the first test that EXITS, either way.
+        bool exit_now = exit_on_true ? tv : !tv;
         ivk.push_back(iv);
-        if (!go) {
+        if (exit_now) {
           K = k;
           break;
         }

@@ -51,7 +51,7 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
         "SCCP %u(+%ubr) | LD-FWD %u | LD-CSE %u | RANGE-CMP %u | "
         "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u | FNSPEC %u | ICF %u | "
-        "JT %u | ARG-PROMO %u | GVN %u\n"
+        "JT %u | ARG-PROMO %u | GVN %u | UNSWITCH %u | LSIMP %u\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
         P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i, (unsigned)os.iters,
@@ -70,8 +70,8 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.rangecmps, (unsigned)os.cmpfacts, (unsigned)os.callcses,
         (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf,
         (unsigned)os.jthreads, (unsigned)os.argpromos, (unsigned)os.gvns,
-        (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
-        (unsigned)dfu);
+        (unsigned)os.unswitches, (unsigned)os.lsimps, (unsigned)de_c,
+        (unsigned)dz_c, (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
   }
   if (C.print_ir) {
     for (size_t f = 0; f < P.fns.size(); ++f) {
@@ -133,10 +133,14 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
     cfg.snap_ctx = &coll;
     OptStats os{};
     (void)optimize_light(live, os, cfg);
-    std::printf("== --opt-diff: fn %ld [%s] ==\n", f,
-                std::string(P.fn_names[(size_t)f]).c_str());
+    std::printf("== --opt-diff: fn %ld [%s]%s%s ==\n", f,
+                std::string(P.fn_names[(size_t)f]).c_str(),
+                C.opt_diff_pass.empty() ? "" : " pass filter: ",
+                C.opt_diff_pass.c_str());
     for (size_t k = 0; k < snaps.size(); ++k) {
       const CliSnap &s = snaps[k];
+      if (!C.opt_diff_pass.empty() && k > 0 && s.name != C.opt_diff_pass)
+        continue; // filtered out: only the named pass's diff shows
       std::printf("  #%-3zu %-10s %-9s %u instrs, %u blocks\n", k,
                   s.name.c_str(), s.changed ? "changed" : "fixed",
                   (unsigned)s.instrs, (unsigned)s.blocks);
