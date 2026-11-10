@@ -37,6 +37,11 @@ struct DbgSess {
   uint32_t wlast_fn{NONE};
   std::vector<Snap> snaps; // the `opt` explorer's snapshot stack
   size_t snap_fn{0};
+  // the armed pass breakpoint (checkpoint 18): `opt break PASS` arms
+  // it; the next `opt [FN]` collection PAUSES after that pass's first
+  // snapshot (the timeline is truncated there, the pass's diff is
+  // shown); `opt continue` disarms and re-collects in full
+  std::string pass_break{};
 
   DbgSess(const Cli &c, const std::string &source, Program prog)
       : C(c), src(source), P(std::move(prog)), SM(P.src) {}
@@ -565,16 +570,27 @@ static void dbg_cmd_opt(DbgSess &S, const std::vector<std::string> &tok) {
     }
   } else if (sub == "break") {
     // a breakpoint BETWEEN passes: locate PASS, show where the pipeline
-    // stands and what that pass itself changed
-    if (S.snaps.empty()) {
-      std::printf("(no snapshots yet — run `opt [FN]` first)\n");
-    } else if (tok.size() < 3) {
+    // stands and what that pass itself changed — and ARM it, so the
+    // next `opt [FN]` collection auto-pauses there (checkpoint 18: the
+    // pause actually stops the timeline, the way a vm breakpoint stops
+    // execution)
+    if (tok.size() < 3) {
       std::printf("usage: opt break PASS (e.g. opt break sccp)\n");
     } else {
+      S.pass_break = tok[2]; // armed (re-arming another pass just swaps)
+      std::printf("* pass breakpoint armed: %s\n"
+                  "  (the next `opt [FN]` pauses after its first snapshot; "
+                  "`opt continue` disarms and collects in full)\n",
+                  tok[2].c_str());
       long k = snap_idx(tok[2], -1);
       if (k < 0) {
-        std::printf("no snapshot named '%s' (see `opt` timeline)\n",
-                    tok[2].c_str());
+        if (S.snaps.empty())
+          std::printf("(not collected yet — run `opt [FN]` to pause there)\n");
+        else
+          std::printf("(no snapshot named '%s' in the current timeline; "
+                      "it will arm for the next collection only if that "
+                      "pass runs)\n",
+                      tok[2].c_str());
       } else {
         std::printf("* stopped after pass #%ld [%s] (fn %zu [%s])\n", k,
                     S.snaps[(size_t)k].name.c_str(), S.snap_fn,
@@ -590,6 +606,24 @@ static void dbg_cmd_opt(DbgSess &S, const std::vector<std::string> &tok) {
         std::printf("(opt show %ld dumps the full IR at this point; "
                     "opt diff for other pairs)\n",
                     k);
+      }
+    }
+  } else if (sub == "continue") {
+    // resume a paused collection: disarm + re-collect the full timeline
+    if (S.pass_break.empty()) {
+      std::printf("(no pass breakpoint armed — `opt break PASS` first)\n");
+    } else {
+      std::printf("* pass breakpoint disarmed (was: %s) — collecting in "
+                  "full\n",
+                  S.pass_break.c_str());
+      S.pass_break.clear();
+      S.snaps.clear();
+      long stop_idx = -1;
+      if (!dbg_collect_snaps(S.P, S.snap_fn, S.C, S.snaps, "", stop_idx)) {
+        std::printf("fn %zu: no snapshots (-O0 leaves the IR untouched)\n",
+                    S.snap_fn);
+      } else {
+        dbg_print_timeline(S.snaps, S.snap_fn, S.P);
       }
     }
   } else if (sub == "list") {
@@ -612,19 +646,38 @@ static void dbg_cmd_opt(DbgSess &S, const std::vector<std::string> &tok) {
       std::printf("\n");
   } else if (!sub.empty() && sub != "run") {
     std::printf("opt subcommand? try: opt [FN] | show | diff | break | "
-                "list\n");
+                "continue | list\n");
   } else {
     long f = sub.empty() ? dbg_num(tok, 1, 0) : atol(sub.c_str());
     if (f < 0 || f >= (long)S.P.fns.size())
       f = 0;
     S.snaps.clear();
     S.snap_fn = (size_t)f;
-    if (!dbg_collect_snaps(S.P, (size_t)f, S.C, S.snaps)) {
+    long stop_idx = -1;
+    if (!dbg_collect_snaps(S.P, (size_t)f, S.C, S.snaps, S.pass_break,
+                           stop_idx)) {
       std::printf("fn %ld: no snapshots (-O0 leaves the IR untouched)\n", f);
     } else {
       dbg_print_timeline(S.snaps, (size_t)f, S.P);
-      std::printf("(opt show N | opt diff A B | opt break PASS to "
-                  "inspect)\n");
+      if (stop_idx >= 0) {
+        // the auto-pause: the timeline stops after the armed pass, its
+        // diff is shown, and `opt continue` collects the rest
+        std::printf("* paused after pass #%ld [%s] — pass breakpoint %s\n",
+                    stop_idx, S.snaps[(size_t)stop_idx].name.c_str(),
+                    S.pass_break.c_str());
+        if (stop_idx > 0) {
+          std::string d = unified_diff(S.snaps[(size_t)stop_idx - 1].ir,
+                                       S.snaps[(size_t)stop_idx].ir);
+          std::printf("%s", d.empty() ? "  (this pass changed nothing)\n"
+                                      : d.c_str());
+        }
+        std::printf("(opt show %ld dumps the full IR here; "
+                    "opt continue collects the rest of the timeline)\n",
+                    stop_idx);
+      } else {
+        std::printf("(opt show N | opt diff A B | opt break PASS to "
+                    "inspect)\n");
+      }
     }
   }
 }
@@ -804,7 +857,9 @@ static void dbg_help() {
       "  opt diff [A [B]]     unified IR diff between snapshots (names or\n"
       "                       indices; default: first vs last)\n"
       "  opt break PASS       breakpoint BETWEEN passes: show PASS's snapshot\n"
-      "                       and its diff against the previous one\n"
+      "                       and its diff against the previous one, and ARM\n"
+      "                       it — the next `opt [FN]` PAUSES after that pass\n"
+      "  opt continue         disarm the pass breakpoint + collect in full\n"
       "  opt list             the pass toggle table (on/off for this run)\n"
       "  check                run all five runners and compare\n"
       "  vm reset             re-create the machine (uses --steps, tape)\n"

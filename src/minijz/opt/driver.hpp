@@ -27,6 +27,7 @@
 #include "loop/unswitch.hpp"
 #include "loop/lcf.hpp"
 #include "loop/lcf_rt.hpp"
+#include "interprocedural/constcall.hpp"
 #include "linear/reassoc.hpp"
 #include "linear/divmagic.hpp"
 #include "interprocedural/callgraph.hpp"

@@ -29,7 +29,7 @@
 #include "minijz/opt/loop/licm.hpp"
 #include "minijz/opt/loop/unroll.hpp"
 #include "minijz/opt/loop/lcf.hpp"
-#include "minijz/opt/loop/lcf_rt.hpp"
+#include "minijz/opt/interprocedural/constcall.hpp"
 #include "minijz/opt/linear/linform.hpp"
 #include "minijz/opt/linear/reassoc.hpp"
 #include "minijz/opt/linear/divmagic.hpp"

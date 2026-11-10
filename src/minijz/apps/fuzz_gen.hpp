@@ -39,6 +39,10 @@ struct GenCtx {
   bool gvn_mode{false};  // plant shadow-pair merges (seeds >= that floor)
   bool unsw_mode{false}; // plant invariant-flag while loops (unswitch bait)
   int n_unswbait{};      // ... count (for the report)
+  bool cc_mode{false};   // plant short-circuit-condition while loops
+                         // (compound unswitch bait: && / || of two invariant
+                         // flags; seeds >= that floor)
+  int n_ccbait{};        // ... count (for the report)
   int n_bkpts{};         // sprinkled observation points (for the report)
   explicit GenCtx(uint32_t seed) : rng(seed) {}
   int pick(int lo, int hi) {
@@ -511,7 +515,29 @@ inline void GenCtx::gen_stmt(int depth) {
   }
   if (r == 6 && depth >= 2) { // bounded while with a fresh counter
     std::string cn = "c" + std::to_string(counter_id++);
-    if (unsw_mode && pick(0, 2) == 0) {
+    if (cc_mode && pick(0, 2) == 0) {
+      // COMPOUND-COND UNSWITCH BAIT (checkpoint 18): the loop condition is
+      // a SHORT-CIRCUIT of two invariant flags (never assigned inside: fl1
+      // and fl2 deliberately NOT pushed to vars, so no generated statement
+      // can touch them). The while-lowering spreads the test over the
+      // header + elbow + 1/0 blocks + the value branch; licm hoists both
+      // compares out; unswitch versions the whole guard chain. Termination
+      // rides on the guarded break: the counter decrements to 0 no matter
+      // what the flags hold (the || form is entered whenever either flag
+      // is positive, the && form only when both are).
+      std::string fl = "fl" + std::to_string(counter_id++);
+      std::string fl2 = "fl" + std::to_string(counter_id++);
+      std::string finit = use_input ? "input()" : std::to_string(pick(-3, 3));
+      std::string finit2 = use_input ? "input()" : std::to_string(pick(-3, 3));
+      src += "let " + fl + " = " + finit + ";\n";
+      src += "let " + fl2 + " = " + finit2 + ";\n";
+      src += "let " + cn + " = " + std::to_string(pick(1, 5)) + ";\n";
+      const char *op = pick(0, 1) ? " && " : " || ";
+      src += "while (" + fl + " > 0" + op + fl2 + " > 0) {\n";
+      src += "  if (" + cn + " <= 0) { break; }\n";
+      src += "  " + cn + " = " + cn + " - 1;\n";
+      n_ccbait++;
+    } else if (unsw_mode && pick(0, 2) == 0) {
       // UNSWITCH BAIT: the loop condition is a flag that SSA proves
       // loop-invariant (never assigned inside: fl deliberately NOT
       // pushed to vars, so no generated statement can touch it), so
@@ -708,12 +734,16 @@ inline constexpr uint32_t MJZ_GVN_SEED_FLOOR = 12331;
 // invariant-flag while loops (unswitch bait: licm hoists the header
 // test, unswitch versions the loop) start here — same discipline
 inline constexpr uint32_t MJZ_UNSWITCH_SEED_FLOOR = 12731;
+// compound-condition while loops (&& / || of two invariant flags: the
+// checkpoint-18 unswitch extension) start here — same discipline
+inline constexpr uint32_t MJZ_CC_SEED_FLOOR = 13331;
 
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
   g.bkpt_mode = seed >= MJZ_BKPT_SEED_FLOOR;     // see MJZ_BKPT_SEED_FLOOR
   g.gvn_mode = seed >= MJZ_GVN_SEED_FLOOR;       // see MJZ_GVN_SEED_FLOOR
   g.unsw_mode = seed >= MJZ_UNSWITCH_SEED_FLOOR; // see MJZ_UNSWITCH_SEED_FLOOR
+  g.cc_mode = seed >= MJZ_CC_SEED_FLOOR;         // see MJZ_CC_SEED_FLOOR
   g.use_input = (seed & 1) != 0;                 // half the programs read stdin
   g.allow_mat = ((seed >> 2) & 7) == 0; // 1/8 of programs grow 2-D arrays
   g.bait = ((seed >> 5) & 3) == 0;      // 1/4 carry deliberate trap bait; the

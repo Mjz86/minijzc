@@ -322,6 +322,17 @@ add_test(NAME bkpt_debugger_session
 set_tests_properties(bkpt_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
 endif()
 
+# checkpoint 18: the pass-breakpoint AUTO-PAUSE as a scripted session —
+# `opt break PASS` arms, the next `opt [FN]` stops the timeline after that
+# pass (truncated + diff + banner), `opt show` inspects the paused IR,
+# `opt continue` disarms and re-collects in full; five-way check at the end
+if(MJZ_BASH)
+add_test(NAME passpause_debugger_session
+  COMMAND ${MJZ_BASH} -c [==[printf 'opt break sccp\nopt\nopt show 1\nopt continue\nopt break unswitch\nopt\nopt continue\ncheck\nquit\n' | "$1" "$2" --debugger]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/bkpt_tour.mjz)
+set_tests_properties(passpause_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
+
 # bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that
 # hung the compiler — crossed phi-degenerate copies + copyprop, no dce
 add_test(NAME bugrepro_s7406_hangcfg

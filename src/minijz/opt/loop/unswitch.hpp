@@ -1,23 +1,39 @@
 #pragma once
 // === unswitch.hpp ========================================
-// trivial loop unswitching (README wishlist: "loop unswitching/
-// versioning"): a loop whose HEADER branches on a condition that SSA
-// already proves loop-invariant (defined outside the loop, dominating
-// the preheader) is versioned on that condition —
+// loop unswitching (README wishlist: "loop unswitching/versioning"):
+// a loop whose condition SSA already proves loop-invariant (defined
+// outside the loop, dominating the preheader) is versioned on it —
 //     pre: br h          ->   pre: cbr(cond) --> H' (true) / X (false)
-//     h:   cbr(cond) body/X    H':  br body'   (the test is known true)
+//     h:   cbr(cond) body/X      H':  br body'   (the test is known true)
 // The false path jumps straight to the header's exit target (the loop
 // body never ran: the invariant condition fails at EVERY evaluation,
 // so the original loop ran zero iterations). The true path is a full
 // clone of the loop with fresh vregs whose header test is gone (the
 // condition cannot change — it is an SSA value).
 //
+// CHECKPOINT 18 extension: compound (short-circuit) conditions. The
+// while-lowering spreads `while (a && b)` / `while (a || b)` over an
+// elbow chain: the header tests a, the elbow E tests b, the 1/0 blocks
+// TT/FF feed the merge mm whose phi+cbr IS the loop's exit edge. When
+// BOTH leaf tests are invariant, the guard chain is versioned as one:
+//     && : pre: cbr(a) G2/FX ; G2: cbr(b) H'/FX ; FX: br X
+//     || : pre: cbr(a) T1/G2 ; G2: cbr(b) T1/FX ; T1: br H' ; FX: br X
+// (per-arm polarity: && exits on either false, || enters on either
+// true). The true clone bypasses the whole diamond (h' br body'), and
+// the mm->X edge becomes the zero-iteration edge (X's mm-keyed phi
+// args take the header phis' ENTRY values, keyed to FX). The diamond
+// blocks TT/FF/E/mm are required to be pure (Const/Copy/Bin with nt
+// on Div/Mod): the false path skips them, and skipped side effects
+// would be a miscompile — the invariance check already rejects anything
+// that computes the conditions in-loop, this is belt and braces.
+//
 // Internal exit edges (`break`) are allowed: the clone keeps them, and
 // every exit block's phis are rekeyed from the original in-loop pred
-// to its clone (args remapped to the cloned defs). The header edge is
-// special: X's h-keyed phi args become pre-edge args carrying each
-// header phi's ENTRY value (what the zero-iteration original left in
-// the variable), and the preheader edge is born.
+// to its clone (args remapped to the cloned defs). The primary (zero-
+// iteration) edge — the header exit in the trivial shape, mm's exit in
+// the compound shape — is special: X's phi args keyed to it become
+// FX-/pre-edge args carrying each header phi's ENTRY value (what the
+// zero-iteration original left in the variable), and that edge is born.
 //
 // Outside uses are classified by false-path reachability F (blocks
 // reachable from X without entering the loop): a header phi read
@@ -36,6 +52,167 @@
 #include "../analysis/an.hpp"
 #include "loop_shape.hpp"
 
+// ---- the compound (short-circuit) condition shape -------------------------
+// h: cbr(c1) A/B (both arms in-loop); one arm is the elbow E, the other
+// goes straight to the 1-block (||) or the 0-block (&&); E: cbr(c2)
+// TT/FF; TT/FF: [Const/Copy] br mm; mm: phi(1@TT, 0@FF) + cbr(phi)
+// body/X. Nested short-circuits and non-canonical shapes bail.
+struct CompShape {
+  uint32_t pre{NONE}, latch{NONE}, E{NONE}, TT{NONE}, FF{NONE}, mm{NONE};
+  uint32_t body{NONE}, X{NONE};
+  uint32_t c1{NONE}, c2{NONE};
+  bool ok{}, is_and{};
+};
+constexpr CompShape compound_shape_of(const Fn &fn, const An &A,
+                                      const std::vector<char> &inL,
+                                      const LoopScan &S, uint32_t h) {
+  (void)A;
+  const uint32_t nb = fn.nblocks(), nv = S.nv;
+  CompShape cs{};
+  uint32_t outside = 0, inside = 0;
+  for (uint32_t p : fn.preds[h]) {
+    if (inL[p]) {
+      cs.latch = p;
+      ++inside;
+    } else {
+      cs.pre = p;
+      ++outside;
+    }
+  }
+  if (inside != 1 || outside != 1 || cs.pre == NONE)
+    return cs;
+  if (fn.blocks[h].begin == fn.blocks[h].end)
+    return cs;
+  const Instr hterm = fn.code[fn.blocks[h].end - 1];
+  if (hterm.k != K::Cbr)
+    return cs;
+  if (hterm.t == NONE || hterm.f == NONE || hterm.t >= nb || hterm.f >= nb ||
+      !inL[hterm.t] || !inL[hterm.f])
+    return cs; // the trivial path owns shapes with an outside arm
+  cs.c1 = hterm.a;
+  // h's own non-phi content must be pure (the false path skips it):
+  // the invariant check on c1 already rejects condition evaluation in
+  // the header, this only guards exotic leftovers.
+  for (uint32_t i = fn.blocks[h].begin; i + 1 < fn.blocks[h].end; ++i) {
+    const Instr &I = fn.code[i];
+    if (I.k == K::Phi)
+      continue;
+    if (I.k != K::Const && I.k != K::Copy && I.k != K::Bin)
+      return cs;
+    if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) && !I.nt)
+      return cs;
+  }
+  // try each arm as the elbow E (the other arm is the direct feeder)
+  for (int k = 0; k < 2; ++k) {
+    const uint32_t E = k ? hterm.f : hterm.t;
+    const uint32_t other = k ? hterm.t : hterm.f;
+    if (E == other)
+      return cs; // degenerate (cbr_same territory)
+    if (fn.preds[E].size() != 1 || fn.preds[E][0] != h)
+      continue;
+    if (fn.blocks[E].begin == fn.blocks[E].end)
+      continue;
+    const Instr eterm = fn.code[fn.blocks[E].end - 1];
+    if (eterm.k != K::Cbr)
+      continue;
+    const uint32_t TT = eterm.t, FF = eterm.f;
+    if (TT == NONE || FF == NONE || TT == FF || TT >= nb || FF >= nb ||
+        !inL[TT] || !inL[FF])
+      continue;
+    bool is_and = false;
+    if (other == FF)
+      is_and = true; // &&: h-false feeds the 0-block directly
+    else if (other == TT)
+      is_and = false; // ||: h-true feeds the 1-block directly
+    else
+      continue;
+    // E's non-terminator content must be pure (same argument as h's)
+    {
+      bool ok = true;
+      for (uint32_t i = fn.blocks[E].begin; i + 1 < fn.blocks[E].end && ok;
+           ++i) {
+        const Instr &I = fn.code[i];
+        if (I.k != K::Const && I.k != K::Copy && I.k != K::Bin)
+          ok = false;
+        else if (I.k == K::Bin && (I.b == B::Div || I.b == B::Mod) && !I.nt)
+          ok = false;
+      }
+      if (!ok)
+        continue;
+    }
+    // TT/FF: Const/Copy only + br mm (both feed ONE merge), preds from
+    // {h, E} only (&&: TT={E}, FF={h,E}; ||: TT={h,E}, FF={E})
+    uint32_t mmT = NONE, mmF = NONE;
+    {
+      bool ok = true;
+      for (int f = 0; f < 2 && ok; ++f) {
+        const uint32_t F2 = f ? FF : TT;
+        for (uint32_t p : fn.preds[F2])
+          if (p != h && p != E)
+            ok = false;
+        for (uint32_t i = fn.blocks[F2].begin; i + 1 < fn.blocks[F2].end && ok;
+             ++i)
+          if (fn.code[i].k != K::Const && fn.code[i].k != K::Copy)
+            ok = false;
+        const Instr &t2 = fn.code[fn.blocks[F2].end - 1];
+        if (t2.k != K::Br || fn.succ1(F2) != NONE)
+          ok = false;
+        if (ok)
+          (f ? mmF : mmT) = t2.t;
+      }
+      if (!ok || mmT == NONE || mmT != mmF)
+        continue; // not a two-feeder merge
+    }
+    const uint32_t mm = mmT;
+    if (mm == NONE || mm >= nb || !inL[mm])
+      continue;
+    // mm: exactly the phi + the cbr; the phi materializes the boolean
+    // (1 from TT, 0 from FF); the cbr tests it with one arm staying in
+    // (body) and one leaving (X)
+    if (fn.preds[mm].size() != 2 ||
+        fn.blocks[mm].end - fn.blocks[mm].begin != 2)
+      continue;
+    const Instr &P = fn.code[fn.blocks[mm].begin];
+    const Instr &MT = fn.code[fn.blocks[mm].end - 1];
+    if (P.k != K::Phi || MT.k != K::Cbr || MT.a != P.dst)
+      continue;
+    const uint32_t argT = (P.t == TT) ? P.a : ((P.f == TT) ? P.b2 : NONE);
+    const uint32_t argF = (P.t == FF) ? P.a : ((P.f == FF) ? P.b2 : NONE);
+    if (argT == NONE || argF == NONE || argT >= nv || argF >= nv)
+      continue;
+    if (!S.kc[argT] || S.kv[argT] != 1 || !S.kc[argF] || S.kv[argF] != 0)
+      continue; // the boolean materialization, nothing else
+    uint32_t body = NONE, X = NONE;
+    if (MT.t != NONE && MT.t < nb && inL[MT.t] && MT.f != NONE && MT.f < nb &&
+        !inL[MT.f]) {
+      body = MT.t;
+      X = MT.f;
+    } else if (MT.f != NONE && MT.f < nb && inL[MT.f] && MT.t != NONE &&
+               MT.t < nb && !inL[MT.t]) {
+      body = MT.f;
+      X = MT.t;
+    } else
+      continue;
+    if (body == h || X == cs.pre || X == h || inL[X])
+      continue;
+    // the clone bypasses the whole diamond straight into the body, so
+    // the body must be entered ONLY through mm (no phis to rekey)
+    if (fn.preds[body].size() != 1 || fn.preds[body][0] != mm)
+      continue;
+    cs.E = E;
+    cs.TT = TT;
+    cs.FF = FF;
+    cs.mm = mm;
+    cs.body = body;
+    cs.X = X;
+    cs.c2 = eterm.a;
+    cs.is_and = is_and;
+    cs.ok = true;
+    return cs;
+  }
+  return cs;
+}
+
 constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
   if (A.n != fn.nblocks() || !fn.nblocks())
     return false;
@@ -46,21 +223,54 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
   for (uint32_t h : S.headers) {
     std::vector<char> inL;
     in_loop_flags(fn, A, h, inL);
-    const LoopShape sh = loop_shape_of(fn, A, inL, h);
-    if (!sh.ok)
+    // ---- path selection: trivial shape, or the compound diamond -----
+    uint32_t pre, latch, X, primary, bypass, entry_pred, false_pred;
+    uint32_t guard1 = NONE, guard2 = NONE;
+    bool compound = false, is_and = false;
+    {
+      const LoopShape sh = loop_shape_of(fn, A, inL, h);
+      if (sh.ok) {
+        pre = sh.pre;
+        latch = sh.latch;
+        X = sh.X;
+        primary = h; // the zero-iteration edge is h's exit arm
+        bypass = sh.body;
+        entry_pred = pre;
+        false_pred = pre;
+        guard1 = fn.code[fn.blocks[h].end - 1].a;
+      } else {
+        const CompShape cs = compound_shape_of(fn, A, inL, S, h);
+        if (!cs.ok)
+          continue;
+        pre = cs.pre;
+        latch = cs.latch;
+        X = cs.X;
+        primary = cs.mm; // the zero-iteration edge is mm's exit arm
+        bypass = cs.body;
+        compound = true;
+        is_and = cs.is_and;
+        guard1 = cs.c1;
+        guard2 = cs.c2;
+        entry_pred = NONE; // filled once the guard blocks exist
+        false_pred = NONE;
+      }
+    }
+    // ---- the invariant condition(s) -------------------------------------
+    auto invariant = [&](uint32_t cond) -> bool {
+      if (cond == NONE || cond >= nv || S.defi[cond] == NONE)
+        return false;
+      if (inL[S.defb[cond]])
+        return false; // defined inside: not invariant
+      if (fn.code[S.defi[cond]].k == K::Const)
+        return false; // constant test: fold/sccp territory
+      if (S.defb[cond] != pre && !A.dominates(S.defb[cond], pre))
+        return false; // not available at the preheader's end
+      return true;
+    };
+    if (!invariant(guard1))
       continue;
-    const uint32_t pre = sh.pre, latch = sh.latch, X = sh.X, body = sh.body;
-    // ---- the invariant condition -------------------------------------
-    const Instr hterm = fn.code[fn.blocks[h].end - 1];
-    const uint32_t cond = hterm.a;
-    if (cond == NONE || cond >= nv || S.defi[cond] == NONE)
+    if (compound && !invariant(guard2))
       continue;
-    if (inL[S.defb[cond]])
-      continue; // defined inside: not invariant
-    if (fn.code[S.defi[cond]].k == K::Const)
-      continue; // constant test: fold/sccp territory
-    if (S.defb[cond] != pre && !A.dominates(S.defb[cond], pre))
-      continue; // not available at the preheader's end
     // ---- the preheader must be a dedicated `br h` block ---------------
     {
       const Instr &pt = fn.code[fn.blocks[pre].end - 1];
@@ -88,7 +298,7 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
       for (uint32_t s : {fn.succ0(b), fn.succ1(b)}) {
         if (s == NONE || inL[s])
           continue;
-        if (b == h && s == X) // the header exit itself
+        if (b == primary && s == X) // the zero-iteration edge itself
           continue;
         exits.push_back({b, s});
         if (s == pre || s == h)
@@ -121,8 +331,8 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
     // kinds: (a) plain use in F of a header phi -> merge value;
     // (b) plain use outside F -> remap to the clone;
     // (c) phi arg keyed to an in-loop pred -> rekey + remap (except the
-    //     h-key, which becomes the pre edge: header phis take their
-    //     pre_arg, other header defs bail);
+    //     primary edge: header phis take their pre_arg, other header
+    //     defs bail);
     // (d) phi arg keyed to an outside pred: remap when the pred is not
     //     in F (the value left through the loop), nothing when it is
     //     (dominance forbids loop values there).
@@ -151,7 +361,7 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
             if (v == NONE || v >= nv || !loopdef[v])
               return true;
             if (pred < nb && inL[pred]) {
-              if (pred == h) {              // the header edge: pre is born
+              if (pred == primary) {        // the zero-iteration edge:
                 return hphi_idx(v) != NONE; // only header phis have an
               } // entry value to carry; others bail
               return true; // break edge: rekey + remap
@@ -215,6 +425,30 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
       continue;
     // ================= commit =================
     os.unswitches++;
+    // -- compound guard blocks (allocated BEFORE the clone map so the
+    //    clone ids and the header-phi entry rekey are stable) ---------
+    // && : pre: cbr(c1) g2/fx ; g2: cbr(c2) H'/fx ; fx: br X
+    // || : pre: cbr(c1) t1/g2 ; g2: cbr(c2) t1/fx ; t1: br H' ; fx: br X
+    uint32_t g2 = NONE, fx = NONE, t1 = NONE;
+    if (compound) {
+      const uint32_t nb0 = fn.nblocks();
+      g2 = nb0;
+      fx = nb0 + 1;
+      fn.blocks.push_back({});
+      fn.succ.push_back(NONE);
+      fn.succ.push_back(NONE);
+      fn.blocks.push_back({});
+      fn.succ.push_back(NONE);
+      fn.succ.push_back(NONE);
+      if (!is_and) {
+        t1 = nb0 + 2;
+        fn.blocks.push_back({});
+        fn.succ.push_back(NONE);
+        fn.succ.push_back(NONE);
+      }
+      entry_pred = is_and ? g2 : t1;
+      false_pred = fx;
+    }
     // -- clone map: every in-loop block gets a fresh id ------------------
     std::vector<uint32_t> bmap(nb, NONE);
     for (uint32_t b = 0; b < nb; ++b) {
@@ -253,6 +487,14 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
             c.t = bmap[c.t];
           if (c.f != NONE && inL[c.f])
             c.f = bmap[c.f];
+          // the clone is entered through the LAST guard block (the
+          // trivial shape: pre itself, a no-op rekey)
+          if (b == h) {
+            if (c.t == pre)
+              c.t = entry_pred;
+            if (c.f == pre)
+              c.f = entry_pred;
+          }
         } else if (i + 1 == fn.blocks[b].end &&
                    (c.k == K::Br || c.k == K::Cbr)) {
           // terminator: in-loop targets -> clones; exits stay
@@ -269,10 +511,11 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
           for (uint32_t &av : c.args)
             av = mapv(av);
         }
-        // the cloned header's test is GONE: Br to the body arm
+        // the cloned header's test is GONE: Br to the bypass target
+        // (the trivial shape's body arm; the compound shape's real
+        // body, past the whole condition diamond)
         if (b == h && i + 1 == fn.blocks[b].end && c.k == K::Cbr) {
-          const uint32_t tgt = (I.t == body) ? I.t : I.f;
-          hbr_tgt = bmap[tgt]; // body is in-loop (== h for self-loops)
+          hbr_tgt = bmap[bypass]; // bypass is in-loop by construction
           c.k = K::Br;
           c.t = hbr_tgt;
           c.f = NONE;
@@ -293,26 +536,70 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
                                  : fn.succ1(b);
       }
     }
-    // -- preheader: br h -> cbr(cond) H' / X ----------------------------
-    {
+    // -- the guards ------------------------------------------------------
+    if (!compound) {
       Instr &pt = fn.code[fn.blocks[pre].end - 1];
       pt.k = K::Cbr;
-      pt.a = cond;
+      pt.a = guard1;
       pt.t = bmap[h];
       pt.f = X;
       fn.succ[2 * pre] = bmap[h];
       fn.succ[2 * pre + 1] = X;
+    } else if (is_and) {
+      Instr &pt = fn.code[fn.blocks[pre].end - 1];
+      pt.k = K::Cbr;
+      pt.a = guard1;
+      pt.t = g2;
+      pt.f = fx;
+      fn.succ[2 * pre] = g2;
+      fn.succ[2 * pre + 1] = fx;
+      fn.blocks[g2].begin = (uint32_t)fn.code.size();
+      fn.code.push_back({.k = K::Cbr, .a = guard2, .t = bmap[h], .f = fx});
+      fn.blocks[g2].end = (uint32_t)fn.code.size();
+      fn.succ[2 * g2] = bmap[h];
+      fn.succ[2 * g2 + 1] = fx;
+    } else { // ||: the true arms short-circuit into the loop
+      Instr &pt = fn.code[fn.blocks[pre].end - 1];
+      pt.k = K::Cbr;
+      pt.a = guard1;
+      pt.t = t1;
+      pt.f = g2;
+      fn.succ[2 * pre] = t1;
+      fn.succ[2 * pre + 1] = g2;
+      fn.blocks[g2].begin = (uint32_t)fn.code.size();
+      fn.code.push_back({.k = K::Cbr, .a = guard2, .t = t1, .f = fx});
+      fn.blocks[g2].end = (uint32_t)fn.code.size();
+      fn.succ[2 * g2] = t1;
+      fn.succ[2 * g2 + 1] = fx;
+    }
+    // fx: br X (the zero-iteration edge's new outside pred; compound
+    // shapes only — the trivial shape jumps pre -> X directly)
+    if (compound) {
+      fn.blocks[fx].begin = (uint32_t)fn.code.size();
+      fn.code.push_back({.k = K::Br, .t = X});
+      fn.blocks[fx].end = (uint32_t)fn.code.size();
+      fn.succ[2 * fx] = X;
+      fn.succ[2 * fx + 1] = NONE;
+      if (t1 != NONE) { // ||: t1: br H'
+        fn.blocks[t1].begin = (uint32_t)fn.code.size();
+        fn.code.push_back({.k = K::Br, .t = bmap[h]});
+        fn.blocks[t1].end = (uint32_t)fn.code.size();
+        fn.succ[2 * t1] = bmap[h];
+        fn.succ[2 * t1 + 1] = NONE;
+      }
     }
     // -- merge values for header phis read on the false path ------------
-    // X's post-unswitch preds: pre + X's ORIGINAL outside preds (the
-    // break path may reach X through unchanged outside blocks — the
-    // if-arm `br` block — so the clone-side key is that block id, not a
-    // clone id; at most one by the two-pred invariant). With a side pred
-    // a fresh phi at X merges (pre_arg, the cloned value); without one
-    // the pre_arg IS the value (X is single-pred then).
+    // X's post-unswitch preds: the new false-side pred (pre / fx) +
+    // X's ORIGINAL outside preds (the break path may enter X through
+    // unchanged outside blocks — the if-arm `br` block — so the
+    // clone-side key is that block id, not a clone id; at most one by
+    // the two-pred invariant; an in-loop side pred is rekeyed to its
+    // clone by the sweep below). With a side pred a fresh phi at X
+    // merges (false-side arg, the cloned value); without one the
+    // false-side arg IS the value (X is single-pred then).
     uint32_t x_side_pred = NONE;
     for (uint32_t p : fn.preds[X])
-      if (p != h)
+      if (p != primary)
         x_side_pred = p;
     std::vector<uint32_t> phi_final(hphis.size(), NONE);
     for (size_t pi = 0; pi < hphis.size(); ++pi) {
@@ -326,9 +613,9 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
       const uint32_t d = new_anon_vreg(fn, fn.base_of(P.dst));
       const Instr np{.k = K::Phi,
                      .dst = d,
-                     .a = P.pre_arg,     // arrives from pre (false path)
+                     .a = P.pre_arg,     // arrives on the zero-iter path
                      .b2 = fresh[P.dst], // arrives from the side pred
-                     .t = pre,           // (true path, after the loop ran)
+                     .t = false_pred,    // (true path, after the loop ran)
                      .f = x_side_pred,
                      .c = (int64_t)fn.base_of(P.dst)};
       const uint32_t at = fn.blocks[X].begin;
@@ -354,11 +641,12 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
           auto rk = [&](uint32_t &key, uint32_t &arg) {
             if (key == NONE)
               return;
-            if (key == h && b == X) { // the header edge: pre is born.
-              // MUST precede the in-loop branch below: h is in-loop too,
-              // but its edge is the exit being replaced by pre, not a
-              // break edge to rekey to a clone.
-              key = pre;
+            if (key == primary && b == X) { // the zero-iteration edge:
+              // the false-side pred is born (pre / fx). MUST precede
+              // the in-loop branch below: the primary block is
+              // in-loop too, but its edge is the exit being replaced,
+              // not a break edge to rekey to a clone.
+              key = false_pred;
               for (size_t pi = 0; pi < hphis.size(); ++pi)
                 if (hphis[pi].dst == arg) {
                   arg = hphis[pi].pre_arg; // the entry value

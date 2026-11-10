@@ -1,308 +1,310 @@
 #pragma once
 // === lcf_rt.hpp ========================================
-// RUNTIME trip counts: guarded/unguarded closed forms with the wrap
-// fallback (header phis re-keyed to the new entry edge).
+// RUNTIME trip count closed forms: `while (i < B) { pure body; i += d; }`
+// with constant d and a RUNTIME B (or a constant bound too big to step
+// at compile time) gets a guard block that computes the trip count at
+// runtime + a closed-form block; the guard fails exactly when the
+// induction would leave the signed range before reaching B (the honest
+// answer is then the original loop, kept as the fallback), so the
+// closed form only ever runs when exact. The vacuous-guard proof
+// (constant i0 >= 0, unit step, pure+nt body) drops guard AND fallback.
+// Extracted from lcf.hpp (checkpoint 18's code-quality split); the
+// driver-visible counter is OptStats::lcf_rt.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
-#include "../analysis/an.hpp"
-#include "../linear/linform.hpp"
+#include "loop_shape.hpp"
 
-// ============================================================================
-// 9e3. CONST-CALL EVALUATION (interprocedural)
-// ============================================================================
-// A call whose arguments are all compile-time constants and whose callee (and
-// every fn that callee transitively calls) is PURE ARITHMETIC -- only
-// Const/Copy/Bin/Br/Cbr/Phi/Call/Ret, so no Print, no input(), no arena
-// (Alloc/Load/Store/Len), no observable side effect and no handle value -- is
-// evaluated exactly at compile time with the same wrapping/trapping arithmetic
-// the runtime uses (a trap, the 512-frame recursion cap, or the step budget
-// aborts the attempt and keeps the runtime call: a runtime TRAP is
-// observable, so folding it away would be a miscompile). This is what turns
-// `fact(4)` and the mutually recursive `is_even(10)` into constants:
-// recursion is exactly why inlining can never touch them, and exactly why a
-// whole-program evaluator can -- the recursive call graph is just a
-// control-flow graph the evaluator walks.
+// one affine recurrence x' = a*x + b*i + g (the analytic scan's result;
+// shared by the runtime and constant-trip paths in lcf.hpp)
+struct LcfEvo {
+  bool ok;
+  uint64_t a, b, g;
+};
 
-// call depth cap shared by EVERY runner (interpreters, VM, emitted C,
-// and emitted asm all enforce the same limit: runaway recursion TRAPs
-// everywhere) -- also enforced by the compile-time evaluator below, so a
-// program that would TRAP at depth 512 is never silently folded
-// step budget for one const-call evaluation attempt (shared across the
-// whole recursive invocation; generous: the demo programs need < 200)
-inline constexpr uint64_t MJZ_CONSTCALL_STEPS = 1ull << 20;
-
-// fn-local purity: every instruction is pure arithmetic / control flow
-constexpr bool fn_local_pure(const Fn &f) {
-  for (const Instr &I : f.code)
-    switch (I.k) {
-    case K::Const:
-    case K::Copy:
-    case K::Bin: // Div/Mod may trap -> the EVALUATOR aborts on real traps
-    case K::Br:
-    case K::Cbr:
-    case K::Phi:
-    case K::Depth: // frame count: no observable effect; the VALUE depends
-                   // on the calling context, which opt_constcall controls
-    case K::Call:  // nested calls are checked transitively
-    case K::Ret:
-      break;
-    default:
-      return false; // Print/Input/Alloc/Load/Store/Len/Exit: observable
-    }
-  return true;
-}
-// does the call closure of fi contain a K::Depth (frame-sensitive value)?
-constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
-  const uint32_t n = (uint32_t)fns.size();
-  std::vector<uint8_t> seen(n, 0);
-  std::vector<uint32_t> work{fi};
-  seen[fi] = 1;
-  while (!work.empty()) {
-    uint32_t f = work.back();
-    work.pop_back();
-    for (const Instr &I : fns[f].code) {
-      if (I.k == K::Depth)
-        return true;
-      if (I.k == K::Call) {
-        uint32_t g = (uint32_t)I.c;
-        if (g < n && !seen[g]) {
-          seen[g] = 1;
-          work.push_back(g);
-        }
-      }
-    }
-  }
-  return false;
-}
-// transitive purity over the call graph (cycle-safe DFS)
-constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
-  const uint32_t n = (uint32_t)fns.size();
-  std::vector<uint8_t> seen(n, 0);
-  std::vector<uint32_t> work{fi};
-  seen[fi] = 1;
-  while (!work.empty()) {
-    uint32_t f = work.back();
-    work.pop_back();
-    if (!fn_local_pure(fns[f]))
-      return false;
-    for (const Instr &I : fns[f].code)
-      if (I.k == K::Call) {
-        uint32_t g = (uint32_t)I.c;
-        if (g < n && !seen[g]) {
-          seen[g] = 1;
-          work.push_back(g);
-        }
-      }
-  }
-  return true;
-}
-
-// exact SSA execution of one pure fn; mirrors run_prog's semantics: phis are
-// resolved on the edge they came from (read all, then write all), the env is
-// flat with default 0 ("storage is zero-initialized"), Ret yields val[a].
-constexpr bool eval_pure_fn(const std::vector<Fn> &fns, uint32_t fi,
-                            const std::vector<val_t> &args, val_t &out,
-                            uint32_t depth, uint64_t &steps) {
-  if (depth >= MJZ_MAX_CALL_DEPTH)
-    return false; // runtime would TRAP
-  const Fn &F = fns[fi];
-  if (F.nblocks() == 0)
-    return false;
-  const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
-  std::vector<val_t> val(nv, 0);
-  for (size_t k = 0; k < args.size() && k < F.nparams; ++k)
-    if (k < nv)
-      val[k] = args[k];
-  uint32_t blk = 0;
-  uint32_t pc = F.blocks[0].begin;
-  for (;;) {
-    if (++steps > MJZ_CONSTCALL_STEPS)
-      return false; // budget exhausted
-    if (blk >= F.nblocks() || pc >= F.blocks[blk].end)
-      return false;
-    const Instr &I = F.code[pc];
-    switch (I.k) {
-    case K::Phi: // resolved on the incoming edge, never inline
-      ++pc;
+// ---- lcf_rt_fold: the guarded/unguarded runtime closed form ---------------
+// Call contract (lcf.hpp enforces these before calling):
+//   * continue-style header test (NOT exit_on_true)
+//   * counted induction `i' with constant step d >= 1, lhs_is_ind
+//   * X's only pred is the header (no phis at X)
+//   * the preheader is a dedicated br h
+//   * every phi evolves additively (evo[].a == 1, evo[].ok)
+//   * IP = hphis[IPi] is the induction phi; C is the header compare
+// Returns true when the loop was versioned (caller returns; the
+// fixpoint driver re-analyzes).
+struct LcfRtIn {
+  uint32_t h{}, pre{}, X{}, IPi{};
+  uint32_t Bv{};     // the bound operand vreg
+  val_t step_mag{};  // constant step magnitude (>= 1, not step_sub)
+  bool lhs_is_ind{}; // compare operand order
+  B cmp{};           // Lt or Le
+  const Instr *C{};  // the header compare instr (operands C.a/C.b2)
+  const std::vector<HPhi> *hphis{};
+  const std::vector<char> *inL{};
+  const std::vector<char> *kc{};
+  const std::vector<val_t> *kv{};
+  const std::vector<LcfEvo> *evo{};
+};
+constexpr bool lcf_rt_fold(Fn &fn, OptStats &os, const LcfRtIn &In) {
+  const std::vector<HPhi> &hphis = *In.hphis;
+  const std::vector<char> &inL = *In.inL, &kc = *In.kc;
+  const std::vector<val_t> &kv = *In.kv;
+  const std::vector<LcfEvo> &evo = *In.evo;
+  const uint32_t nb = fn.nblocks();
+  const uint32_t nv = (uint32_t)kc.size();
+  const uint32_t h = In.h, pre = In.pre, X = In.X;
+  const HPhi &IP = hphis[In.IPi];
+  const bool is_le = (In.cmp == B::Le);
+  const uint32_t i0v = IP.pre_arg;
+  // ---- vacuous-guard proof --------------------------------------------
+  // With a CONSTANT i0 >= 0 and unit step, the induction can never wrap
+  // before the exit: whenever the condition c0 holds, D = B - i0 lands
+  // in (0, MAX] (no wrap, since B <= MAX and i0 >= 0), so `dneg' is
+  // false; and iN = i0 + N reproduces B bit-exactly (N = Dm, and
+  // i0 + (B - i0) = B in the mod-2^64 ring), so `bneg' is false too.
+  // The guard is therefore identically false for EVERY runtime B. If
+  // additionally the loop body is pure arithmetic that provably cannot
+  // trap (Div/Mod carry `nt') and observes nothing, the closed form is
+  // exact unconditionally: emit it WITHOUT the guard and WITHOUT the
+  // fallback loop (the now-unreachable loop is removed by unreach, and
+  // its merge-phi args degenerate away).
+  bool body_pure = true;
+  for (uint32_t b2 = 0; b2 < nb && body_pure; ++b2) {
+    if (!inL[b2])
       continue;
-    case K::Depth: // eval's `depth` = activations-1; frames incl. main =
-      // depth+2 (main=1; the callee called from main sits at frame 2)
-      if (I.dst >= nv)
-        return false;
-      val[I.dst] = (val_t)depth + 2;
-      ++pc;
-      continue;
-    case K::Const:
-      if (I.dst >= nv)
-        return false;
-      val[I.dst] = I.c;
-      ++pc;
-      continue;
-    case K::Copy:
-      if (I.dst >= nv || I.a >= nv)
-        return false;
-      val[I.dst] = val[I.a];
-      ++pc;
-      continue;
-    case K::Bin: {
-      if (I.a >= nv || I.b2 >= nv || I.dst >= nv)
-        return false;
-      Rv r = w_bin(I.b, val[I.a], val[I.b2]);
-      if (r.trap)
-        return false; // runtime trap is observable: keep the call
-      val[I.dst] = r.v;
-      ++pc;
-      continue;
-    }
-    case K::Br:
-    case K::Cbr: {
-      uint32_t next = (I.k == K::Br) ? I.t : ((val[I.a] != 0) ? I.t : I.f);
-      if (next >= F.nblocks())
-        return false;
-      // stage the successor's phis for THIS edge: read all, then write all
-      std::vector<std::pair<uint32_t, val_t>> staged{};
-      for (uint32_t j = F.blocks[next].begin; j < F.blocks[next].end; ++j) {
-        const Instr &P = F.code[j];
-        if (P.k != K::Phi)
+    for (uint32_t i2 = fn.blocks[b2].begin; i2 < fn.blocks[b2].end; ++i2) {
+      const Instr &BI = fn.code[i2];
+      if (BI.k == K::Phi || BI.k == K::Const || BI.k == K::Copy ||
+          BI.k == K::Br || BI.k == K::Cbr)
+        continue;
+      if (BI.k == K::Bin) {
+        if ((BI.b == B::Div || BI.b == B::Mod) && !BI.nt) {
+          body_pure = false; // a MAY-trap div/mod must run for real
           break;
-        uint32_t arg = NONE;
-        if (P.t == blk && P.a != NONE)
-          arg = P.a;
-        else if (P.f == blk && P.b2 != NONE)
-          arg = P.b2;
-        if (arg != NONE && arg < nv && P.dst < nv)
-          staged.push_back({P.dst, val[arg]});
+        }
+        continue;
       }
-      for (const auto &st : staged)
-        val[st.first] = st.second;
-      blk = next;
-      pc = F.blocks[blk].begin;
-      continue;
-    }
-    case K::Ret:
-      out = (I.a != NONE && I.a < nv) ? val[I.a] : 0;
-      return true;
-    case K::Call: {
-      std::vector<val_t> cargs{};
-      for (uint32_t a : I.args) {
-        if (a >= nv)
-          return false;
-        cargs.push_back(val[a]);
-      }
-      val_t r{};
-      if (!eval_pure_fn(fns, (uint32_t)I.c, cargs, r, depth + 1, steps))
-        return false;
-      if (I.dst < nv)
-        val[I.dst] = r;
-      ++pc;
-      continue;
-    }
-    default:
-      return false; // impure instruction: impossible after the purity check
+      body_pure = false; // Print/Call/Input/Alloc/Load/Store/Len/Ret
+      break;
     }
   }
-}
-
-// fold every constant-argument call to a provably-pure callee
-constexpr bool opt_constcall(std::vector<Fn> &fns,
-                             std::vector<OptStats> &ostats) {
-  const uint32_t n = (uint32_t)fns.size();
-  if (n < 2 || ostats.size() < n)
-    return false;
-  std::vector<uint8_t> pure(n, 0);
-  for (uint32_t f = 0; f < n; ++f)
-    pure[f] = fn_pure_closure(fns, f) ? 1 : 0;
-  bool changed = false;
-  for (uint32_t f = 0; f < n; ++f) {
-    Fn &F = fns[f];
-    const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
-    if (!nv || F.nblocks() == 0)
-      continue;
-    // def index (SSA: one def per vreg) + bounded const-value walk
-    std::vector<uint32_t> def_at(nv, NONE);
-    for (uint32_t b = 0; b < F.nblocks(); ++b)
-      for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
-        const Instr &I = F.code[i];
-        if (I.dst != NONE && I.dst < nv)
-          def_at[I.dst] = i;
-      }
-    auto cval = [&](uint32_t v, val_t &out) -> bool {
-      for (int d = 0; d < 16; ++d) { // bounded Copy/phi-of-same chains
-        if (v == NONE || v >= nv)
-          return false;
-        uint32_t at = def_at[v];
-        if (at == NONE)
-          return false;
-        const Instr &D = F.code[at];
-        if (D.k == K::Const) {
-          out = D.c;
-          return true;
-        }
-        if (D.k == K::Copy && D.a != NONE) {
-          v = D.a;
-          continue;
-        }
-        if (D.k == K::Phi && D.a != NONE && D.a == D.b2) {
-          v = D.a;
-          continue;
-        }
-        return false;
-      }
-      return false;
-    };
-    for (uint32_t b = 0; b < F.nblocks(); ++b)
-      for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
-        Instr &I = F.code[i];
-        if (I.k != K::Call)
-          continue;
-        uint32_t g = (uint32_t)I.c;
-        if (g >= n || !pure[g] || I.args.size() != fns[g].nparams)
-          continue;
-        std::vector<val_t> args{};
-        bool allc = true;
-        for (uint32_t a : I.args) {
-          val_t v{};
-          if (!cval(a, v)) {
-            allc = false;
-            break;
-          }
-          args.push_back(v);
-        }
-        if (!allc)
-          continue;
-        val_t out{};
-        uint64_t steps = 0;
-        // Frame-exactness rules for the evaluator's recursion cap and its
-        // K::Depth values: a call site IN MAIN is exact (the callee's chain
-        // starts at frame 2, always). A call site in any other fn runs at
-        // an UNKNOWN frame X >= 2: refuse if the callee chain READS the
-        // frame count, and evaluate with an initial depth of CAP-1 so only
-        // non-nesting evaluations (a single activation, which can never
-        // hit the cap) fold — a longer chain's cap point depends on X.
-        bool in_main = (f == 0);
-        uint32_t d0 = 0;
-        if (!in_main) {
-          if (closure_has_depth(fns, g))
-            continue;
-          d0 = MJZ_MAX_CALL_DEPTH - 1;
-        }
-        if (!eval_pure_fn(fns, g, args, out, d0, steps))
-          continue;
-        // same dst: every user reads the constant directly
-        I.k = K::Const;
-        I.b = B::Add;
-        I.a = NONE;
-        I.b2 = NONE;
-        I.t = NONE;
-        I.f = NONE;
-        I.c = out;
-        I.c2 = NONE;
-        I.nt = false;
-        I.args.clear();
-        ostats[f].constcalls++;
-        changed = true;
-      }
+  const bool vacuous = body_pure && IP.pre_arg != NONE && IP.pre_arg < nv &&
+                       kc[IP.pre_arg] && kv[IP.pre_arg] >= 0 &&
+                       In.step_mag == 1;
+  const uint32_t G = fn.nblocks();
+  const uint32_t CF = G + 1;
+  fn.blocks.push_back({});
+  fn.blocks.push_back({});
+  fn.succ.push_back(NONE);
+  fn.succ.push_back(NONE);
+  fn.succ.push_back(NONE);
+  fn.succ.push_back(NONE);
+  std::vector<Instr> gi{}, cfi{};
+  auto konst = [&](std::vector<Instr> &out, val_t c) {
+    uint32_t v = new_anon_vreg(fn, 0);
+    out.push_back({.k = K::Const, .dst = v, .c = c});
+    return v;
+  };
+  auto bin = [&](std::vector<Instr> &out, B b, uint32_t dst, uint32_t a,
+                 uint32_t b2) {
+    out.push_back({.k = K::Bin, .b = b, .dst = dst, .a = a, .b2 = b2});
+  };
+  auto nt = [&]() { return new_anon_vreg(fn, 0); };
+  // ---- guard block G: N, iN, gok ----
+  const uint32_t z0 = konst(gi, 0);
+  const uint32_t c0 = nt();
+  bin(gi, is_le ? B::Le : B::Lt, c0, i0v, In.Bv);
+  const uint32_t Dv = nt();
+  bin(gi, B::Sub, Dv, In.Bv, i0v);
+  const uint32_t msk = nt();
+  bin(gi, B::Sub, msk, z0, c0);
+  const uint32_t Dm = nt();
+  bin(gi, B::And, Dm, Dv, msk);
+  const uint32_t kd = konst(gi, In.step_mag);
+  const uint32_t qv = nt();
+  bin(gi, B::Div, qv, Dm, kd);
+  const uint32_t Nv = nt();
+  if (is_le) {
+    bin(gi, B::Add, Nv, qv, c0);
+  } else {
+    const uint32_t rv = nt();
+    bin(gi, B::Mod, rv, Dm, kd);
+    const uint32_t rnz = nt();
+    bin(gi, B::Ne, rnz, rv, z0);
+    bin(gi, B::Add, Nv, qv, rnz);
   }
-  return changed;
+  if (vacuous) { // closed form only: no guard, no fallback loop
+    gi.push_back({.k = K::Br, .t = CF});
+  } else {
+    const uint32_t diN = nt();
+    bin(gi, B::Mul, diN, Nv, kd);
+    const uint32_t iN = nt();
+    bin(gi, B::Add, iN, i0v, diN);
+    const uint32_t dneg = nt();
+    bin(gi, B::Lt, dneg, Dv, z0);
+    const uint32_t bneg = nt();
+    bin(gi, is_le ? B::Le : B::Lt, bneg, iN, In.Bv);
+    const uint32_t ov = nt();
+    bin(gi, B::Or, ov, dneg, bneg);
+    const uint32_t badv = nt();
+    bin(gi, B::And, badv, c0, ov);
+    const uint32_t gok = nt();
+    bin(gi, B::Eq, gok, badv, z0);
+    gi.push_back({.k = K::Cbr, .a = gok, .t = CF, .f = h});
+  }
+  // ---- closed-form block CF ----
+  uint32_t Tv = NONE;
+  for (const LcfEvo &e : *In.evo) // T is needed iff some increment uses i
+    if (e.b != 0) {
+      const uint32_t one = konst(cfi, 1);
+      const uint32_t e0 = nt();
+      bin(cfi, B::And, e0, Nv, one);
+      const uint32_t two = nt();
+      bin(cfi, B::Add, two, e0, e0);
+      const uint32_t Nm = nt();
+      bin(cfi, B::Sub, Nm, Nv, e0);
+      const uint32_t h2 = nt();
+      bin(cfi, B::LShr, h2, Nm, one);
+      const uint32_t t1 = nt();
+      bin(cfi, B::Add, t1, Nm, two);
+      const uint32_t o1 = nt();
+      bin(cfi, B::Sub, o1, t1, one);
+      Tv = nt();
+      bin(cfi, B::Mul, Tv, h2, o1);
+      break;
+    }
+  std::vector<uint32_t> cfv(hphis.size(), NONE);
+  for (size_t pi = 0; pi < hphis.size(); ++pi) {
+    const LcfEvo &e = evo[pi];
+    const uint32_t x0 = hphis[pi].pre_arg;
+    if (e.b == 0 && e.g == 0) {
+      cfv[pi] = x0; // untouched by the loop
+      continue;
+    }
+    uint32_t Cv = NONE; // b*i0 + g
+    if (e.b == 0) {
+      Cv = konst(cfi, (val_t)e.g);
+    } else {
+      uint32_t bi = i0v;
+      if (e.b != 1) {
+        uint32_t kb = konst(cfi, (val_t)e.b);
+        uint32_t t = nt();
+        bin(cfi, B::Mul, t, i0v, kb);
+        bi = t;
+      }
+      if (e.g == 0) {
+        Cv = bi;
+      } else {
+        uint32_t kg = konst(cfi, (val_t)e.g);
+        Cv = nt();
+        bin(cfi, B::Add, Cv, bi, kg);
+      }
+    }
+    uint32_t acc = x0;
+    { // acc += C * N
+      uint32_t cn = nt();
+      bin(cfi, B::Mul, cn, Cv, Nv);
+      uint32_t a2 = nt();
+      bin(cfi, B::Add, a2, acc, cn);
+      acc = a2;
+    }
+    if (e.b != 0) { // acc += (b*d) * T
+      uint32_t kbd = konst(cfi, (val_t)(e.b * (uint64_t)In.step_mag));
+      uint32_t bt = nt();
+      bin(cfi, B::Mul, bt, Tv, kbd);
+      uint32_t a3 = nt();
+      bin(cfi, B::Add, a3, acc, bt);
+      acc = a3;
+    }
+    cfv[pi] = acc;
+  }
+  cfi.push_back({.k = K::Br, .t = X});
+  // ---- commit: append G/CF, rewrite outside uses, insert merge phis ----
+  fn.blocks[G].begin = (uint32_t)fn.code.size();
+  for (const Instr &x : gi)
+    fn.code.push_back(x);
+  fn.blocks[G].end = (uint32_t)fn.code.size();
+  fn.blocks[CF].begin = (uint32_t)fn.code.size();
+  for (const Instr &x : cfi)
+    fn.code.push_back(x);
+  fn.blocks[CF].end = (uint32_t)fn.code.size();
+  fn.succ[2 * G] = CF;
+  fn.succ[2 * G + 1] = vacuous ? NONE : h; // vacuous: G never enters h
+  fn.succ[2 * CF] = X;
+  fn.succ[2 * CF + 1] = NONE;
+  { // outside uses of the loop phis -> merge-phi values (below); done
+    // BEFORE the phis exist so their own loop-side args stay untouched
+    std::vector<uint32_t> phidst(hphis.size(), NONE);
+    for (size_t pi = 0; pi < hphis.size(); ++pi)
+      phidst[pi] = new_anon_vreg(fn, fn.base_of(hphis[pi].dst));
+    for (uint32_t b = 0; b < nb; ++b) {
+      if (inL[b])
+        continue;
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        Instr &I = fn.code[i];
+        auto rw = [&](uint32_t &v) {
+          if (v == NONE || v >= nv)
+            return;
+          for (size_t pi = 0; pi < hphis.size(); ++pi)
+            if (v == hphis[pi].dst) {
+              v = phidst[pi];
+              return;
+            }
+        };
+        rw(I.a);
+        rw(I.b2);
+        rw(I.c2);
+        for (uint32_t &av : I.args)
+          rw(av);
+      }
+    }
+    std::vector<Instr> xphis{};
+    for (size_t pi = 0; pi < hphis.size(); ++pi)
+      xphis.push_back({.k = K::Phi,
+                       .dst = phidst[pi],
+                       .a = hphis[pi].dst,
+                       .b2 = cfv[pi],
+                       .t = h,
+                       .f = CF});
+    uint32_t xpos = fn.blocks[X].begin;
+    fn.code.insert(fn.code.begin() + (long)xpos, xphis.begin(), xphis.end());
+    const uint32_t k = (uint32_t)xphis.size();
+    for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+      if (b == X) {
+        fn.blocks[b].end += k;
+        continue;
+      }
+      if (fn.blocks[b].begin > xpos)
+        fn.blocks[b].begin += k;
+      if (fn.blocks[b].end > xpos)
+        fn.blocks[b].end += k;
+    }
+  }
+  { // preheader now enters the guard instead of the header
+    for (uint32_t i = fn.blocks[pre].begin; i < fn.blocks[pre].end; ++i) {
+      Instr &I = fn.code[i];
+      if (I.k == K::Br && I.t == h)
+        I.t = G;
+    }
+    if (fn.succ[2 * pre] == h)
+      fn.succ[2 * pre] = G;
+    if (fn.succ[2 * pre + 1] == h)
+      fn.succ[2 * pre + 1] = G;
+    // the header phis key their entry arg by `pre`; that edge is now
+    // G->h, so the keys must follow -- otherwise SSA destruction drops
+    // the entry values on the (only) path into the fallback loop and
+    // the loop would start from garbage phi state
+    for (uint32_t i = fn.blocks[h].begin; i < fn.blocks[h].end; ++i) {
+      Instr &P = fn.code[i];
+      if (P.k != K::Phi)
+        break;
+      if (P.t == pre)
+        P.t = G;
+      else if (P.f == pre)
+        P.f = G;
+    }
+  }
+  fn.recompute_preds();
+  os.lcf_rt++;
+  return true; // one loop per call: the fixpoint driver re-analyzes
 }

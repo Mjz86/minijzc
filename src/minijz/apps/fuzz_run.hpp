@@ -55,6 +55,7 @@ struct FuzzStats {
   long jthreads{}, argpromos{}, gvns{}, unswitches{}, lsimps{};
   long div_progs{}, mat_progs{}, aparam_progs{};
   long gvn_progs{}, gvn_baits{}, unsw_progs{}, unsw_baits{};
+  long cc_progs{}, cc_baits{}; // compound-cond unswitch bait (>= 13331)
 };
 static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.cases += b.cases;
@@ -105,6 +106,8 @@ static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.gvn_baits += b.gvn_baits;
   a.unsw_progs += b.unsw_progs;
   a.unsw_baits += b.unsw_baits;
+  a.cc_progs += b.cc_progs;
+  a.cc_baits += b.cc_baits;
 }
 
 // how many workers --fuzz should use when the flag was not given:
@@ -291,6 +294,10 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
   if (g.n_unswbait > 0) {
     F.unsw_progs++;
     F.unsw_baits += g.n_unswbait;
+  }
+  if (g.n_ccbait > 0) {
+    F.cc_progs++;
+    F.cc_baits += g.n_ccbait;
   }
   {
     OptStats os = sum_ostats(P);
@@ -489,7 +496,8 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
       "native-checked (C+asm x -O0/-O2): %ld\n"
       "  vocabulary: w/ div/mod: %ld | w/ 2-D arrays: %ld | "
       "w/ array params: %ld | w/ breakpoints: %ld (%ld pts) | "
-      "w/ shadow merges: %ld (%ld pairs) | w/ unswitch bait: %ld (%ld loops)\n"
+      "w/ shadow merges: %ld (%ld pairs) | w/ unswitch bait: %ld (%ld loops) | "
+      "w/ compound-cond bait: %ld (%ld loops)\n"
       "  wall: %.1fs on %ld job%s\n",
       F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
       F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
@@ -499,8 +507,8 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
       F.ld_cses, F.rangecmps, F.cmpfacts, F.callcses, F.deadargs, F.fnspecs,
       F.icf, F.jthreads, F.argpromos, F.gvns, F.unswitches, F.lsimps,
       F.native_checked, F.div_progs, F.mat_progs, F.aparam_progs, F.bkpt_progs,
-      F.bkpts, F.gvn_progs, F.gvn_baits, F.unsw_progs, F.unsw_baits, secs, jobs,
-      jobs == 1 ? "" : "s");
+      F.bkpts, F.gvn_progs, F.gvn_baits, F.unsw_progs, F.unsw_baits, F.cc_progs,
+      F.cc_baits, secs, jobs, jobs == 1 ? "" : "s");
   CHECK(mismatches == 0, "fuzz must be clean");
 }
 

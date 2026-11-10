@@ -435,6 +435,12 @@ static std::vector<char> dbg_slot_may_handle(const Program &P, size_t fi) {
 struct SnapColl {
   std::vector<Snap> *out{};
   std::string_view src{};
+  // auto-pause support (checkpoint 18): when stop_at names a pass, the
+  // hook records the FIRST snapshot it took with that name and the
+  // collection truncates there — `opt [FN]` pauses after the pass, like
+  // a breakpoint between passes that actually stops the timeline.
+  const char *stop_at{};
+  long stop_idx{-1};
 };
 static void dbg_snap_hook(const char *pass, bool changed, const Fn &fn,
                           void *ctx) {
@@ -448,15 +454,22 @@ static void dbg_snap_hook(const char *pass, bool changed, const Fn &fn,
   s.instrs = (uint32_t)fn.code.size();
   s.blocks = fn.nblocks();
   C->out->push_back(std::move(s));
+  if (C->stop_at && C->stop_idx < 0 && std::strcmp(pass, C->stop_at) == 0)
+    C->stop_idx = (long)C->out->size() - 1;
 }
 // re-run the per-fn pipeline on a fresh copy, collecting a snapshot after
 // every pass invocation (baseline first). Returns false when -O0.
+// stop_at (may be empty): pause the timeline after that pass's FIRST
+// snapshot; stop_idx (out) is its index, -1 when no pause happened.
 static bool dbg_collect_snaps(const Program &P, size_t fi, const Cli &C,
-                              std::vector<Snap> &snaps) {
+                              std::vector<Snap> &snaps,
+                              const std::string &stop_at, long &stop_idx) {
   if (fi >= P.fns.size())
     return false;
   Fn live = P.fns[fi].ssa;
   SnapColl coll{&snaps, P.src};
+  if (!stop_at.empty())
+    coll.stop_at = stop_at.c_str();
   Snap base{};
   base.name = "baseline";
   base.changed = false;
@@ -471,6 +484,9 @@ static bool dbg_collect_snaps(const Program &P, size_t fi, const Cli &C,
   cfg.snap_ctx = &coll;
   OptStats os{};
   (void)optimize_light(live, os, cfg);
+  if (coll.stop_idx >= 0) // the pause: drop everything past the pass
+    snaps.resize((size_t)coll.stop_idx + 1);
+  stop_idx = coll.stop_idx;
   return true;
 }
 
