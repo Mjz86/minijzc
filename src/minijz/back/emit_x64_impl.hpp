@@ -709,6 +709,9 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
         s += "  leaq .Lfmt(%rip), %rdi\n";
         s += "  xorl %eax, %eax\n  call printf\n";
         break;
+      case K::Bkpt: // observation point: no code (the # line:col comment
+        s += "  # breakpoint\n"; // above already locates it)
+        break;
       case K::Alloc:
         ld("rdi", I.a);
         s += "  call mjz_alloc\n";

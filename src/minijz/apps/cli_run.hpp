@@ -13,6 +13,8 @@
 #include "../back/bytecode.hpp"
 #include "../back/emit_plan.hpp"
 #include "../base/native_run.hpp"
+#include "../opt/optimize_api.hpp" // optimize_light (--opt-diff snapshots)
+#include "../front/diag.hpp"       // located diagnostics
 
 // ---- 17b. --shrink=FILE: delta-debug a failing program ---------------------
 
@@ -21,8 +23,7 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
                       bool brief) {
   P = compile(src, pass_cfg_of(C));
   if (!P.ok) {
-    std::printf("compile error: %s (at byte %u)\n", P.error ? P.error : "?",
-                (unsigned)P.errpos);
+    print_compile_error(src, P.error, P.errpos, C.file.c_str());
     return {};
   }
   if (!brief && !C.quiet) {
@@ -85,15 +86,76 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
       print_fn(P.fns[f].destroyed, t3, P.src);
     }
   }
+  if (C.opt_diff_fn >= 0) {
+    // the batch pass-diff viewer (same snapshot machinery as the
+    // debugger's `opt` explorer, minus the session)
+    long f = C.opt_diff_fn;
+    if (f >= (long)P.fns.size())
+      f = 0;
+    struct CliSnap {
+      std::string name;
+      bool changed;
+      std::string ir;
+      uint32_t instrs, blocks;
+    };
+    std::vector<CliSnap> snaps{};
+    Fn live = P.fns[(size_t)f].ssa;
+    struct Coll {
+      std::vector<CliSnap> *out;
+      std::string_view src;
+    } coll{&snaps, P.src};
+    {
+      CliSnap base{};
+      base.name = "baseline";
+      base.changed = false;
+      base.ir = fn_ir_str(live, "baseline (pre-opt SSA)", P.src);
+      base.instrs = (uint32_t)live.code.size();
+      base.blocks = live.nblocks();
+      snaps.push_back(std::move(base));
+    }
+    PassCfg cfg = pass_cfg_of(C);
+    cfg.debug = 0;
+    cfg.dbg_name = P.fn_names[(size_t)f];
+    cfg.snap_hook = [](const char *pass, bool changed, const Fn &fn,
+                       void *ctx) {
+      Coll *c = (Coll *)ctx;
+      CliSnap s{};
+      s.name = pass;
+      s.changed = changed;
+      char title[64];
+      std::snprintf(title, sizeof title, "after %s", pass);
+      s.ir = fn_ir_str(fn, title, c->src);
+      s.instrs = (uint32_t)fn.code.size();
+      s.blocks = fn.nblocks();
+      c->out->push_back(std::move(s));
+    };
+    cfg.snap_ctx = &coll;
+    OptStats os{};
+    (void)optimize_light(live, os, cfg);
+    std::printf("== --opt-diff: fn %ld [%s] ==\n", f,
+                std::string(P.fn_names[(size_t)f]).c_str());
+    for (size_t k = 0; k < snaps.size(); ++k) {
+      const CliSnap &s = snaps[k];
+      std::printf("  #%-3zu %-10s %-9s %u instrs, %u blocks\n", k,
+                  s.name.c_str(), s.changed ? "changed" : "fixed",
+                  (unsigned)s.instrs, (unsigned)s.blocks);
+      if (k > 0 && s.changed) {
+        std::string d = unified_diff(snaps[k - 1].ir, s.ir);
+        if (!d.empty())
+          std::printf("%s", d.c_str());
+      }
+    }
+    std::printf("(interprocedural passes run program-wide; not snapshotted)\n");
+  }
   if (C.no_exec && !C.do_run)
     return {}; // compile/emit only
   RunOut R = run_prog(fns_of(P, 1), C.steps, C.inputs);
   RunOut Ro = run_ast(P.P.ast, P.P.root, C.steps, C.inputs);
   if (!C.quiet || brief) {
     std::printf("oracle   : ");
-    print_run(Ro);
+    print_run(Ro, P.src);
     std::printf("compiled : ");
-    print_run(R);
+    print_run(R, P.src);
     if (!same_run(Ro, R))
       std::printf("*** MISMATCH between oracle and compiled output ***\n");
   }

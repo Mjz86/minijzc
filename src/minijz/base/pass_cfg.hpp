@@ -5,6 +5,8 @@
 
 #include "../config.hpp"
 
+struct Fn; // ir/instr.hpp — fwd for the snapshot hook's signature
+
 // ============================================================================
 // 9e0. PASS MANAGER
 // ============================================================================
@@ -71,6 +73,14 @@ struct PassCfg {
   bool stkarr_ok{true}; // C-backend stack arrays allowed
   // runtime-only debugging context (constexpr path leaves it empty)
   std::string_view dbg_name{};
+  // runtime-only pass-snapshot hook (the debugger's `opt` explorer and
+  // --opt-diff): invoked after EVERY pass invocation with the post-pass fn.
+  // Null on the constexpr path — the branch never touches constant
+  // evaluation (same discipline as debug/dbg_name).
+  using SnapFn = void (*)(const char *pass, bool changed, const Fn &fn,
+                          void *ctx);
+  SnapFn snap_hook{};
+  void *snap_ctx{};
 
   constexpr void set_level(uint32_t lv) {
     level = lv;

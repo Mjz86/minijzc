@@ -44,6 +44,7 @@ struct FuzzStats {
   long arr_progs{}, in_progs{}, native_checked{};
   long fn_progs{}, inlined_total{}, unrolled_total{};
   long brk_progs{}, lifted{}, dead_stores{}, gensims{}, traps_killed{};
+  long bkpt_progs{}, bkpts{}; // observation-point vocabulary (new seeds)
   long constcalls{}, deadallocs{}, tces{}, cdfolds{}, ifconvs{};
   long scctco_total{}, scctco_fold_total{};
   long sccp_consts{}, sccp_brs{}, ld_fwds{}, ld_cses{}, rangecmps{};
@@ -67,6 +68,8 @@ static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.inlined_total += b.inlined_total;
   a.unrolled_total += b.unrolled_total;
   a.brk_progs += b.brk_progs;
+  a.bkpt_progs += b.bkpt_progs;
+  a.bkpts += b.bkpts;
   a.lifted += b.lifted;
   a.dead_stores += b.dead_stores;
   a.gensims += b.gensims;
@@ -246,6 +249,10 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
     F.fn_progs++;
   if (g.has_brk_cont)
     F.brk_progs++;
+  if (g.n_bkpts > 0) {
+    F.bkpt_progs++;
+    F.bkpts += g.n_bkpts;
+  }
   if (g.has_div)
     F.div_progs++;
   if (g.has_mat)
@@ -443,7 +450,7 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
               "jthreads: %ld | argpromos: %ld | "
               "native-checked (C+asm x -O0/-O2): %ld\n"
               "  vocabulary: w/ div/mod: %ld | w/ 2-D arrays: %ld | "
-              "w/ array params: %ld\n"
+              "w/ array params: %ld | w/ breakpoints: %ld (%ld pts)\n"
               "  wall: %.1fs on %ld job%s\n",
               F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
               F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
@@ -453,7 +460,8 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
               F.sccp_consts, F.sccp_brs, F.ld_fwds, F.ld_cses, F.rangecmps,
               F.cmpfacts, F.callcses, F.deadargs, F.fnspecs, F.icf, F.jthreads,
               F.argpromos, F.native_checked, F.div_progs, F.mat_progs,
-              F.aparam_progs, secs, jobs, jobs == 1 ? "" : "s");
+              F.aparam_progs, F.bkpt_progs, F.bkpts, secs, jobs,
+              jobs == 1 ? "" : "s");
   CHECK(mismatches == 0, "fuzz must be clean");
 }
 

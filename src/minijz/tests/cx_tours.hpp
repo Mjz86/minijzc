@@ -206,6 +206,61 @@ constexpr bool cx_notcanon() { // comparison negation at the equality points
          oracle.out[8] == 0 && oracle.out[9] == 1;
 }
 
+constexpr bool cx_bkpt() { // the breakpoint statement: invisible + durable
+  // observed values (scalar + array + param) survive the whole -O3
+  // pipeline: DCE roots, mem2reg keeps observed arrays in the arena, the
+  // loop's breakpoints survive unrolling, and every runner treats them as
+  // no-ops (output parity is the contract that makes them debug-only)
+  constexpr std::string_view src =
+      "fn add(x, y) { breakpoint x; return x + y; }\n"
+      "let a = array(2);\n"
+      "a[0] = 7;\n"
+      "a[1] = 9;\n"
+      "breakpoint a;\n"
+      "let s = 0;\n"
+      "let i = 0;\n"
+      "while (i < 3) {\n"
+      "  breakpoint s, i;\n"
+      "  s = s + add(a[i % 2], i);\n"
+      "  i = i + 1;\n"
+      "}\n"
+      "breakpoint s;\n"
+      "print s;\n";
+  Program P = compile(src);
+  if (!P.ok)
+    return false;
+  RunOut oracle = run_ast(P.P.ast, P.P.root, 1000000, {});
+  RunOut opt = run_prog(fns_of(P, 1), 1000000, {});
+  RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {});
+  if (!same_run(oracle, opt) || !same_run(oracle, vm))
+    return false;
+  if (oracle.out.size() != 1 || oracle.out[0] != 7 + 10 + 9)
+    return false; // 7+0, 9+1, 7+2
+  // durability: the optimized IR still carries breakpoints with intact
+  // observe lists, and the observed array stayed in the arena (no lift)
+  uint32_t bkpts = 0, with_args = 0, allocs = 0;
+  for (const Fn &F : fns_of(P, 1)) {
+    for (const Instr &I : F.code) {
+      if (I.k == K::Bkpt) {
+        ++bkpts;
+        if (!I.args.empty())
+          ++with_args;
+      }
+      if (I.k == K::Alloc)
+        ++allocs;
+    }
+  }
+  if (bkpts < 4 || with_args < 4 || allocs == 0)
+    return false; // unrolled copies count, but never fewer than the source
+  // the bytecode encodes them as self-describing Bc::Bkpt ops
+  std::vector<uint8_t> bc = emit_bytecode(fns_of(P, 2));
+  uint32_t bc_bkpts = 0;
+  for (size_t p = 4; p < bc.size(); ++p)
+    if (bc[p] == (uint8_t)Bc::Bkpt)
+      ++bc_bkpts;
+  return bc_bkpts == bkpts;
+}
+
 constexpr bool cx_pipeline() {
   return cx_tour() && cx_arrays() && cx_fns() && cx_series();
 }
@@ -231,6 +286,8 @@ static_assert(
 // once in tu/cxtours.cpp; the header-only build inlines it right here
 #ifdef MJZ_MULTI_CPP
 bool cx_pipeline_rt(); // tu/cxtours.cpp
+bool cx_bkpt_rt();     // tu/cxtours.cpp
 #else
 inline bool cx_pipeline_rt() { return cx_pipeline(); }
+inline bool cx_bkpt_rt() { return cx_bkpt(); }
 #endif

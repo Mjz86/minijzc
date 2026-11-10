@@ -34,6 +34,8 @@ struct GenCtx {
   bool bait{false};          // deliberate trap bait allowed in this program?
   bool allow_rti{false};     // runtime-index array accesses allowed?
   bool has_div{}, has_mat{}, has_aparam{}; // vocabulary report flags
+  bool bkpt_mode{false}; // sprinkle `breakpoint` stmts (seeds >= the floor)
+  int n_bkpts{};         // sprinkled observation points (for the report)
   explicit GenCtx(uint32_t seed) : rng(seed) {}
   int pick(int lo, int hi) {
     return std::uniform_int_distribution<int>(lo, hi)(rng);
@@ -318,6 +320,24 @@ inline void GenCtx::gen_expr(std::string &out, int depth) {
 // consume one unit for their bodies, so the program tree is finite and small
 // (if-arms pick(1,2) stmts: branching factor stays subcritical).
 inline void GenCtx::gen_stmt(int depth) {
+  // observation points (new seeds only — the seed floor keeps every
+  // committed fixture byte-identical): a bare stop or 1-2 in-scope names.
+  // They are no-ops for output in every backend, so parity must hold —
+  // this exercises the DCE-root / no-lift / deadargs-hard-use guards.
+  if (bkpt_mode && pick(0, 9) == 0) {
+    src += "breakpoint";
+    if (!vars.empty() && pick(0, 2) > 0) {
+      int k = pick(0, (int)vars.size() - 1);
+      src += " " + vars[k];
+      if (!arrays.empty() && pick(0, 1)) { // a second, array observe
+        src += ", " + arrays[pick(0, (int)arrays.size() - 1)].name;
+        n_bkpts++; // counted twice on purpose: obs density, not sites
+      }
+    }
+    src += ";\n";
+    n_bkpts++;
+    return;
+  }
   // break/continue bait: inside loops only, always guarded by an `if` so
   // the statements after it stay reachable (the generated loops decrement
   // their counter FIRST, so a guarded `continue` cannot spin forever)
@@ -630,11 +650,17 @@ inline void GenCtx::gen_fn_defs() {
   }
 }
 
+// breakpoint sprinkling starts here: older seeds (all committed fixtures)
+// generate byte-identical programs; newer seeds add observation points so
+// the whole backend matrix + native parity runs WITH breakpoints in the mix
+inline constexpr uint32_t MJZ_BKPT_SEED_FLOOR = 12301;
+
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
-  g.use_input = (seed & 1) != 0;        // half the programs read stdin
-  g.allow_mat = ((seed >> 2) & 7) == 0; // 1/8 of programs grow 2-D arrays
-  g.bait = ((seed >> 5) & 3) == 0;      // 1/4 carry deliberate trap bait; the
+  g.bkpt_mode = seed >= MJZ_BKPT_SEED_FLOOR; // see MJZ_BKPT_SEED_FLOOR
+  g.use_input = (seed & 1) != 0;             // half the programs read stdin
+  g.allow_mat = ((seed >> 2) & 7) == 0;      // 1/8 of programs grow 2-D arrays
+  g.bait = ((seed >> 5) & 3) == 0; // 1/4 carry deliberate trap bait; the
   // rest run to completion so the deep optimizer paths stay covered
   g.allow_rti = ((seed >> 8) & 3) == 0; // 1/4 use runtime array indices; the
   // rest keep every index constant, so lifting / dead-array / const-call

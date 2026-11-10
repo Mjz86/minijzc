@@ -1,0 +1,22 @@
+// bkpt_tour.mjz — the checkpoint-15 feature tour: observation points on a
+// scalar, an array, and loop state, plus a recursive callee. Every
+// `breakpoint` is a no-op for the output (parity with the same program
+// minus those lines); the debugger stops at each and shows the values.
+fn fibo(n) {
+  if (n < 2) { return n; }
+  return fibo(n - 1) + fibo(n - 2);
+}
+let a = array(3);
+a[0] = 1;
+a[1] = 2;
+a[2] = 3;
+breakpoint a;
+let total = 0;
+let i = 0;
+while (i < 4) {
+  breakpoint total, i;
+  total = total + fibo(i);
+  i = i + 1;
+}
+breakpoint total;
+print total;

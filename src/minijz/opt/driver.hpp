@@ -58,25 +58,25 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #ifndef MJZ_DBG_NO_SCCP
       if (cfg.p_sccp) {
         c = opt_sccp(fn, os, cfg.is_main); // conditional + loop-carried consts
-        dbg_pass(cfg.debug, fn, "sccp", c);
+        dbg_pass(cfg, fn, "sccp", c);
         ch |= c;
       }
 #endif
       c = opt_constprop(fn, os, cfg.is_main); // fold/identities/branch folds
-      dbg_pass(cfg.debug, fn, "fold", c);
+      dbg_pass(cfg, fn, "fold", c);
       ch |= c;
       normalize_phis(fn);
 #ifndef MJZ_DBG_NO_COPYPROP
       if (cfg.p_copyprop) {
         c = opt_copyprop(fn, os); // copies -> uses of the source
-        dbg_pass(cfg.debug, fn, "copyprop", c);
+        dbg_pass(cfg, fn, "copyprop", c);
         ch |= c;
       }
 #endif
       normalize_phis(fn);
       if (cfg.p_canon) {
         c = opt_canon(fn, os); // canonical forms + NOT-of-compare
-        dbg_pass(cfg.debug, fn, "canon", c);
+        dbg_pass(cfg, fn, "canon", c);
         ch |= c;
       }
       normalize_phis(fn);
@@ -84,28 +84,28 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_cse) {
         An A = analyze(fn);
         c = opt_cse(fn, A, os); // dominating recomputation -> reuse
-        dbg_pass(cfg.debug, fn, "cse", c);
+        dbg_pass(cfg, fn, "cse", c);
         ch |= c;
         normalize_phis(fn);
       }
 #endif
       if (cfg.p_unreach) {
         c = opt_remove_unreachable(fn, os); // dead blocks + phi degeneration
-        dbg_pass(cfg.debug, fn, "unreach", c);
+        dbg_pass(cfg, fn, "unreach", c);
         ch |= c;
       }
       normalize_phis(fn);
 #ifndef MJZ_DBG_NO_SPLICE
       if (cfg.p_splice) {
         c = opt_splice(fn, os); // collapse single-pred/succ jump chains
-        dbg_pass(cfg.debug, fn, "splice", c);
+        dbg_pass(cfg, fn, "splice", c);
         ch |= c;
       }
 #endif
       normalize_phis(fn);
       if (cfg.p_dce) {
         c = opt_dce(fn, os);
-        dbg_pass(cfg.debug, fn, "dce", c);
+        dbg_pass(cfg, fn, "dce", c);
         ch |= c;
       }
       normalize_phis(fn);
@@ -133,14 +133,14 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_mem2reg) {
         An A = analyze(fn);
         c = opt_mem2reg(fn, A, os, cfg.lift_ok, cfg.stkarr_ok);
-        dbg_pass(cfg.debug, fn, "mem2reg", c);
+        dbg_pass(cfg, fn, "mem2reg", c);
         ch |= c;
         normalize_phis(fn);
       }
       if (cfg.p_ldelim) {
         An A = analyze(fn);
         c = opt_ldelim(fn, A, os); // fwd/CSE leftover array loads
-        dbg_pass(cfg.debug, fn, "ldelim", c);
+        dbg_pass(cfg, fn, "ldelim", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -152,14 +152,14 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
           Ranges RA = range_analyze(fn, A);
           if (run_te) {
             c = opt_trapelim(fn, A, os, RA); // ranges + aliasing -> nt
-            dbg_pass(cfg.debug, fn, "trapelim", c);
+            dbg_pass(cfg, fn, "trapelim", c);
             trapelim_ran = true;
             ch |= c;
             normalize_phis(fn);
           }
           if (run_jt) {
             c = opt_jthread(fn, A, RA, os); // per-edge elbow threading
-            dbg_pass(cfg.debug, fn, "jthread", c);
+            dbg_pass(cfg, fn, "jthread", c);
             jthread_ran = true;
             ch |= c;
             normalize_phis(fn);
@@ -170,7 +170,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_licm) {
         An A = analyze(fn);
         c = opt_licm(fn, A, os); // hoist invariants to the preheader
-        dbg_pass(cfg.debug, fn, "licm", c);
+        dbg_pass(cfg, fn, "licm", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -178,7 +178,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #ifndef MJZ_DBG_NO_DIVMAGIC
       if (cfg.p_divmagic) {
         c = opt_divmagic(fn, os); // /constant -> mulhi+shift
-        dbg_pass(cfg.debug, fn, "divmagic", c);
+        dbg_pass(cfg, fn, "divmagic", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -186,14 +186,14 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
 #ifndef MJZ_DBG_NO_REASSOC
       if (cfg.p_reassoc) {
         c = opt_reassoc(fn, os); // canonicalize +/-/*c chains (feeds LCF)
-        dbg_pass(cfg.debug, fn, "reassoc", c);
+        dbg_pass(cfg, fn, "reassoc", c);
         ch |= c;
         normalize_phis(fn);
       }
 #endif
       if (cfg.p_ifconv) { // provably-binary cbr selects -> arithmetic
         c = opt_ifconv(fn, os);
-        dbg_pass(cfg.debug, fn, "ifconv", c);
+        dbg_pass(cfg, fn, "ifconv", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -213,7 +213,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_unroll && cfg.unroll) {
         An A = analyze(fn);
         bool c = opt_unroll(fn, A, os, cfg.unroll);
-        dbg_pass(cfg.debug, fn, "unroll", c);
+        dbg_pass(cfg, fn, "unroll", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -222,7 +222,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_lcf) {
         An A2 = analyze(fn);          // unrolling may have reshaped the CFG
         bool c = opt_lcf(fn, A2, os); // closed forms / simulators
-        dbg_pass(cfg.debug, fn, "lcf", c);
+        dbg_pass(cfg, fn, "lcf", c);
         ch |= c;
         normalize_phis(fn);
       }
@@ -230,7 +230,7 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_cdfold) { // TCE countdown loops -> exact closed form
         An A3 = analyze(fn);
         bool c = opt_cdfold(fn, A3, os);
-        dbg_pass(cfg.debug, fn, "cdfold", c);
+        dbg_pass(cfg, fn, "cdfold", c);
         ch |= c;
         normalize_phis(fn);
       }

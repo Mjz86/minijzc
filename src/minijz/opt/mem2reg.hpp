@@ -142,6 +142,17 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
           }
           continue;
         }
+        if (I.k == K::Bkpt) { // observed handle: the array must STAY in the
+          for (uint32_t v : I.args) { // arena so the debugger can dump its
+            uint32_t oid =
+                (v != NONE && v < nv) ? AI.single[v] : NONE; // contents
+            if (oid != NONE) {
+              bad[oid] = 1;      // no lifting to vregs
+              bad_dead[oid] = 1; // and no dead-store sweep either
+            }
+          }
+          continue;
+        }
         if (id == NONE)
           continue;
         if (I.k == K::Load || I.k == K::Store) {

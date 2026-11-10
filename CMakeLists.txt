@@ -82,7 +82,7 @@ set(FUZZ_SEEDS "1:400" CACHE STRING
 set(FUZZ_SHARDS 1 CACHE STRING "split FUZZ_SEEDS into this many ctest cases")
 set(FUZZ_JOBS 1 CACHE STRING "parallel fuzz workers for the ctest gates")
 option(FUZZ_RANDOM_CONFIGS ON "also fuzz with random pass configurations")
-set(MJZ_CX_CHECKS "1;2;3;4;5;6" CACHE STRING "constexpr proof check numbers")
+set(MJZ_CX_CHECKS "1;2;3;4;5;6;7" CACHE STRING "constexpr proof check numbers")
 
 # ---------------------------------------------------------------------------
 # the mjz_lib clone next to this repo (README: git clone .../String mjz_lib).
@@ -260,6 +260,15 @@ add_test(NAME debugger_session
           bash $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/tco_parity.mjz
           ${CMAKE_CURRENT_SOURCE_DIR}/examples/general.in)
 set_tests_properties(debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+
+# checkpoint 15: the breakpoint statement + the pass explorer, as a scripted
+# session (language-bkpt stops with observed values, vars/watch, source-line
+# breakpoints, the opt timeline / diff / pass-breakpoint views, five-way
+# check on a program that is breakpoint-dense end to end)
+add_test(NAME bkpt_debugger_session
+  COMMAND bash -c [==[printf 'bkpts\nsrc\nvm continue\nvm continue\nvars\nwatch i\nvm continue\nvm unbreak *\nvm line 14\nvm breaks\nvm unbreak *\nvm continue\nvm continue\nvm run\nopt\nopt break sccp\nopt diff sccp fold\nopt list\ncheck\nquit\n' | "$1" "$2" --debugger]==]
+          bash $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/bkpt_tour.mjz)
+set_tests_properties(bkpt_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
 
 # bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that
 # hung the compiler — crossed phi-degenerate copies + copyprop, no dce

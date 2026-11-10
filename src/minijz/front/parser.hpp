@@ -423,6 +423,38 @@ struct Parser {
       a.ss.push_back({is_break ? Sk::Brk : Sk::Cont, 0, 0, 0, 0, p0});
       return i;
     }
+    case Tk::KwBkpt: {
+      // `breakpoint;` or `breakpoint x, y, arr;` — a debugging observation
+      // point. The observe list is plain variable names (scalars or array
+      // handles); it records USES, so the optimizer keeps them alive (and
+      // arrays un-promoted) — even -O3 builds stay debuggable there.
+      ++ti;
+      std::vector<uint32_t> obs{};
+      if (peek().k == Tk::Id) {
+        for (;;) {
+          if (peek().k != Tk::Id) {
+            fail(peek().pos, "expected variable name in breakpoint list");
+            return 0;
+          }
+          Tok t = eat();
+          std::string_view w = src.substr(t.lo, t.hi - t.lo);
+          uint32_t v = find_var(w, t.pos);
+          if (!ok)
+            return 0;
+          obs.push_back(v);
+          if (accept(Tk::Comma))
+            continue;
+          break;
+        }
+      }
+      if (!expect(Tk::Semi, "expected ';'"))
+        return 0;
+      a.seq_kids.push_back(std::move(obs));
+      uint32_t i = (uint32_t)a.ss.size();
+      a.ss.push_back(
+          {Sk::Bkpt, 0, 0, (uint32_t)(a.seq_kids.size() - 1), 0, p0});
+      return i;
+    }
     case Tk::KwWhile: {
       ++ti;
       if (!expect(Tk::LP, "expected '('"))

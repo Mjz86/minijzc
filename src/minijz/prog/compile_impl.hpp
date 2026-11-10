@@ -47,8 +47,13 @@ MJZ_PIPELINE_FN Program compile(std::string_view src, PassCfg cfg) {
     if (e.k == Ek::Call) {
       const FnDef &fd = a.fns[e.var];
       if (fd.params.size() != a.seq_kids[e.l].size()) {
-        P.error = "wrong number of arguments in call";
-        P.errpos = 0;
+        std::snprintf(mjz_errbuf, sizeof mjz_errbuf,
+                      "call to '%.*s' passes %zu argument%s but takes %zu",
+                      (int)fd.name.size(), fd.name.data(),
+                      a.seq_kids[e.l].size(),
+                      a.seq_kids[e.l].size() == 1 ? "" : "s", fd.params.size());
+        P.error = mjz_errbuf;
+        P.errpos = e.pos; // the call site's source offset
         return P;
       }
     }

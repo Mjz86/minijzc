@@ -26,6 +26,7 @@ struct Cli {
   std::string exe_name{}; // -o NAME: name of the --emit=exe executable
   bool emit_c{false}, emit_asm{false}, emit_bc{false}, emit_exe{false};
   bool do_run{false}, no_opt{false}, print_ir{false}, print_bc{false};
+  long opt_diff_fn{-1}; // --opt-diff[=FN]: per-pass unified IR diffs
   bool no_inline{false};
   bool no_scctco{false};
   bool no_reassoc{false}, no_lcf{false}, no_divmagic{false};
@@ -157,6 +158,9 @@ static void usage() {
       "                    guarded runtime-trip-count closed form)\n"
       "  --no-divmagic      skip div/mod-by-constant -> mulhi+shift lowering\n"
       "  --print-ir        dump SSA (pre/post opt) and destroyed IR\n"
+      "  --opt-diff[=FN]   pass-by-pass IR diff viewer: re-run the pipeline\n"
+      "                    on fn FN (default 0 = main), print the timeline\n"
+      "                    and a unified diff after every CHANGING pass\n"
       "  --print-bc        print the bytecode listing\n"
       "  --quiet           no reports, just results\n"
       "  --fuzz_dump       dumps fuzz info (MJZ_FUZZ_DUMP env var is no longer "
@@ -272,6 +276,10 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
       C.unroll = (unsigned)atol(v);
     else if (a == "--print-ir")
       C.print_ir = true;
+    else if (a == "--opt-diff")
+      C.opt_diff_fn = 0; // default: main
+    else if (const char *v = val("--opt-diff="))
+      C.opt_diff_fn = atol(v);
     else if (a == "--print-bc")
       C.print_bc = true;
     else if (a == "--quiet")

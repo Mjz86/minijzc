@@ -16,9 +16,10 @@ src/minijz/           the compiler as a header-only constexpr library
   fwd.hpp               forward declarations (declaration-only contexts)
   graph_lib.hpp         the mjz_lib import, ISOLATED: only the headers that
                         actually need the graph/big-number library include it
-  base/                  pass_cfg (PassCfg + the 28-name toggle table),
-                        native_run (find_cc/slurp/run_capture/write_file)
-  front/                 lexer, ast, parser
+  base/                  pass_cfg (PassCfg + the 28-name toggle table +
+                        the runtime-only pass-snapshot hook), native_run
+                        (find_cc/slurp/run_capture/write_file)
+  front/                 lexer, ast, parser, diag (located diagnostics)
   ir/                    instr (IR core), pred_norm, builder, destruct,
                         stats (SsaStats/DestrStats)
   opt/analysis/          an (dominators/loops/SSA), alias, intervals, trapelim
@@ -260,24 +261,88 @@ from stdin).
 
 ```
 help                    command list
-src / fns / stats       source, function table, pipeline statistics
+src [N]                 numbered source (the line numbers feed `vm line`)
+fns / stats             function table, pipeline statistics
 ir [FN] [ssa|opt|dst|all]   dump IR at any stage
 cfg [FN]                CFG: blocks/preds/succs (main: + mjz_lib analysis)
 plan [FN]               emission plan (order, next, dead, fused)
-bc [FN]                 bytecode listing; opt [FN] re-runs the optimizer
-                        LIVE, pass by pass, IR after every changing pass
+bc [FN]                 bytecode listing
+bkpts                   the program's language breakpoints (`breakpoint`
+                        statements): pc, fn, source line, observed names
+vars [FN]               named slots with live values — what survived
+                        optimization (observed values included)
+watch NAME / unwatch    show a variable at every stop
+opt [FN]                pass explorer: re-run the pipeline on a copy with
+                        a snapshot after EVERY pass; prints the timeline
+opt show [N]            full IR of snapshot N
+opt diff [A [B]]        unified IR diff between snapshots (names or
+                        indices; default first-vs-last)
+opt break PASS          a breakpoint BETWEEN passes: PASS's snapshot +
+                        its diff against the previous one
+opt list                the 28-name pass toggle table, on/off
 check                   all five runners + comparison
-vm reset/step/run/until/break/unbreak/breaks/state/dis
-                        the steppable machine: single-op tracing, pc
-                        breakpoints, aligned disassembly, and `vm state`
-                        = EVERYTHING (pc+fn, frames+slots, operand stack,
-                        arena, input position, output)
+vm reset/step/run/continue/until/break/line/unbreak/breaks/state/dis
+                        the steppable machine: single-op tracing WITH
+                        source-line annotations, pc breakpoints, SOURCE
+                        LINE breakpoints (`vm line L`), aligned
+                        disassembly, and `vm state` = EVERYTHING (pc+fn,
+                        frames+slots, operand stack, arena, input
+                        position, output)
 quit
 ```
+
+`vm continue` stops automatically at every language breakpoint and
+prints the observed values (scalars as numbers, array handles as arena
+dumps); the stop is BEFORE the op executes, and `continue` resumes
+through it (classic debugger semantics). `opt` snapshots cover the
+intra-fn pipeline; the interprocedural passes run program-wide around
+it.
 
 The VM half runs on the `VmCtx` stepper (`back/vm.hpp`); `vm_run()` is a
 thin loop over `vm_step_op()` with identical semantics (the constexpr
 proofs still run the VM at compile time).
+
+## The `breakpoint` statement — debugging optimized builds
+
+`breakpoint;` or `breakpoint x, y, arr;` — an observation point. It is
+a NO-OP for program output in every runner (oracle, all IR stages, the
+bytecode VM, emitted C and asm: full native parity holds — the fuzzer
+sprinkles breakpoints into every new-seed program since the
+`MJZ_BKPT_SEED_FLOOR` window). But the observed values are USES:
+
+* DCE treats the point as a root — it survives `-O3` (loop unrolling
+  duplicates it per iteration; each stop shows that iteration's values);
+* `mem2reg` never lifts an observed array to registers — the allocation
+  stays in the arena so the debugger can dump its contents (and the C
+  backend keeps it out of stack-array form for the same honesty);
+* `deadargs` counts an observed parameter as a hard use — it stays in
+  the signature;
+* const-call/pure-call-CSE treat a function containing one as impure —
+  the call (and its observation points) never fold away.
+
+The optimizer may still rewrite WHICH vreg holds the value (copy-prop
+into temps, constants folded); the debugger resolves names through the
+pre-opt SSA statement, and shows the value the optimized program
+actually has at the stop — that is the point: even optimized builds
+remain debuggable. `--opt-diff[=FN]` gives the same pass-diff view at
+the CLI level.
+
+## Located diagnostics (compile errors + runtime traps)
+
+Compile errors render with line:col, the source line, and a caret, and
+quote the offending token (`front/diag.hpp`):
+
+```
+prog.mjz:3:9: error: use of undeclared variable 'zzz'
+    3 |   print zzz + 1;
+      |       ^~~
+prog.mjz:2:7: error: call to 'f' passes 1 argument but takes 2
+```
+
+Runtime traps from the interpreters carry the trapping instruction's
+source offset and a category — `TRAP (division by zero at 7:3)`,
+`TRAP (index out of bounds at 2:8)` — while the parity contract (the
+exact `TRAP\n` text native builds print) stays byte-identical.
 
 ## After you change something
 
@@ -361,6 +426,35 @@ duplication, loop rotation/simplification/canonicalization proper,
   combination), demanded/known bits, MemCpyOpt,
   loop fusion/fission/distribution, loop unswitching/versioning/predication,
   function outlining, Attributor-style inference, GlobalOpt.
+
+## 4. make the compiler debuggable (breakpoints, diagnostics, pass diffs) — DONE
+
+The checkpoint-15 additions, per the request:
+
+* **the `breakpoint` statement** (`breakpoint;` / `breakpoint x, arr;`):
+  an observation point that never prints anything but observes the listed
+  values so the debugger can stop and step there — **even optimized
+  builds** (observed values are USES: DCE roots, arrays stay un-lifted,
+  params stay in signatures; see the dedicated README section above).
+  Guarded in the optimizer (dce/mem2reg/deadargs hard-use, impure for
+  constcall/callcse, conservative skips in jthread elbows and the LCF/
+  cdfold simulators) and proven by `cx_check_7` at COMPILE TIME plus the
+  breakpoint-sprinkling fuzz window (`MJZ_BKPT_SEED_FLOOR`).
+* **better error messages**: located compile diagnostics (line:col +
+  caret + token quoting via `front/diag.hpp`), the call-arity error now
+  names the function, both counts, AND the call site; runtime traps from
+  the interpreters carry kind + source offset ("division by zero at
+  7:3") with the native-parity `TRAP\n` contract byte-identical.
+* **the debugger grew both halves**: program side — automatic stops at
+  language breakpoints with observed values, `bkpts`/`vars`/`watch`,
+  source-LINE breakpoints (`vm line L`), line-annotated stepping and
+  disassembly, numbered `src`; optimization side — the pass explorer
+  (`opt` timeline with per-pass snapshots, `opt show`, `opt diff`'s
+  unified IR diff between ANY two passes, `opt break PASS` as a
+  breakpoint BETWEEN passes, `opt list`), plus the batch `--opt-diff`
+  CLI flag — the diff shower between passes, driven by a runtime-only
+  snapshot hook in `PassCfg`/`dbg_pass` that never touches the constexpr
+  path.
 
 The original wishlist (kept verbatim for reference):
 

@@ -40,9 +40,12 @@ constexpr bool opt_dce(Fn &fn, OptStats &os) {
       // Input consumes the stdin tape), control flow, and anything that may
       // TRAP (Div/Mod with a non-constant divisor, Alloc: n<0 or OOM,
       // Load: out of bounds) — removing them would erase observable behavior.
+      // Bkpt is a debugging observation point: it stays so -O3 builds remain
+      // debuggable (its observed args are live uses, walked below).
       if (I.k == K::Print || I.k == K::Br || I.k == K::Cbr || I.k == K::Exit ||
           I.k == K::Store || I.k == K::Input || I.k == K::Alloc ||
-          I.k == K::Load || I.k == K::Ret || I.k == K::Call || may_trap(I)) {
+          I.k == K::Load || I.k == K::Ret || I.k == K::Call || I.k == K::Bkpt ||
+          may_trap(I)) {
         live[i] = 1;
         wl.push_back(i);
       }
