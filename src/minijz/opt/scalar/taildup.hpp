@@ -26,10 +26,11 @@
 //   * preds(T) == {P0, P1}, each pred ending in a DEDICATED `br T`
 //     (an unconditional jump — conditional preds would need edge blocks
 //     this IR does not have; they stay unduplicated).
-//   * T is not a loop header: a header whose body duplicated into its own
-//     latch would be loop rotation proper (see the README wishlist note —
-//     this tree's loop consumers all require the canonical test-first
-//     shape, so rotation is documented as not-landed, not missing).
+//   * T is not a loop header: a header's duplication into its own latch
+//     arms is loop rotation proper — landed in checkpoint 22
+//     (opt/loop/rotate.hpp), which runs LAST among the loop consumers
+//     precisely so this tree's test-first consumers get their chance
+//     first.
 //   * T's body is <= TAILDUP_BODY_MAX instrs of Const/Copy/Bin/Print (a
 //     may-trap Div/Mod is fine — the trap ran once per path before and
 //     its copy runs once per path after; a Print printed once per path

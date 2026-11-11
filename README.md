@@ -16,7 +16,7 @@ src/minijz/           the compiler as a header-only constexpr library
   fwd.hpp               forward declarations (declaration-only contexts)
   graph_lib.hpp         the mjz_lib import, ISOLATED: only the headers that
                         actually need the graph/big-number library include it
-  base/                  pass_cfg (PassCfg + the 32-name toggle table +
+  base/                  pass_cfg (PassCfg + the 33-name toggle table +
                         the runtime-only pass-snapshot hook), native_run
                         (find_cc/slurp/run_capture/write_file — with the
                         Windows portability helpers mjz_devnull/mjz_timeout)
@@ -32,7 +32,8 @@ src/minijz/           the compiler as a header-only constexpr library
                         20: small 2-pred tails duplicated into their arms)
   opt/loop/              licm, unroll, lcf, lcf_rt, unswitch (+
                         unswitch_shape: the shared shape/matcher/clone
-                        layer, unswitch_bif: the body-if scan + commit)
+                        layer, unswitch_bif: the body-if scan + commit),
+                        rotate (checkpoint 22: loop rotation proper)
   opt/linear/            linform, reassoc, divmagic
   opt/interprocedural/   callgraph (Tarjan + inliner), scctco, scctco_fold,
                         tailrec (tce_self/tce_merge), cdfold
@@ -315,7 +316,12 @@ reload/store spill traffic, the registers pushed. The plan is the SAME
 chordal coloring the codegen gets (one allocator, two consumers), the
 traffic counts are the exact `movq -N(%rbp),..` counts of the emitted
 asm, and the twenty natural programs in `examples/audit/` (with their
-committed `RESULTS.md`) exercise it across the pressure classes.
+committed `RESULTS.md`, regenerable via `scripts/regen_audit_results.py`)
+exercise it across the pressure classes. Checkpoint 22 refreshed the
+table after loop rotation: 710 vregs, 573 housed, 137 spill slots,
+424 spill traffic — the rotation's edge copies are visible in the audit
+(the FIR filter went spill-free to 8 slots; the section-8 ledger has
+the reading).
 
 ## `--debugger` — the interactive facility
 
@@ -349,7 +355,7 @@ opt break PASS          a breakpoint BETWEEN passes: PASS's snapshot +
                         its diff against the previous one — and ARMED:
                         the next `opt [FN]` PAUSES the timeline after it
 opt continue            disarm the pass breakpoint + collect in full
-opt list                the 32-name pass toggle table, on/off
+opt list                the 33-name pass toggle table, on/off
 check                   all five runners + comparison
 vm reset/step/run/continue/until/break/line/unbreak/breaks/state/dis
                         the steppable machine: single-op tracing WITH
@@ -623,19 +629,19 @@ the ctest/CLI toggle names):
   construction were carrying since checkpoint 18 but could never
   fire (the single-use restriction made every induction-dependent
   recurrence a non-phi leaf term, and the scan rejected it).
-* still open (the standing wishlist): loop rotation proper, LCSSA
+* still open (the standing wishlist): LCSSA
   (needs undef semantics this IR does not have — a loop-exit phi's
   zero-trip edge has no defined value), demanded/known bits,
   MemCPyOpt, loop fusion/fission/distribution, function
   outlining, Attributor-style inference, GlobalOpt. Notes from the
-  unswitch/taildup checkpoints: body-if unswitching is DONE
-  (checkpoint 19, above) and tail duplication is DONE (checkpoint
-  20, above — the degenerate guarded unswitch); the natural next
+  unswitch/taildup/rotation checkpoints: body-if unswitching is DONE
+  (checkpoint 19, above), tail duplication is DONE (checkpoint
+  20, above — the degenerate guarded unswitch) and loop rotation
+  proper is DONE (checkpoint 22, below — the latch merge the taildup
+  gates pointed at, consumed exactly as predicted); the natural next
   step from there is the partial/guarded unswitch family proper
   (version on a loop-VARYING branch whose taken arm is cheap to
-  duplicate) and loop rotation proper (the taildup gates already
-  point at it: the latch merge — continuation IS the header — is
-  the exact shape rotation would consume); compound unswitch
+  duplicate); compound unswitch
   handles exactly two leaf tests — deeper boolean trees
   (`a && b && c`) stay unversioned.
 
@@ -742,8 +748,12 @@ The checkpoint-15 additions, per the request:
   off-cases 17/18 for seeds >= the floor only, so every committed
   fixture keeps its exact old config); the rotation window 12731-13030
   and the random-cfg window 12731+ ran clean, native parity included.
-  (checkpoint 20 adds case 19 — taildup off, seeds >= 14231 — and the
-  table is 32 names now.)
+  (checkpoint 20 adds case 19 — taildup off, seeds >= 14231; checkpoint
+  22 adds case 20 — rotation off, seeds >= 15531 — AND strengthens the
+  discipline: the pass joins the fuzz config only from its floor up, so
+  the committed fixtures of every older window keep regenerating
+  byte-identically — verified this checkpoint on both fz14231+ and
+  fz14831+. The table is 33 names now.)
 
 ## 7. checkpoint 21: backend modularity, the register-allocation audit — DONE
 
@@ -809,6 +819,68 @@ exercise:
   fixtures committed as fuzz_native/fz14831..14851) and 15131-15430,
   the random-cfg window 14231-14430, and the bait window 14231-14530
   re-verified — all clean.
+
+## 8. checkpoint 22: loop rotation proper — DONE
+
+The wishlist's named next step (the taildup gates pointed at the latch
+merge since checkpoint 20) lands as `rotate` (toggle #33, tier 2, the
+LAST loop consumer — `opt/loop/rotate.hpp`):
+
+* **the transformation**: the canonical test-first loop becomes
+  test-last with a one-shot guard. The whole non-phi h-body MOVES
+  (never just copies) to the two edges — a guard copy in the
+  preheader (the 1st header run) and an edge test in the latch (the
+  (i+1)-th header run) — so every side effect keeps its exact count
+  and order: k trips means k+1 header runs in both forms, and the
+  guard copy IS the 1st while the latch copy of iteration i is the
+  (i+1)-th (Prints, Inputs, Calls, Div/Mod traps and Bkpt
+  observations all fire identically; nothing sits between a latch
+  end and the next header top). The header keeps its phis with keys
+  AND args unchanged — pre still enters h and the latch still
+  branches back, so nothing re-keys. Loop-internal readers of a
+  moved def get a fresh header phi carrying (guard copy, latch
+  copy) — exactly the (pre, latch) pattern the original phis use;
+  the after-loop region reads them through fresh exit phis carrying
+  (entry value, back-edge value) — the same pair each header phi
+  merges, relocated past the loop (the exit phi of an h-phi
+  literally re-uses the header phi's arg pair). One control
+  transfer fewer per iteration (the header cbr + the latch br fuse
+  into the latch cbr).
+* **the soundness envelope** (the strict unroll/lcf family):
+  canonical shape, unique pre + latch (no self-loops), dedicated
+  `br h` preheader, the ONLY exit edge is the header's (no breaks)
+  with preds(X) == {h}, h-body <= 8 instrs, outside uses of
+  loop-defined values only through the HDEF set (h-phis + h-body
+  defs) and only in the post-loop region — the guard reads only
+  values dominating the preheader (the checkpoint-20 lcf-rt
+  use-before-def lesson is structurally impossible here).
+* **the checkpoint's own regression, found by the selftest**: the
+  `while(1) + break` showcase folds so the increment lives IN the
+  header — an h-phi whose latch arg IS a moved h-body def. Three
+  phi paths needed routing through the moved def's fresh header
+  phi (the phi's own latch arg, the latch copy's phi read, the
+  exit phi's latch-side arg) — plus the classic copy-dst rewrite
+  the checkpoint-20 landmine list already warned about (the copies
+  kept the original dst while the cbrs read the fresh vregs: both
+  defined the same vreg, the tests read garbage). The unit series
+  pins the shape (c) with the exact program.
+* **the register-audit interaction** (what the checkpoint-21 audit
+  was built for): rotation trades register pressure for the
+  per-iteration branch. The twenty natural programs' table was
+  REGENERATED (`scripts/regen_audit_results.py`, now committed) —
+  644 vregs/537 housed/107 spill slots/345 traffic became
+  710/573/137/424: the guard + latch-edge copies and the routing
+  phis add live values at the loop edges (the FIR filter went from
+  spill-free to 8 slots — the measured price of one fewer control
+  transfer per iteration; the horner/checksum/trial-division/Life/
+  deep-recursion programs stay spill-free).
+* **fuzz**: the rotation window 15531-15830 (143 rotations, 121
+  rotation-bait loops — runtime-clamped start + impure body, the
+  vocabulary that survives every earlier consumer; native parity
+  included, 20 fixtures committed as fuzz_native/fz15531..15550)
+  and 15831-16130 (167 rotations), the re-verified windows
+  14831-15130 and 14231-14530 (both byte-stable: the below-floor
+  gate), random-cfg 14431-14730 and 15531-15830 — all clean.
 
 The original wishlist (kept verbatim for reference):
 

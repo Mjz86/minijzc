@@ -1038,6 +1038,199 @@ int main() {
     }
   }
 
+  // ---- checkpoint 22: loop rotation proper --------------------------------
+  {
+    // (a) the basic rotation: an impure body (a per-iteration print) that
+    // defeats lcf/unroll/unswitch — the test moves to the latch edge, the
+    // after-loop reads arrive through the exit phis, and the five runners
+    // must all agree
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                      "while (i <= n) {\n  print i;\n  s = s + i;\n"
+                      "  i = i + 1;\n}\nprint s;\nprint i;\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: impure-body program compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.rotations == 1, "rotate: the while loop was rotated");
+      RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {4});
+      RunOut plain = run_prog(fns_of(P, 0), 100000, {4});
+      RunOut opt = run_prog(fns_of(P, 1), 100000, {4});
+      RunOut lowered = run_prog(fns_of(P, 2), 100000, {4});
+      RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {4});
+      UT(same_run(oracle, plain) && same_run(oracle, opt) &&
+             same_run(oracle, lowered) && same_run(oracle, vm),
+         "rotate: all five runners agree");
+      UT(opt.out.size() == 6 && opt.out[0] == 1 && opt.out[3] == 4 &&
+             opt.out[4] == 10 && opt.out[5] == 5,
+         "rotate: 4 trips print 1..4 then s=10, i=5");
+      // the shape: a 2-pred phi-headed block ending in Br — the rotated
+      // header (the ORIGINAL header ended in the loop test's Cbr)
+      bool saw_rot_header = false;
+      for (const Fn &F : fns_of(P, 1)) {
+        for (uint32_t b = 0; b < F.nblocks(); ++b) {
+          const uint32_t bg = F.blocks[b].begin, be = F.blocks[b].end;
+          if (bg == be || F.code[be - 1].k != K::Br || F.preds[b].size() != 2 ||
+              F.code[bg].k != K::Phi)
+            saw_rot_header = true; // (b == the rotated header)
+        }
+      }
+      UT(saw_rot_header, "rotate: the header ends in Br, not the test");
+    }
+    // (b) zero-trip: the guard skips the loop, the exit phis carry the
+    // entry values exactly
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                      "while (i <= n) {\n  print i;\n  s = s + i;\n"
+                      "  i = i + 1;\n}\nprint s;\nprint i;\n";
+      Program P = compile(s);
+      RunOut z = run_prog(fns_of(P, 1), 100000, {0});
+      UT(z.out.size() == 2 && z.out[0] == 0 && z.out[1] == 1,
+         "rotate: zero trips print s=0, i=1 (the entry values)");
+    }
+    // (c) the header-increment regression (the selftest break_continue
+    // shape: while(1)+break folds so the increment lives IN the header —
+    // the moved def feeds the header phi's latch arg and must route
+    // through its fresh header phi)
+    {
+      const char *s = "let s = 0;\nlet i = 0;\nwhile (1) {\n  i = i + 1;\n"
+                      "  if (i > 10) { break; }\n"
+                      "  if (i % 2 == 1) { continue; }\n  s = s + i;\n"
+                      "}\nprint s;\nprint i;\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: header-increment program compiles");
+      UT(sum_ostats(P).rotations >= 1,
+         "rotate: the folded while(1) loop was rotated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {});
+      UT(o.out.size() == 2 && o.out[0] == 30 && o.out[1] == 11,
+         "rotate: evens sum to 30, i exits at 11");
+    }
+    // (d) side effects in the moved header keep their exact count: a fn
+    // call in the loop condition fires k+1 times (the guard copy IS the
+    // 1st header run, the latch copy of iteration i is the (i+1)-th)
+    {
+      const char *s = "fn probe(x) { print x; return x * 2; }\n"
+                      "let n = input();\nlet i = 0;\nlet s = 0;\n"
+                      "while (probe(i) < n) {\n  s = s + i;\n  i = i + 1;\n"
+                      "}\nprint s;\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: call-in-condition compiles");
+      UT(sum_ostats(P).rotations >= 1, "rotate: the call-header loop rotated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {10});
+      UT(o.out.size() == 7, "rotate: 6 probe prints (k+1) then s");
+      bool seq_ok = o.out.size() == 7 && o.out[6] == 10;
+      for (int k = 0; k < 6 && o.out.size() == 7; ++k)
+        seq_ok = seq_ok && o.out[k] == k;
+      UT(seq_ok, "rotate: probe printed 0..5 in order, then s=10");
+    }
+    // (e) nested loops rotate independently (innermost first)
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                      "while (i <= n) {\n  let j = 1;\n"
+                      "  while (j <= i) {\n    print j;\n    s = s + 1;\n"
+                      "    j = j + 1;\n  }\n  i = i + 1;\n}\nprint s;\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: nested loops compile");
+      UT(sum_ostats(P).rotations == 2, "rotate: both loops rotated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 7 && o.out[0] == 1 && o.out[1] == 1 && o.out[2] == 2 &&
+             o.out[3] == 1 && o.out[4] == 2 && o.out[5] == 3 && o.out[6] == 6,
+         "rotate: triangular prints 1|1 2|1 2 3 then 6");
+    }
+    // (f) the polarity flip: the body on the cbr's FALSE arm (i >= n)
+    {
+      const char *s = "let n = input();\nlet i = input();\n"
+                      "while (i >= n) {\n  print i;\n  i = i - 1;\n"
+                      "}\nprint i;\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: polarity-flip program compiles");
+      UT(sum_ostats(P).rotations == 1, "rotate: the false-arm loop rotated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {5, 8});
+      UT(o.out.size() == 5 && o.out[0] == 8 && o.out[1] == 7 && o.out[2] == 6 &&
+             o.out[3] == 5 && o.out[4] == 4,
+         "rotate: 8 7 6 5 then the exit value 4");
+    }
+    // (g) a SURVIVING break edge: not this pass's shape (the strict
+    // unroll/lcf family — no break edges allowed)
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 0;\n"
+                      "while (i < n) {\n  if (s > 20) { break; }\n"
+                      "  s = s + i;\n  i = i + 1;\n}\nprint s;\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: break program compiles");
+      UT(sum_ostats(P).rotations == 0,
+         "rotate: a live break edge keeps the test-first shape");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {30});
+      UT(o.out.size() == 1 && o.out[0] == 21,
+         "rotate: the break loop still sums to 21");
+    }
+    // (h) the precedence: lcf's runtime closed form wins, rotation is
+    // the LAST loop consumer (the pure recurrence body never reaches it)
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                      "while (i <= n) {\n  s = s + i;\n  i = i + 1;\n"
+                      "}\nprint s;\nprint i;\n";
+      Program P = compile(s);
+      OptStats os = sum_ostats(P);
+      UT(os.rotations == 0, "rotate: lcf consumed the pure loop first");
+      UT(os.lcf_rt == 1, "rotate: the runtime closed form fired");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {60});
+      UT(o.out.size() == 2 && o.out[0] == 1830 && o.out[1] == 61,
+         "rotate: 1..60 sums to 1830, i exits at 61");
+    }
+    // (i) the toggle: p_rotate off keeps the test-first shape, outputs
+    // identical
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                      "while (i <= n) {\n  print i;\n  s = s + i;\n"
+                      "  i = i + 1;\n}\nprint s;\nprint i;\n";
+      PassCfg cfg{};
+      cfg.set_level(3);
+      cfg.p_rotate = false;
+      Program P = compile(s, cfg);
+      UT(P.ok, "rotate: the toggle compiles");
+      UT(sum_ostats(P).rotations == 0, "rotate: the toggle keeps it off");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {4});
+      UT(o.out.size() == 6 && o.out[4] == 10 && o.out[5] == 5,
+         "rotate: the un-rotated loop prints the same values");
+    }
+    // (j) breakpoint observations through a rotated loop: the bkpt is a
+    // DCE root keeping the values alive, the observation fires per
+    // iteration, the output stays in parity
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                      "while (i <= n) {\n  breakpoint s, i;\n"
+                      "  s = s + i;\n  i = i + 1;\n}\nprint s;\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: breakpoint loop compiles");
+      UT(sum_ostats(P).rotations >= 1, "rotate: the bkpt loop rotated");
+      RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {5});
+      RunOut opt = run_prog(fns_of(P, 1), 100000, {5});
+      UT(same_run(oracle, opt) && opt.out.size() == 1 && opt.out[0] == 15,
+         "rotate: breakpoint parity, s=15");
+    }
+    // (k) a callee's loop: two callers keep the callee out of the inliner
+    // (single-use loop bodies inline regardless of size), so its own
+    // rotation statistic survives; the loop inside the callee rotates
+    // exactly like main's (an if in the body keeps it multi-block — a
+    // single-block self-loop is the documented bail)
+    {
+      const char *s = "fn work(n) {\n  let s = 0;\n  let i = 1;\n"
+                      "  while (i <= n) {\n"
+                      "    if (i % 2 == 0) { print i; } else { print 0 - i; }\n"
+                      "    s = s + i;\n    i = i + 1;\n  }\n  return s;\n}\n"
+                      "fn spin(n) { if (n <= 0) { return 0; } "
+                      "return work(n) + spin(n - 1);\n}\n"
+                      "print work(input()) + spin(input());\n";
+      Program P = compile(s);
+      UT(P.ok, "rotate: recursive-callee program compiles");
+      UT(sum_ostats(P).rotations >= 1, "rotate: a callee loop rotated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {2, 2});
+      UT(o.out.size() == 6 && o.out[0] == -1 && o.out[1] == 2 &&
+             o.out[2] == -1 && o.out[3] == 2 && o.out[4] == -1 && o.out[5] == 7,
+         "rotate: work(2), then spin: -1 2 -1, then 3+4=7");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

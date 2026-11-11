@@ -382,6 +382,26 @@ add_test(NAME taildup_debugger_session
 set_tests_properties(taildup_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
 endif()
 
+# checkpoint 22: loop rotation proper — the natural while with a
+# per-iteration print (LCF purity gate fails, runtime trip count defeats
+# unroll/unswitch) through the five runners; the scripted session pauses
+# the timeline at the rotation (`opt break rotate` — the header has just
+# lost its test: phis + fall-through Br, the guard and the latch test
+# carry the moved condition), `opt show` dumps it, and the five-way check
+# proves the rotated program end to end
+if(MJZ_BASH)
+add_test(NAME rotate_tour
+  COMMAND ${MJZ_BASH} -c [==["$1" "$2" --stdin="$3" --check-all --quiet]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.in)
+set_tests_properties(rotate_tour PROPERTIES TIMEOUT 60 LABELS regr)
+add_test(NAME rotate_debugger_session
+  COMMAND ${MJZ_BASH} -c [==[printf 'opt break rotate\nopt\nopt show 33\nopt continue\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.in)
+set_tests_properties(rotate_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
+
 # bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that
 # hung the compiler — crossed phi-degenerate copies + copyprop, no dce
 add_test(NAME bugrepro_s7406_hangcfg

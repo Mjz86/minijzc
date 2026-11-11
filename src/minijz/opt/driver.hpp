@@ -28,6 +28,7 @@
 #include "loop/unswitch.hpp"
 #include "loop/lcf.hpp"
 #include "loop/lcf_rt.hpp"
+#include "loop/rotate.hpp"
 #include "interprocedural/constcall.hpp"
 #include "linear/reassoc.hpp"
 #include "linear/divmagic.hpp"
@@ -266,6 +267,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         An A3 = analyze(fn);
         bool c = opt_cdfold(fn, A3, os);
         dbg_pass(cfg, fn, "cdfold", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
+      if (cfg.p_rotate) {    // test-first -> test-last: LAST loop consumer
+        An A4 = analyze(fn); // (unswitch/unroll/lcf need the test-first
+        bool c = opt_rotate(fn, A4, os); // shape; the rotated header ends
+        dbg_pass(cfg, fn, "rotate", c);  // in Br, invisible to them)
         ch |= c;
         normalize_phis(fn);
       }

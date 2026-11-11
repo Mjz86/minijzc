@@ -44,10 +44,13 @@ struct GenCtx {
   bool td_mode{false};   // plant small-tail merges + pure runtime-trip
                          // loops (taildup bait + the lcf-rt regression
                          // flavor that caught the guard-bound miscompile)
+  bool rot_mode{false};  // plant rotation-bait while loops (runtime start,
+                         // impure body: survives every earlier consumer)
   int n_unswbait{};      // ... count (for the report)
   int n_bifbait{};       // body-if bait loops planted (for the report)
   int n_tdbait{};        // taildup bait merges planted (for the report)
   int n_rtbait{};        // pure runtime-trip loops planted (for the report)
+  int n_rotbait{};       // rotation-bait loops planted (for the report)
   bool cc_mode{false};   // plant short-circuit-condition while loops
                          // (compound unswitch bait: && / || of two invariant
                          // flags; seeds >= that floor)
@@ -562,6 +565,29 @@ inline void GenCtx::gen_stmt(int depth) {
   }
   if (r == 6 && depth >= 2) { // bounded while with a fresh counter
     std::string cn = "c" + std::to_string(counter_id++);
+    if (rot_mode && pick(0, 3) == 0) {
+      // ROTATION BAIT (checkpoint 22): the while the rotation consumes —
+      // a RUNTIME start (input, clamped so the loop cannot spin out on a
+      // huge or negative tape value — the bait EXECUTES its loop, no
+      // closed form) with a constant bound/step, so unroll cannot count
+      // the trips and unswitch has no invariant to version on, and a
+      // PER-ITERATION PRINT, so the LCF purity gate rejects the body.
+      // The test-first loop then survives all the earlier consumers and
+      // the rotation moves its test to the latch edge (guard copy in the
+      // preheader, moved h-body, exit phis); the print AFTER the loop
+      // makes the exit-phi value observable — the entry value on a
+      // zero-trip, the last iteration's otherwise.
+      std::string iv = "w" + std::to_string(counter_id++);
+      src += "let " + iv + " = input() % 12;\n"; // runtime + clamped
+      const int B = pick(14, 34), D = pick(1, 5);
+      src += "while (" + iv + " < " + std::to_string(B) + ") {\n";
+      src += "  print " + iv + ";\n"; // impure: the LCF purity gate
+      src += "  " + iv + " = " + iv + " + " + std::to_string(D) + ";\n";
+      src += "}\n";
+      src += "print " + iv + ";\n"; // the exit phi is observable
+      n_rotbait++;
+      return; // self-contained + early-returning (no rider statements)
+    }
     if (td_mode && pick(0, 3) == 0) {
       // RT-LCF BAIT (checkpoint 20's regression flavor): a PURE-body
       // loop with a RUNTIME start and a constant bound/step, observed
@@ -847,6 +873,16 @@ inline constexpr uint32_t MJZ_BIF_SEED_FLOOR = 13631;
 // duplication bait, plus the rt-lcf regression flavor that would have
 // caught the guard-bound miscompile) start here — same discipline
 inline constexpr uint32_t MJZ_TAILDUP_SEED_FLOOR = 14231;
+// loop rotation proper (checkpoint 22) needs NO planted bait — the
+// generator's plain while loops ARE the candidates: their per-iteration
+// prints fail the LCF purity gate, their runtime trip counts defeat
+// unroll, and their loop-carried conditions defeat unswitch, so the
+// fuzzer's own vocabulary rotates them all by itself. The floor exists
+// for the fuzz_run OFF-case (1-in-21 seeds of the new window run the
+// old shape — the same discipline every pass window uses) and to keep
+// the committed fixtures of older windows regenerating byte-identically
+// (the pass joins the fuzz config only from here up).
+inline constexpr uint32_t MJZ_ROTATE_SEED_FLOOR = 15531;
 
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
@@ -856,6 +892,7 @@ static GenCtx gen_program(uint32_t seed) {
   g.cc_mode = seed >= MJZ_CC_SEED_FLOOR;         // see MJZ_CC_SEED_FLOOR
   g.bif_mode = seed >= MJZ_BIF_SEED_FLOOR;       // see MJZ_BIF_SEED_FLOOR
   g.td_mode = seed >= MJZ_TAILDUP_SEED_FLOOR;    // see MJZ_TAILDUP_SEED_FLOOR
+  g.rot_mode = seed >= MJZ_ROTATE_SEED_FLOOR;    // see MJZ_ROTATE_SEED_FLOOR
   g.use_input = (seed & 1) != 0;                 // half the programs read stdin
   g.allow_mat = ((seed >> 2) & 7) == 0; // 1/8 of programs grow 2-D arrays
   g.bait = ((seed >> 5) & 3) == 0;      // 1/4 carry deliberate trap bait; the

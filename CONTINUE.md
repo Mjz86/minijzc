@@ -1,18 +1,25 @@
-# CONTINUE — next steps after checkpoint 21 (backend modularity + the register audit)
+# CONTINUE — next steps after checkpoint 22 (loop rotation proper)
 
 Read SUMMARY.md (same zip root) first: branchA @ one commit on top of
-checkpoint 20 (`51bf809`) — the vm tripart split (vm.hpp / vm_step.hpp /
-interp_ssa.hpp), the emit_x64_impl → regalloc + codegen split (both
-byte-identical, verified by a 34-file asm/bytecode corpus diff), the
-`--reg-audit` register-allocation table (one allocator, two consumers),
-and the twenty natural audit programs in examples/audit/ with their
-committed RESULTS.md. This file is the resume manual.
+checkpoint 21 (`9d4d234`) — loop rotation proper (`rotate`, toggle
+#33, tier 2, the LAST loop consumer: the whole non-phi header body
+moves to the guard + latch-edge test, the header phis keep their keys
+and args, per-position routing phis carry moved defs, exit phis
+relocate the (pre_arg, latch_arg) pairs past the loop), the
+selftest-caught header-increment regression (the `while(1)+break`
+shape whose increment lives in the header — three phi paths routed
+through the moved def's fresh header phi), the rotation fuzz bait
+(runtime-clamped start + impure body, floor 15531), the below-floor
+gate that keeps every older window's committed fixtures regenerating
+byte-identically, and the regenerated register-audit table
+(710/573/137/424 — the rotation's edge pressure, honestly measured).
+This file is the resume manual.
 
 ## Setup (2 min)
 
 ```sh
-cd minijzc                       # branchA @ the ckpt-21 commit
-git log --oneline -4             # ckpt21 ... 51bf809 taildup ... bbf3c7b ...
+cd minijzc                       # branchA @ the ckpt-22 commit
+git log --oneline -4             # ckpt22 ... 9d4d234 rotate ... 51bf809 ...
 git clone https://github.com/Mjz86/String mjz_lib   # inside this repo
 # (NO symlinks: src/mjz_lib/alllib_import.hpp adapts to both String
 #  layouts via __has_include and carries the libc++ atomic_ref shim.)
@@ -20,102 +27,122 @@ export PATH="$HOME/.venv/bin:$PATH"   # cmake 4.4 + clang-format via pip
 # (if the sandbox recycled: pip install cmake clang-format)
 cmake -S . -B build && cmake --build build -j4
 ./build/minijz --selftest                    # 207/207
-ctest --test-dir build -j4                  # 42/42
-./build/minijz_unit_tests                   # 6291/6291
-./build/minijz --fuzz=300 --fuzz-from=14831 --fuzz-jobs=4   # latest window
+ctest --test-dir build -j4                  # 44/44
+./build/minijz_unit_tests                   # 6328/6328
+./build/minijz --fuzz=300 --fuzz-from=15531 --fuzz-jobs=4   # the rotation window
 ```
 
-## Try the checkpoint-21 features right away
+## Try the checkpoint-22 features right away
 
 ```sh
-# 1) the register-allocation audit on a natural program (18 spills):
-./build/minijz examples/audit/aa05_bubble_sort.mjz --reg-audit
-# (or the pressure story in one line:)
-printf 'let n = input();\nlet a0 = 1; let a1 = 1; let a2 = 1; let a3 = 1;\nlet a4 = 1; let a5 = 1; let a6 = 1; let a7 = 1;\nwhile (a0 < n) {\n  a0 = a0 + a1; a1 = a1 + a2; a2 = a2 + a3; a3 = a3 + a4;\n  a4 = a4 + a5; a5 = a5 + a6; a6 = a6 + a7; a7 = a7 + 1;\n}\nprint a0 + a7;\n' > p.mjz
-echo 100 | ./build/minijz p.mjz --reg-audit --quiet
-#   <main> 4 blocks | 13 vregs | 9 housed | 4 spills | 12 rd + 8 wr
+# 1) the rotation — the natural while (impure body defeats every
+#    earlier consumer; watch ROTATE and the exit values):
+printf 'let n = input();\nlet s = 0;\nlet i = 1;\nwhile (i <= n) {\n  print i;\n  s = s + i;\n  i = i + 1;\n}\nprint s;\nprint i;\n' > p.mjz
+echo 4 | ./build/minijz p.mjz --check-all
+#   opt report ends "... TAILDUP 0 | ROTATE 1"; output 1 2 3 4 10 5.
 
-# 2) the committed audit table (all twenty + the reading guide):
-cat examples/audit/RESULTS.md
+# 2) the rotated shape, dumped at the moment it happens:
+printf 'opt break rotate\nopt\nopt show 33\nopt continue\nvm run\ncheck\nquit\n' | \
+  ./build/minijz demos/rotate_tour.mjz --debugger --stdin=demos/rotate_tour.in
+#   the header keeps phis + a fall-through Br; the guard (in the
+#   preheader) and the latch edge test carry the moved condition.
 
-# 3) the audit gate (the ctest): every program, five runners + the table:
-for f in examples/audit/aa*.mjz; do
-  s=$(basename "$f" .mjz); i=""
-  [ -f examples/audit/$s.in ] && i="--stdin=examples/audit/$s.in"
-  ./build/minijz "$f" --check-all --reg-audit --quiet $i > /dev/null || echo "FAIL $s"
-done
+# 3) the header-increment regression shape (the increment lives IN
+#    the header after tier-0 folds `while(1)+break`):
+printf 'let s = 0;\nlet i = 0;\nwhile (1) {\n  i = i + 1;\n  if (i > 10) { break; }\n  if (i %% 2 == 1) { continue; }\n  s = s + i;\n}\nprint s;\nprint i;\n' > bc.mjz
+./build/minijz bc.mjz --check-all    # 30 11 — the phi routing works
 
-# 4) exactness spot-check (the audit's traffic == the emitted asm's
-#    slot accesses):
-./build/minijz p.mjz --emit=asm --out-dir=/tmp --quiet
-grep -c "%rbp)" /tmp/p.s    # 46 total slot movq's...
+# 4) the audit table against the rotated code (the regenerated
+#    numbers; the FIR filter's 8 slots are the rotation's price):
+./build/minijz examples/audit/aa07_fir_filter.mjz --reg-audit --check-all
+python3 scripts/regen_audit_results.py   # regenerates RESULTS.md
 ```
 
 ## Standing backlog (priority order)
 
-1. **Keep widening the fuzz window**: rotation 15431+, random-cfg
-   14431+ (the bait vocabulary is seed-floored: 12301 bkpt, 12331 gvn,
-   12731 unswitch, 13331 compound-cond, 13631 body-if, 14231 taildup +
-   rt-lcf — the next flavor needs a NEW floor constant so committed
-   fixtures stay byte-identical). The 14831-15130 and 15131-15430
-   rotation windows + random-cfg 14231-14430 ran clean this session.
-2. **Wishlist remainder** (README task 3): loop rotation proper (the
-   taildup gates already point at it: the latch merge — the merge whose
-   continuation IS the loop header — is the exact shape rotation
-   consumes) and the partial/guarded unswitch family proper. After
-   that: LCSSA (document as not-constructible — the IR has no undef),
-   demanded/known bits (thin: no bitwise syntax in the surface
-   language), MemCPyOpt, loop fusion/fission/distribution, function
-   outlining, Attributor-style inference, GlobalOpt (no globals —
-   likely not-constructible too).
-3. **Allocator follow-ups the audit motivates**: the audit now gives
-   the ground truth for spill experiments — e.g. splitting the
-   five-register pool's competition (live-range splitting, rematerial-
-   izable constants counted as free), or coalescing report (how many
-   copies the phi destruction inserts vs what survives). Any such work
-   has a ready-made twenty-program benchmark + RESULTS.md baseline to
-   diff against.
+1. **Keep widening the fuzz window**: rotation 16131+, random-cfg
+   14731+ (the bait vocabulary is seed-floored: 12301 bkpt, 12331
+   gvn, 12731 unswitch, 13331 compound-cond, 13631 body-if, 14231
+   taildup + rt-lcf, 15531 rotation — the next flavor needs a NEW
+   floor constant, and note the STRENGTHENED discipline from this
+   checkpoint: a new pass joins the fuzz config only from its floor
+   UP (the below-floor gate), so committed fixtures of every older
+   window keep regenerating byte-identically — verify that on the
+   window you are replacing). The 15531-15830 + 15831-16130
+   rotation windows and random-cfg 14431-14730 + 15531-15830 ran
+   clean this session.
+2. **Wishlist remainder** (README task 3): the partial/guarded
+   unswitch family proper (version on a loop-VARYING branch whose
+   taken arm is cheap to duplicate) is the named next step now that
+   rotation is DONE. After that: LCSSA (document as
+   not-constructible — the IR has no undef), demanded/known bits
+   (thin: no bitwise syntax in the surface language), MemCPyOpt,
+   loop fusion/fission/distribution, function outlining,
+   Attributor-style inference, GlobalOpt (no globals — likely
+   not-constructible too).
+3. **Allocator follow-ups the regenerated audit motivates**: the
+   rotation moved the twenty-program baseline to 710 vregs / 137
+   spill slots / 424 traffic — live-range splitting at the loop
+   edges, or rematerializing the guard/latch copies' cheap constants,
+   are the natural experiments, and `scripts/regen_audit_results.py`
+   re-measures the whole table in one run (the audit is the
+   observer, not the judge).
 4. **Code quality continuation** if wanted: next-biggest files are
    `apps/debugger.hpp` (~970), `opt/interprocedural/cdfold.hpp`
-   (~815), `back/vm_step.hpp` (~380 now, fine) — the support-layer +
-   slim-driver treatment keeps working; the full battery + all
-   scripted debugger sessions protect byte-identical behavior.
+   (~815) — the support-layer + slim-driver treatment keeps
+   working; the full battery + all scripted debugger sessions
+   protect byte-identical behavior.
 5. **A real `vs-msvc` run on actual Windows/MSVC** is still the one
-   unverified step (no MSVC in the sandbox; native parity ran on g++;
-   see the ckpt-16 SUMMARY "Known limits" for what was cross-verified
-   back then).
+   unverified step (no MSVC in the sandbox; native parity ran on
+   g++; see the ckpt-16 SUMMARY "Known limits" for what was
+   cross-verified back then).
 
 ## Protocol (unchanged)
 
 README task-list ledger update → full battery green (selftest,
 ctest, units, format, parity spot-checks, fuzz windows clean) →
-commit → `download/21-*.zip` with fresh SUMMARY.md + CONTINUE.md →
+commit → `download/22-*.zip` with fresh SUMMARY.md + CONTINUE.md →
 archive with ANCHORED excludes (`./build`, `./build-ho`, `./mjz_lib`,
 `*.exe`, `*.out.tmp`, `*.mbc` — never a bare `--exclude=mjz_lib`, it
-eats the tracked `src/mjz_lib/`) → do NOT push origin (sandbox has no
-credentials).
+eats the tracked `src/mjz_lib/`) → do NOT push origin (sandbox has
+no credentials).
 
 ## Landmines hit this checkpoint (worth remembering)
 
-- **A string_view is not a C string.** The audit's first draft printed
-  row names with `%s` and ran past the fn name into the source text —
-  the codegen had hit the same thing and converts to std::string for
-  its banner. Print `%.*s` with the explicit length, always.
-- **P.uses[] counts dead instructions' uses.** make_emit_plan computes
-  the use table BEFORE the dead marking, so a pure dead Copy still
-  counts a read there — the codegen skips the instruction. Any new
-  consumer that wants "what is actually emitted" must walk uses with
-  the dead skip, not read P.uses directly (the audit's +1 delta on the
-  press program was exactly a dead Copy's read).
-- **Constant programs audit as empty rows.** At default -O the
-  const-call evaluator + SCCP fold a fully-constant program to one
-  Print chain — `1 block | 0 vregs`. The audit honestly proves the
-  folding, but audit COVERAGE wants input()-driven programs (the
-  eleven first-draft programs that collapsed got inputs). The inliner
-  likewise eats constant CALLS — a wide-signature pressure test needs
-  a RECURSIVE callee to keep the calls real.
-- **Byte-identical splits need a corpus, not vibes.** The 34-file
-  .s/.mbc corpus (examples + demos + tests + fixtures + a spill-heavy
-  pressure program) diffed after EACH split caught the one-line
-  boundary mistakes (a stray closing brace between vm_step and
-  interp_ssa) before the battery did.
+- **The copies must rewrite their dst.** The rotation's first
+  working draft kept the ORIGINAL dst on the guard/latch copies
+  while the cbrs read the fresh vregs — both copies defined the
+  same vreg and the tests read never-defined values. The
+  checkpoint-20 taildup landmine list already named this exact
+  mistake; it repeats in any pass that clones instrs with fresh
+  vregs. Rewrite dst AND reads in the same breath.
+- **A moved def can BE a header phi's latch arg.** The
+  `while(1)+break` programs fold so the increment lives IN the
+  header — then an h-phi's latch arg is itself a moved h-body def,
+  and THREE paths need routing through the moved def's fresh header
+  phi: the phi's own latch arg, the latch copy's read of that phi
+  (it needs the phi's NEXT-position value — exactly the phi_v
+  carrier), and the exit phi's latch side (the latch copy's own
+  output). The selftest caught it as an infinite loop, not a wrong
+  value — moved-def routing bugs spin, they don't misprint.
+- **The fuzzer's plain loops never rotate.** Constant bounds +
+  constant-driven updates mean SCCP/unroll eat every natural while
+  (`rotations: 0` across a whole window — the bait lesson for any
+  pass that lives late in the pipeline: the earlier consumers have
+  already eaten everything the plain vocabulary produces; the new
+  pass needs its OWN bait shaped to survive the whole pipeline in
+  front of it — runtime start + impure body here).
+- **Below the floor, the fuzz config must stay the OLD pipeline.**
+  The unswitch precedent's comment claimed older seeds keep their
+  old config, but the code only had in-window off-cases: adding a
+  pass to set_level turned it on for every seed, and the older
+  windows' fixtures would drift on the next byte-verification.
+  Rotation now disables below the floor in fuzz_cfg_for — verified
+  by regenerating fz14231+ and fz14831+ byte-for-byte — and the next
+  pass should copy that gate, not the old comment.
+- **A regenerated RESULTS.md needs its claims re-checked.** The
+  closing paragraph's "zero-spill programs" list was written from
+  the ckpt-21 table; the rotation moved the FIR filter out of that
+  set (0 -> 8 slots) and a stale claim would have shipped. Every
+  headline number in a regenerated table must be re-derived from
+  the actual rows (the audit lesson again: verify, never assume).

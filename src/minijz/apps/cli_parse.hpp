@@ -143,7 +143,7 @@ static void usage() {
       "ifconv,\n"
       "                    unroll, lcf, constcall, scctco, tailrec, cdfold,\n"
       "                    deadargs, fnspec, icf, argpromo, gvn, unswitch,\n"
-      "                    lsimp, taildup, inline) —\n"
+      "                    lsimp, taildup, rotate, inline) —\n"
       "                    applied on top of the -O preset, so e.g. `-O1\n"
       "                    --enable=lcf` is legal\n"
       "  --unroll=N         full-unroll loops with constant trip count <= N\n"
@@ -433,6 +433,8 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_lsimp = on;
   else if (eq("taildup"))
     p.p_taildup = on;
+  else if (eq("rotate"))
+    p.p_rotate = on;
   else if (eq("inline"))
     p.do_inline = on;
   else {
