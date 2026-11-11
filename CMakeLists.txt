@@ -347,6 +347,22 @@ add_test(NAME bifunswitch_debugger_session
 set_tests_properties(bifunswitch_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
 endif()
 
+# checkpoint 20: the tail-duplication pass as a scripted session — the
+# demo's loop body hides an if/else merge whose value feeds the header
+# phi through the post-arm join (the born phi) and whose terminator is
+# the second if's cbr; `opt break taildup` pauses the timeline right
+# after the first duplication (the arms carry the copied tail, the born
+# phi keys the latch), `opt show` dumps it, `opt continue` collects in
+# full (the exit-tail merge fires in round 2), and the five-way check
+# proves the duplicated program end to end
+if(MJZ_BASH)
+add_test(NAME taildup_debugger_session
+  COMMAND ${MJZ_BASH} -c [==[printf 'opt break taildup\nopt\nopt show 21\nopt continue\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/taildup_tour.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/demos/taildup_tour.in)
+set_tests_properties(taildup_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
+
 # bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that
 # hung the compiler — crossed phi-degenerate copies + copyprop, no dce
 add_test(NAME bugrepro_s7406_hangcfg

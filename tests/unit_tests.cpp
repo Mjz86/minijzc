@@ -704,6 +704,230 @@ int main() {
     }
   }
 
+  // ---- checkpoint 20: tail duplication + recurrence closed forms --------
+  {
+    // (a) the fn-tail merge: the if's arms fall straight into the exit tail
+    // (the merge block + its jump vanish from every path; T's phi moves
+    // to the continuation as per-arm values — here every reader is inside
+    // the tail, so the copies substitute directly)
+    {
+      const char *s = "let c = input();\nlet d = input();\nlet x = 0;\n"
+                      "if (c > 0) { x = c + 1; } else { x = d + 2; }\n"
+                      "let y = x * 3 + 1;\n"
+                      "print y + x;\n";
+      Program P = compile(s);
+      UT(P.ok, "taildup: fn-tail merge compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.taildups > 0, "taildup: the exit tail was duplicated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {5, -2});
+      UT(o.out.size() == 1 && o.out[0] == 25,
+         "taildup: true arm (x=6, y=19) prints 25");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {-1, 3});
+      UT(o2.out.size() == 1 && o2.out[0] == 21,
+         "taildup: false arm (x=5, y=16) prints 21");
+    }
+    // (b) the correlated merge: both phi args constant — the duplicated
+    // arithmetic folds per arm (6 and 14), the branch becomes two tiny
+    // constant-printing arms
+    {
+      const char *s = "let c = input();\nlet x = 0;\n"
+                      "if (c > 0) { x = 1; } else { x = 9; }\n"
+                      "let y = x + 5;\n"
+                      "print y + x;\n";
+      Program P = compile(s);
+      UT(P.ok, "taildup: correlated merge compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.taildups > 0, "taildup: the correlated merge was duplicated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 7,
+         "taildup: true arm folds to 6+1=7");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {0});
+      UT(o2.out.size() == 1 && o2.out[0] == 23,
+         "taildup: false arm folds to 14+9=23");
+    }
+    // (c) if-followed-by-if: the merge's terminator is the next if's cbr,
+    // whose arms are single-pred — the chain duplicates level by level
+    {
+      const char *s = "let c = input();\nlet d = input();\nlet x = 0;\n"
+                      "if (c > 0) { x = c + 1; } else { x = d + 2; }\n"
+                      "if (x > 5) { print x + 100; } else { print x + 200; }\n"
+                      "let y = x + 3;\n"
+                      "print y;\n";
+      Program P = compile(s);
+      UT(P.ok, "taildup: if-chain compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.taildups >= 2, "taildup: the chain duplicated (2 merges)");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3, 7});
+      UT(o.out.size() == 2 && o.out[0] == 204 && o.out[1] == 7,
+         "taildup: x=4 <= 5 -> 204, y=7");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {9, 0});
+      UT(o2.out.size() == 2 && o2.out[0] == 110 && o2.out[1] == 13,
+         "taildup: x=10 -> 110, y=13");
+    }
+    // (d) the in-loop merge: the merge value feeds the loop header's phi
+    // through the post-arm join — the born phi carries it (the loop-latch
+    // feedback edge is the born-site shape)
+    {
+      const char *s = "let n = input();\nlet bf = input();\n"
+                      "let c = 0;\nlet x = 0;\n"
+                      "while (c < n) {\n"
+                      "  c = c + 1;\n"
+                      "  if (bf > 0) { x = x + 1; } else { x = x + 2; }\n"
+                      "  if (x > 5) { print x; } else { print x + 100; }\n"
+                      "}\n"
+                      "print x + c;\n";
+      Program P = compile(s);
+      UT(P.ok, "taildup: in-loop merge compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.taildups > 0, "taildup: the in-loop merge was duplicated");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {7, -3});
+      UT(o.out.size() == 8 && o.out[0] == 102 && o.out[2] == 6 &&
+             o.out[7] == 21,
+         "taildup: -3 stride prints 102 104 6 8 10 12 14, then 21");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {4, 5});
+      UT(o2.out.size() == 5 && o2.out[0] == 101 && o2.out[1] == 102 &&
+             o2.out[2] == 103 && o2.out[4] == 8,
+         "taildup: +1 stride prints 101..104, then 8");
+    }
+    // (e) rejection: a tail bigger than the growth cap stays shared —
+    // mixed * / % ops so reassociation cannot collapse the tail first
+    {
+      std::string s = "let c = input();\nlet d = input();\nlet x = 0;\n"
+                      "if (c > 0) { x = c + 1; } else { x = d + 2; }\n";
+      const char *ops[] = {" * 2", " + 3", " - 5", " * 4",
+                           " / 6", " % 7", " * 9", " + 8"};
+      for (int k = 0; k < 8; ++k) // eight mixed ops: too big to duplicate
+        s += "let y" + std::to_string(k) + " = x" + ops[k] + ";\n";
+      s += "print y0 + y1 + y2 + y3 + y4 + y5 + y6 + y7 + x;\n";
+      Program P = compile(s.c_str());
+      UT(P.ok, "taildup: oversized tail compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.taildups == 0, "taildup: the growth cap rejects big tails");
+      // x=6 (c=5>0): 12+9+1+24+1+6+54+14 = 121, +6 = 127
+      RunOut o = run_prog(fns_of(P, 1), 100000, {5, -2});
+      UT(o.out.size() == 1 && o.out[0] == 127,
+         "taildup: oversized tail still computes (121 + 6 = 127)");
+      // x=5 (c=-1, d=3): 10+8+0+20+0+5+45+13 = 101, +5 = 106
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {-1, 3});
+      UT(o2.out.size() == 1 && o2.out[0] == 106,
+         "taildup: oversized false arm (101 + 5 = 106)");
+    }
+    // (f) the toggle: --disable=taildup leaves the merge whole
+    {
+      const char *s = "let c = input();\nlet x = 0;\n"
+                      "if (c > 0) { x = 1; } else { x = 9; }\n"
+                      "let y = x + 5;\n"
+                      "print y + x;\n";
+      PassCfg cfg{};
+      cfg.set_level(3);
+      cfg.p_taildup = false;
+      Program P = compile(s, cfg);
+      UT(P.ok, "taildup: toggle-off compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.taildups == 0, "taildup: the toggle turns the pass off");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 7, "taildup: disabled, same 7");
+    }
+    // (g) THE LATENT MISCOMPILE the checkpoint fixes: the runtime-trip
+    // guard reads the bound Const defined INSIDE the loop header —
+    // use-before-def (the guard runs before the first header execution;
+    // destruction's allocator coalesced the slot and the guard read
+    // garbage: oracle 817 vs compiled 3 on checkpoint 19)
+    {
+      const char *s = "let i = input();\nlet s = 0;\n"
+                      "while (i < 40) {\n  i = i + 1;\n  s = s + 2;\n}\n"
+                      "print s + i;\n";
+      Program P = compile(s);
+      UT(P.ok, "lcf-rt: runtime-trip loop compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.lcf_rt > 0, "lcf-rt: the guarded closed form fired");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 114,
+         "lcf-rt: 37 iters x +2 = 74, +40 = 114 (not 3!)");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {40});
+      UT(o2.out.size() == 1 && o2.out[0] == 40,
+         "lcf-rt: zero trips: the guard passes 40 through");
+      RunOut o3 = run_prog(fns_of(P, 1), 100000, {-5});
+      UT(o3.out.size() == 1 && o3.out[0] == 130,
+         "lcf-rt: negative start: 45 iters x +2 = 90, +40");
+    }
+    // (h) recurrence chains: the induction update is multi-use (feedback
+    // phi + accumulator), so the single-use scan never produced b != 0
+    // evolutions and the sum-of-series closed forms never fired — the
+    // analysis-mode expansion absorbs the shared update. Read-BEFORE-update:
+    //     s' = s + i        (coefficient on the induction = 1)
+    {
+      const char *s = "let i = input();\nlet s = 0;\n"
+                      "while (i < 40) {\n  s = s + i;\n  i = i + 1;\n}\n"
+                      "print s + i;\n";
+      Program P = compile(s);
+      UT(P.ok, "lcf-chain: read-first series compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.lcf_rt > 0, "lcf-chain: the runtime closed form fired");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 817,
+         "lcf-chain: sum(3..39)=777, +40 = 817");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {-5});
+      UT(o2.out.size() == 1 && o2.out[0] == 805,
+         "lcf-chain: sum(-5..39)=765, +40 = 805");
+    }
+    // (i) read-AFTER-update: s' = s + (i+1) — b=1, g=1; and the constant-
+    // trip twin takes the ANALYTIC path (the T(n) series, previously dead)
+    {
+      const char *s = "let i = input();\nlet s = 0;\n"
+                      "while (i < 40) {\n  i = i + 1;\n  s = s + i;\n}\n"
+                      "print s + i;\n";
+      Program P = compile(s);
+      UT(P.ok, "lcf-chain: read-after series compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.lcf_rt > 0, "lcf-chain: the runtime closed form fired");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 854,
+         "lcf-chain: sum(4..40)=814, +40 = 854");
+      const char *s2 = "let i = 0;\nlet s = 0;\n"
+                       "while (i < 40) {\n  i = i + 1;\n  s = s + i;\n}\n"
+                       "print s * 100 + i;\n";
+      Program P2 = compile(s2);
+      UT(P2.ok, "lcf-chain: constant-trip series compiles");
+      OptStats os2 = sum_ostats(P2);
+      UT(os2.lcf_loops > 0,
+         "lcf-chain: the ANALYTIC closed form fired (T(n) series)");
+      RunOut o2 = run_prog(fns_of(P2, 1), 100000, {});
+      UT(o2.out.size() == 1 && o2.out[0] == 82040,
+         "lcf-chain: sum(1..40)=820, *100 + 40");
+    }
+    // (j) step != 1 with an induction-dependent increment: b=1, g=3, d=3
+    // (the runtime T construction consumes all three)
+    {
+      const char *s = "let i = input();\nlet s = 0;\n"
+                      "while (i < 40) {\n  i = i + 3;\n  s = s + i;\n}\n"
+                      "print s + i;\n";
+      Program P = compile(s);
+      UT(P.ok, "lcf-chain: step-3 series compiles");
+      OptStats os = sum_ostats(P);
+      UT(os.lcf_rt > 0, "lcf-chain: the step-3 closed form fired");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+      UT(o.out.size() == 1 && o.out[0] == 354,
+         "lcf-chain: sum(6,9,...,42)=312, +42 = 354");
+      RunOut o2 = run_prog(fns_of(P, 1), 100000, {-5});
+      UT(o2.out.size() == 1 && o2.out[0] == 325,
+         "lcf-chain: sum(-2,1,...,37)=285, +40 = 325");
+    }
+    // (k) a start far past the bound: the guard's zero-trip arithmetic must
+    // stay exact through the mod-2^64 closed form (N = 0, values pass
+    // through untouched — the loop never ran)
+    {
+      const char *s = "let i = input();\nlet s = 0;\n"
+                      "while (i < 40) {\n  i = i + 1;\n  s = s + 2;\n}\n"
+                      "print s + i;\n";
+      Program P = compile(s);
+      UT(P.ok, "lcf-rt: far-past-bound program compiles");
+      RunOut o = run_prog(fns_of(P, 1), 100000, {1LL << 62});
+      UT(o.out.size() == 1 && o.out[0] == (1LL << 62),
+         "lcf-rt: zero trips at a huge start (closed form passthrough)");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

@@ -120,6 +120,7 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.unswitches += U.ostats.unswitches;
     t.body_unswitches += U.ostats.body_unswitches;
     t.lsimps += U.ostats.lsimps;
+    t.taildups += U.ostats.taildups;
     if (U.ostats.iters > t.iters)
       t.iters = U.ostats.iters;
   }

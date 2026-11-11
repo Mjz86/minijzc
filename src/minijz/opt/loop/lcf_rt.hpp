@@ -44,6 +44,18 @@ struct LcfRtIn {
   const std::vector<char> *kc{};
   const std::vector<val_t> *kv{};
   const std::vector<LcfEvo> *evo{};
+  // the bound's defining block (filled by lcf.hpp): the while-lowering
+  // materializes loop-test constants IN the header, and licm only
+  // duplicates such a Const out when it hoists an instruction that
+  // reads it -- the header compare is never hoisted (its phi operand
+  // is loop-carried), so a constant bound routinely stays defined
+  // INSIDE the loop. Reading that vreg from the guard block would be
+  // use-before-def (the guard runs before the first header execution);
+  // destruction's register allocator then coalesces the slot with the
+  // in-loop def and the guard reads garbage -- a real miscompile this
+  // checkpoint fixes (repro: `let i = input(); while (i < 40) {
+  // i = i + 1; s = s + 2; }`, oracle 817 vs compiled 3).
+  std::vector<uint32_t> *defb{};
 };
 constexpr bool lcf_rt_fold(Fn &fn, OptStats &os, const LcfRtIn &In) {
   const std::vector<HPhi> &hphis = *In.hphis;
@@ -110,12 +122,24 @@ constexpr bool lcf_rt_fold(Fn &fn, OptStats &os, const LcfRtIn &In) {
     out.push_back({.k = K::Bin, .b = b, .dst = dst, .a = a, .b2 = b2});
   };
   auto nt = [&]() { return new_anon_vreg(fn, 0); };
+  // ---- the guard's local copy of the bound -------------------------------
+  // Bv may be defined inside the loop (see LcfRtIn::defb): the guard
+  // executes BEFORE the first iteration, so it cannot read the in-loop
+  // def. A Const's value is position-independent -- materialize a fresh
+  // copy at the top of the guard (the same move licm's dup_const makes)
+  // and read THAT everywhere the guard names the bound.
+  uint32_t Bg = In.Bv; // the bound as the guard reads it
+  if (In.defb && In.Bv != NONE && (*In.defb)[In.Bv] < nb &&
+      (*In.inL)[(*In.defb)[In.Bv]]) {
+    Bg = new_anon_vreg(fn, fn.base_of(In.Bv));
+    gi.push_back({.k = K::Const, .dst = Bg, .c = (*In.kv)[In.Bv]});
+  }
   // ---- guard block G: N, iN, gok ----
   const uint32_t z0 = konst(gi, 0);
   const uint32_t c0 = nt();
-  bin(gi, is_le ? B::Le : B::Lt, c0, i0v, In.Bv);
+  bin(gi, is_le ? B::Le : B::Lt, c0, i0v, Bg);
   const uint32_t Dv = nt();
-  bin(gi, B::Sub, Dv, In.Bv, i0v);
+  bin(gi, B::Sub, Dv, Bg, i0v);
   const uint32_t msk = nt();
   bin(gi, B::Sub, msk, z0, c0);
   const uint32_t Dm = nt();
@@ -143,7 +167,7 @@ constexpr bool lcf_rt_fold(Fn &fn, OptStats &os, const LcfRtIn &In) {
     const uint32_t dneg = nt();
     bin(gi, B::Lt, dneg, Dv, z0);
     const uint32_t bneg = nt();
-    bin(gi, is_le ? B::Le : B::Lt, bneg, iN, In.Bv);
+    bin(gi, is_le ? B::Le : B::Lt, bneg, iN, Bg);
     const uint32_t ov = nt();
     bin(gi, B::Or, ov, dneg, bneg);
     const uint32_t badv = nt();

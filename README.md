@@ -16,7 +16,7 @@ src/minijz/           the compiler as a header-only constexpr library
   fwd.hpp               forward declarations (declaration-only contexts)
   graph_lib.hpp         the mjz_lib import, ISOLATED: only the headers that
                         actually need the graph/big-number library include it
-  base/                  pass_cfg (PassCfg + the 31-name toggle table +
+  base/                  pass_cfg (PassCfg + the 32-name toggle table +
                         the runtime-only pass-snapshot hook), native_run
                         (find_cc/slurp/run_capture/write_file — with the
                         Windows portability helpers mjz_devnull/mjz_timeout)
@@ -28,7 +28,8 @@ src/minijz/           the compiler as a header-only constexpr library
   opt/mem2reg.hpp        array memory -> SSA registers + dead arrays
   opt/scalar/            fold, copyprop, canon (incl. notcomb), cse, gvn
                         (value numbering: consts + phi congruence + bins),
-                        unreach, splice, dce, ifconv
+                        unreach, splice, dce, ifconv, taildup (checkpoint
+                        20: small 2-pred tails duplicated into their arms)
   opt/loop/              licm, unroll, lcf, lcf_rt, unswitch (+
                         unswitch_shape: the shared shape/matcher/clone
                         layer, unswitch_bif: the body-if scan + commit)
@@ -332,7 +333,7 @@ opt break PASS          a breakpoint BETWEEN passes: PASS's snapshot +
                         its diff against the previous one — and ARMED:
                         the next `opt [FN]` PAUSES the timeline after it
 opt continue            disarm the pass breakpoint + collect in full
-opt list                the 31-name pass toggle table, on/off
+opt list                the 32-name pass toggle table, on/off
 check                   all five runners + comparison
 vm reset/step/run/continue/until/break/line/unbreak/breaks/state/dis
                         the steppable machine: single-op tracing WITH
@@ -555,17 +556,72 @@ the ctest/CLI toggle names):
   allocation, the append-only full-loop clone emission) extract into
   `opt/loop/unswitch_shape.hpp`, and the body-if scan + commit into
   `opt/loop/unswitch_bif.hpp` — unswitch.hpp becomes the slim driver.
-* still open (the standing wishlist): tail duplication, loop rotation
-  proper, LCSSA (needs undef semantics this IR does not have — a
-  loop-exit phi's zero-trip edge has no defined value), demanded/known
-  bits, MemCPyOpt, loop fusion/fission/distribution, function
+  Checkpoint 20 lands the wishlist's named next step, **tail
+  duplication** (toggle #32, tier 1, `opt/scalar/taildup.hpp` — the
+  degenerate guarded unswitch the checkpoint-19 notes pointed at): a
+  SMALL block T shared by exactly two predecessors, each ending in a
+  DEDICATED `br T`, is duplicated into both of them — the merge block
+  and its jump disappear from every path. T's phis do not duplicate,
+  they MOVE: each continuation U (preds == {T} exactly, so after the
+  duplication U's preds are exactly the two arms) gets one phi per
+  escaping value; routing is per-USE (a value can escape through BOTH
+  continuations at once — one arm's region reads it through U0, the
+  other's through U1), and a 2-pred re-merge whose arms arrive from
+  different suppliers gets a phi BORN there — the checkpoint-19
+  delivered-walk discipline, one nesting level per re-merge (the
+  in-loop if/else whose merged value feeds the header phi through
+  the post-arm join). The gates: T is not a loop header (a header
+  whose body duplicated into its own latch would be loop ROTATION
+  proper — this tree's loop consumers all match the canonical
+  test-first shape, so the merge whose continuation IS the header —
+  the latch merge — stays unduplicated by design); T's body <= 12
+  instrs of Const/Copy/Bin/Print (a Print printed once per path
+  before prints once per path after; a may-trap Div/Mod is fine for
+  the same reason); terminator Br/Cbr/Exit/Ret (the fn tail
+  duplicated into both arms — no routing); conditional preds stay
+  unduplicated (they would need edge blocks this IR does not have).
+  The correlated-merge jackpot: `if (c) x=1; else x=9; y=x+5`
+  duplicates y=x+5 into both arms where tier-0 folding pre-resolves
+  it to 6 and 14 — the merge then selects between two constants.
+  One duplication per call; the fixpoint driver re-analyzes. The
+  checkpoint ALSO fixes a LATENT miscompile the new probes exposed
+  (reproducible on checkpoint 19, missed by the fuzzer because its
+  loops carry per-iteration prints the LCF purity gate rejects):
+  `lcf_rt`'s guard read the bound vreg from the preheader when its
+  defining Const still lived INSIDE the loop header — licm only
+  duplicates such a Const out when it hoists an instruction reading
+  it, and the header compare is never hoisted (its phi operand is
+  loop-carried) — a use-before-def that destruction's register
+  allocator then coalesced into garbage (`let i = input(); while
+  (i < 40) { i = i + 1; s = s + 2; }`: oracle 817, compiled 3); the
+  guard now materializes a fresh local copy of an in-loop Const bound
+  (the same move licm's dup_const makes — a Const's value is
+  position-independent). And the recurrence chains: `linform` grows
+  an ANALYSIS mode — the lcf recurrence scan only READS the linear
+  form (the whole loop is deleted when the closed form commits), so
+  a shared def absorbs there even though reassociation must keep
+  its absorbed defs single-use — which lets the MULTI-USE induction
+  update absorb and turns `while (i < B) { s = s + i; i = i + 1; }`
+  into the sum-of-series recurrence s' = s + i + 1: the b != 0
+  evolutions the analytic T(n) series AND the runtime Tv
+  construction were carrying since checkpoint 18 but could never
+  fire (the single-use restriction made every induction-dependent
+  recurrence a non-phi leaf term, and the scan rejected it).
+* still open (the standing wishlist): loop rotation proper, LCSSA
+  (needs undef semantics this IR does not have — a loop-exit phi's
+  zero-trip edge has no defined value), demanded/known bits,
+  MemCPyOpt, loop fusion/fission/distribution, function
   outlining, Attributor-style inference, GlobalOpt. Notes from the
-  unswitch checkpoints: body-if unswitching is DONE (checkpoint 19,
-  above) — the natural next step from there is the partial/guarded
-  unswitch family (version on a loop-VARYING branch whose taken arm is
-  cheap to duplicate: tail duplication covers the degenerate case) and
-  loop rotation proper; compound unswitch handles exactly two leaf
-  tests — deeper boolean trees (`a && b && c`) stay unversioned.
+  unswitch/taildup checkpoints: body-if unswitching is DONE
+  (checkpoint 19, above) and tail duplication is DONE (checkpoint
+  20, above — the degenerate guarded unswitch); the natural next
+  step from there is the partial/guarded unswitch family proper
+  (version on a loop-VARYING branch whose taken arm is cheap to
+  duplicate) and loop rotation proper (the taildup gates already
+  point at it: the latch merge — continuation IS the header — is
+  the exact shape rotation would consume); compound unswitch
+  handles exactly two leaf tests — deeper boolean trees
+  (`a && b && c`) stay unversioned.
 
 ## 4. make the compiler debuggable (breakpoints, diagnostics, pass diffs) — DONE
 
@@ -601,7 +657,12 @@ The checkpoint-15 additions, per the request:
   ctest: `opt break unswitch` on the body-if tour demo pauses the
   timeline exactly where the versioning happens, `opt show` dumps the
   version-merge blocks, and the five-way check proves the versioned
-  program end to end.)
+  program end to end. Checkpoint 20 adds the `taildup_debugger_session`
+  twin: `opt break taildup` on the taildup tour demo pauses after the
+  FIRST duplication — the loop body's if/else merge, arms carrying the
+  copied tail and the born phi keying the latch — `opt continue`
+  collects in full (the fn-tail merge fires in round 2), and the
+  five-way check proves the duplicated program end to end.)
 
 ## 5. checkpoint 16: Windows builds, GVN, code-quality splits, wider fuzz — DONE
 
@@ -665,6 +726,8 @@ The checkpoint-15 additions, per the request:
   off-cases 17/18 for seeds >= the floor only, so every committed
   fixture keeps its exact old config); the rotation window 12731-13030
   and the random-cfg window 12731+ ran clean, native parity included.
+  (checkpoint 20 adds case 19 — taildup off, seeds >= 14231 — and the
+  table is 32 names now.)
 
 The original wishlist (kept verbatim for reference):
 

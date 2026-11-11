@@ -21,6 +21,7 @@
 #include "scalar/dce.hpp"
 #include "scalar/ifconv.hpp"
 #include "scalar/ldelim.hpp"
+#include "scalar/taildup.hpp"
 #include "loop/licm.hpp"
 #include "loop/unroll.hpp"
 #include "loop/lsimp.hpp"
@@ -154,6 +155,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         An A = analyze(fn);
         c = opt_ldelim(fn, A, os); // fwd/CSE leftover array loads
         dbg_pass(cfg, fn, "ldelim", c);
+        ch |= c;
+        normalize_phis(fn);
+      }
+      if (cfg.p_taildup) {
+        An A = analyze(fn);
+        c = opt_taildup(fn, A, os); // small 2-pred tails into their arms
+        dbg_pass(cfg, fn, "taildup", c);
         ch |= c;
         normalize_phis(fn);
       }

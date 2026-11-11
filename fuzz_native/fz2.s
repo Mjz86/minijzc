@@ -149,11 +149,6 @@ main:
   # 40:8
   testq %r14, %r14
   je .Lb34
-  movq $1, %r14
-.Lb35:
-  # 40:1
-  testq %r14, %r14
-  je .Lb31
   # 41:8
   subq $1, %r12
   # 42:11
@@ -181,9 +176,6 @@ main:
   movq $1, %r14
   jmp .Lb39
 .Lb34:
-  movq $0, %r14
-  jmp .Lb35
-.Lb31:
   # 45:7
   movq %rbx, %rdi
   movq $1, %rsi
@@ -332,10 +324,8 @@ main:
   movq %r12, %rcx
   cmpq %rcx, %rax
   jge .Lb57
-  movq $1, %r12
-.Lb58:
   # 50:1
-  movq %r12, %rsi
+  movq $1, %rsi
   leaq .Lfmt(%rip), %rdi
   xorl %eax, %eax
   call printf
@@ -356,8 +346,18 @@ main:
   movq $0, %r13
   jmp .Lb54
 .Lb57:
-  movq $0, %r12
-  jmp .Lb58
+  # 50:1
+  movq $0, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  # 51:1
+  movq %rbx, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  xorl %edi, %edi
+  call exit
 mjz_trap:
   pushq %rbp
   movq %rsp, %rbp

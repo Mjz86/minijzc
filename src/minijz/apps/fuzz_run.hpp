@@ -57,6 +57,9 @@ struct FuzzStats {
   long gvn_progs{}, gvn_baits{}, unsw_progs{}, unsw_baits{};
   long cc_progs{}, cc_baits{};   // compound-cond unswitch bait (>= 13331)
   long bif_progs{}, bif_baits{}; // body-if unswitch bait (>= 13631)
+  long td_progs{}, td_baits{};   // taildup bait (>= 14231)
+  long rt_progs{}, rt_baits{};   // pure runtime-trip loops (>= 14231)
+  long taildups{};               // taildup duplications performed
 };
 static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.cases += b.cases;
@@ -111,6 +114,11 @@ static void fuzz_stats_add(FuzzStats &a, const FuzzStats &b) {
   a.cc_baits += b.cc_baits;
   a.bif_progs += b.bif_progs;
   a.bif_baits += b.bif_baits;
+  a.td_progs += b.td_progs;
+  a.td_baits += b.td_baits;
+  a.rt_progs += b.rt_progs;
+  a.rt_baits += b.rt_baits;
+  a.taildups += b.taildups;
 }
 
 // how many workers --fuzz should use when the flag was not given:
@@ -225,8 +233,12 @@ static PassCfg fuzz_cfg_for(long seed, bool random_configs) {
       break; // no loop canonicalization
     }
   }
+  // the taildup window adds case 19 (seed % 20 == 19): no tail
+  // duplication — same discipline, new seeds only
+  if (seed >= (long)MJZ_TAILDUP_SEED_FLOOR && seed % 20 == 19)
+    cfg.p_taildup = false;
   // (ported from Branchedmain) --fuzz-cfg=random: additionally disable a
-  // random 1..4 of the 31 toggles and pick a random tier, exposing pass
+  // random 1..4 of the 32 toggles and pick a random tier, exposing pass
   // INTERACTION bugs the fixed rotation never reaches
   if (random_configs) {
     auto pick32 = [](uint32_t &rng) -> uint32_t {
@@ -306,6 +318,14 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
     F.bif_progs++;
     F.bif_baits += g.n_bifbait;
   }
+  if (g.n_tdbait > 0) {
+    F.td_progs++;
+    F.td_baits += g.n_tdbait;
+  }
+  if (g.n_rtbait > 0) {
+    F.rt_progs++;
+    F.rt_baits += g.n_rtbait;
+  }
   {
     OptStats os = sum_ostats(P);
     F.inlined_total += os.inlines;
@@ -336,6 +356,7 @@ static bool fuzz_one(long seed, FuzzCtx &ctx, FuzzStats &F) {
     F.gvns += os.gvns;
     F.unswitches += os.unswitches;
     F.lsimps += os.lsimps;
+    F.taildups += os.taildups;
   }
   RunOut oracle = run_ast(P.P.ast, P.P.root, 200000, g.ins);
   RunOut plain = run_prog(fns_of(P, 0), 200000, g.ins);
@@ -499,13 +520,14 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
       "range-cmps: %ld | cmp-facts: %ld | call-CSE: %ld | "
       "dead-args: %ld | fnspec: %ld | icf: %ld | "
       "jthreads: %ld | argpromos: %ld | gvns: %ld | unswitches: %ld | "
-      "lsimps: %ld | "
+      "lsimps: %ld | taildups: %ld | "
       "native-checked (C+asm x -O0/-O2): %ld\n"
       "  vocabulary: w/ div/mod: %ld | w/ 2-D arrays: %ld | "
       "w/ array params: %ld | w/ breakpoints: %ld (%ld pts) | "
       "w/ shadow merges: %ld (%ld pairs) | w/ unswitch bait: %ld (%ld loops) | "
       "w/ compound-cond bait: %ld (%ld loops)\n"
-      "  w/ body-if bait: %ld (%ld loops)\n"
+      "  w/ body-if bait: %ld (%ld loops) | w/ taildup bait: %ld (%ld merges)\n"
+      "  w/ rt-lcf bait: %ld (%ld loops)\n"
       "  wall: %.1fs on %ld job%s\n",
       F.cases, mismatches, F.timeouts, F.traps, F.phis, F.dce_instrs,
       F.licm_hoists, F.arr_progs, F.in_progs, F.fn_progs, F.brk_progs,
@@ -514,9 +536,11 @@ static void fuzz_report(const FuzzStats &F, long mismatches, long jobs,
       F.scctco_total, F.scctco_fold_total, F.sccp_consts, F.sccp_brs, F.ld_fwds,
       F.ld_cses, F.rangecmps, F.cmpfacts, F.callcses, F.deadargs, F.fnspecs,
       F.icf, F.jthreads, F.argpromos, F.gvns, F.unswitches, F.lsimps,
-      F.native_checked, F.div_progs, F.mat_progs, F.aparam_progs, F.bkpt_progs,
-      F.bkpts, F.gvn_progs, F.gvn_baits, F.unsw_progs, F.unsw_baits, F.cc_progs,
-      F.cc_baits, F.bif_progs, F.bif_baits, secs, jobs, jobs == 1 ? "" : "s");
+      F.taildups, F.native_checked, F.div_progs, F.mat_progs, F.aparam_progs,
+      F.bkpt_progs, F.bkpts, F.gvn_progs, F.gvn_baits, F.unsw_progs,
+      F.unsw_baits, F.cc_progs, F.cc_baits, F.bif_progs, F.bif_baits,
+      F.td_progs, F.td_baits, F.rt_progs, F.rt_baits, secs, jobs,
+      jobs == 1 ? "" : "s");
   CHECK(mismatches == 0, "fuzz must be clean");
 }
 

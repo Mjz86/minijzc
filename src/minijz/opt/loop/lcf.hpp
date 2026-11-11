@@ -427,8 +427,16 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       for (size_t pi = 0; pi < hphis.size() && analytic; ++pi) {
         LinForm L{};
         std::vector<uint32_t> absr{};
+        // analysis mode (checkpoint 20): the induction update absorbs even
+        // though the feedback phi + this recurrence both read it (multi-use);
+        // reading the linear form is all the scan does, so sharing is sound.
+        // This is what produces b != 0 evolutions -- s' = s + i + 1 for
+        // `s = s + i; i = i + 1;` -- feeding the T(n) series (analytic) and
+        // the Tv construction (runtime) that previously never fired: the
+        // single-use restriction made every induction-dependent recurrence
+        // a non-phi leaf term and the scan rejected it.
         lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, NONE, L,
-                   (val_t)1, hphis[pi].latch_arg, absr);
+                   (val_t)1, hphis[pi].latch_arg, absr, true);
         (void)absr; // informational: the whole loop is removed anyway
         LcfEvo e{true, 0, 0, (uint64_t)L.c};
         for (const auto &p : L.t) {
@@ -485,6 +493,7 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
       RI.kc = &kc;
       RI.kv = &kv;
       RI.evo = &evo;
+      RI.defb = &defb; // the guard materializes an in-loop Const bound
       if (lcf_rt_fold(fn, os, RI))
         return true;
       continue;

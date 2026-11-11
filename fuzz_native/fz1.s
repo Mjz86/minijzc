@@ -64,7 +64,6 @@ mjz_f1:
   # 14:37
   testq %r12, %r12
   je .LF1_25
-.LF1_26:
   # 15:3
   movq %rbx, %rax
   decq mjz_depth(%rip)
@@ -174,7 +173,15 @@ mjz_f1:
 .LF1_5:
   jmp .LF1_7
 .LF1_25:
-  jmp .LF1_26
+  # 15:3
+  movq %rbx, %rax
+  decq mjz_depth(%rip)
+  addq $8, %rsp
+  popq %r13
+  popq %r12
+  popq %rbx
+  popq %rbp
+  ret
   xorl %edi, %edi
   call exit
 mjz_f2:
@@ -241,7 +248,6 @@ mjz_f2:
   # 14:37
   testq %r12, %r12
   je .LF2_25
-.LF2_26:
   # 15:3
   movq %rbx, %rax
   decq mjz_depth(%rip)
@@ -351,7 +357,15 @@ mjz_f2:
 .LF2_5:
   jmp .LF2_7
 .LF2_25:
-  jmp .LF2_26
+  # 15:3
+  movq %rbx, %rax
+  decq mjz_depth(%rip)
+  addq $8, %rsp
+  popq %r13
+  popq %r12
+  popq %rbx
+  popq %rbp
+  ret
   xorl %edi, %edi
   call exit
 mjz_f3:
@@ -418,7 +432,6 @@ mjz_f3:
   # 14:37
   testq %r12, %r12
   je .LF3_25
-.LF3_26:
   # 15:3
   movq %rbx, %rax
   decq mjz_depth(%rip)
@@ -528,7 +541,15 @@ mjz_f3:
 .LF3_5:
   jmp .LF3_7
 .LF3_25:
-  jmp .LF3_26
+  # 15:3
+  movq %rbx, %rax
+  decq mjz_depth(%rip)
+  addq $8, %rsp
+  popq %r13
+  popq %r12
+  popq %rbx
+  popq %rbp
+  ret
   xorl %edi, %edi
   call exit
 mjz_f4:
@@ -1183,12 +1204,8 @@ main:
   # 74:51
   testq %rbx, %rbx
   jne .Lb131
-  movq $0, %rbx
-.Lb133:
-  # 74:33
-  imulq %r12, %rbx
   # 74:8
-  movq %rbx, %rax
+  movq $0, %rax
   movq %r14, %rcx
   cmpq %rcx, %rax
   setl %dl
@@ -1250,8 +1267,19 @@ main:
 .Lb128:
   jmp .Lb129
 .Lb131:
-  movq $1, %rbx
-  jmp .Lb133
+  # 74:8
+  movq %r12, %rax
+  movq %r14, %rcx
+  cmpq %rcx, %rax
+  setl %dl
+  movzbq %dl, %rbx
+  # 74:1
+  movq %rbx, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  xorl %edi, %edi
+  call exit
 mjz_trap:
   pushq %rbp
   movq %rsp, %rbp

@@ -185,11 +185,6 @@ main:
   # 37:6
   testq %r12, %r12
   je .Lb73
-  movq $1, %r12
-.Lb74:
-  # 37:1
-  testq %r12, %r12
-  je .Lb76
   # 38:13
   movq %rbx, %rdi
   call mjz_len
@@ -297,9 +292,6 @@ main:
 .Lb100:
   jmp .Lb101
 .Lb73:
-  movq $0, %r12
-  jmp .Lb74
-.Lb76:
   jmp .Lb77
 .Lb87:
   jmp .Lb88

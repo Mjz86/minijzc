@@ -65,6 +65,7 @@ struct PassCfg {
   bool p_scctco{true};   // SCC tail-call collapse (inner-SCC tail calls)
   bool p_unswitch{true}; // trivial loop unswitching (invariant header cbr)
   bool p_lsimp{true};    // loop canonicalization (trivial header phis)
+  bool p_taildup{true};  // tail duplication (small 2-pred blocks into arms)
   // interprocedural
   bool do_inline{true};
   bool do_opt{true}; // false: skip the optimizer entirely
@@ -97,6 +98,7 @@ struct PassCfg {
     p_scctco = t2;
     p_unswitch = t2;
     p_lsimp = t1;
+    p_taildup = t1;
     do_inline = t2;
     do_opt = lv != 0;
   }
@@ -106,14 +108,14 @@ struct PassCfg {
 // (ported from the Branchedmain monolith: fuzz random pass configs need a
 // numeric apply + a description; the CLI keeps its string-based
 // set_named_pass, which covers the same set plus 'inline'.)
-inline constexpr uint32_t PASS_TOGGLE_COUNT = 31;
+inline constexpr uint32_t PASS_TOGGLE_COUNT = 32;
 inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
     "fold",   "copyprop", "canon",     "cse",      "unreach",  "splice",
     "dce",    "mem2reg",  "trapelim",  "licm",     "divmagic", "reassoc",
     "unroll", "lcf",      "constcall", "scctco",   "tailrec",  "cdfold",
     "ifconv", "inline",   "sccp",      "ldelim",   "callcse",  "deadargs",
     "fnspec", "icf",      "jthread",   "argpromo", "gvn",      "unswitch",
-    "lsimp"};
+    "lsimp",  "taildup"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
   case 0:
@@ -209,6 +211,9 @@ constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   case 30:
     p.p_lsimp = on;
     return true;
+  case 31:
+    p.p_taildup = on;
+    return true;
   default:
     return false;
   }
@@ -226,7 +231,7 @@ static std::string describe_cfg(const PassCfg &p) {
       p.p_scctco,   p.p_tailrec,  p.p_cdfold,   p.p_ifconv,   p.do_inline,
       p.p_sccp,     p.p_ldelim,   p.p_callcse,  p.p_deadargs, p.p_fnspec,
       p.p_icf,      p.p_jthread,  p.p_argpromo, p.p_gvn,      p.p_unswitch,
-      p.p_lsimp};
+      p.p_lsimp,    p.p_taildup};
   for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
     if (!states[i]) {
       if (!off.empty())
@@ -296,4 +301,5 @@ struct OptStats {
   uint32_t unswitches{}; // unswitch: loops versioned on invariant conds
   uint32_t body_unswitches{}; // unswitch: ... the body-if (trivial) form —
   uint32_t lsimps{};          // lsimp: trivial loop-carried phis dissolved
+  uint32_t taildups{};        // taildup: 2-pred tails duplicated into arms
 };
