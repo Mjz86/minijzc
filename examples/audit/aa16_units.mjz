@@ -1,0 +1,18 @@
+// aa16_units — a natural conversion chain: one quantity pushed through
+// seven different unit systems, every intermediate result kept live and
+// printed at the end (the deliberate wide-live-range set).
+let meters = input();
+let mm = meters * 1000;
+let inches = mm * 5 / 127;
+let feet = inches / 12;
+let yards = feet / 3;
+let miles = yards / 1760;
+let furlongs = miles * 8;
+let chains = furlongs * 10;
+print mm;
+print inches;
+print feet;
+print yards;
+print miles;
+print furlongs;
+print chains;

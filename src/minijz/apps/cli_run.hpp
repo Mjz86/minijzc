@@ -12,6 +12,7 @@
 #include "../runtime/astrun.hpp"
 #include "../back/bytecode.hpp"
 #include "../back/emit_plan.hpp"
+#include "../back/regaudit.hpp"
 #include "../base/native_run.hpp"
 #include "../opt/optimize_api.hpp" // optimize_light (--opt-diff snapshots)
 #include "../front/diag.hpp"       // located diagnostics
@@ -74,6 +75,14 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.unswitches, (unsigned)os.lsimps, (unsigned)os.taildups,
         (unsigned)de_c, (unsigned)dz_c, (unsigned)dse, (unsigned)dcy,
         (unsigned)dfu);
+  }
+  if (C.reg_audit) {
+    // the register-allocation audit (--reg-audit): the SAME RaPlan
+    // the x86-64 codegen gets, as a table — one allocator, two
+    // consumers, so the audit cannot drift from the emitted asm.
+    // Printed even under --quiet/brief: the flag is an explicit ask.
+    RegAuditOut RA = reg_audit(fns_of(P, 2), P.fn_names);
+    std::printf("%s", reg_audit_text(RA, P.fn_names).c_str());
   }
   if (C.print_ir) {
     for (size_t f = 0; f < P.fns.size(); ++f) {

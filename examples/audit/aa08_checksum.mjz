@@ -1,0 +1,18 @@
+// aa08_checksum — a Fletcher-16-style two rolling checksum over a data
+// word stream: sum_a, sum_b, the index and the current word live together;
+// both final halves plus their combination are reported.
+let data = array(8);
+let d0 = input();
+data[0] = d0; data[1] = 41; data[2] = 7; data[3] = 99;
+data[4] = 3; data[5] = 66; data[6] = 21; data[7] = 8;
+let sum_a = 0;
+let sum_b = 0;
+let i = 0;
+while (i < 8) {
+  sum_a = (sum_a + data[i]) % 255;
+  sum_b = (sum_b + sum_a) % 255;
+  i = i + 1;
+}
+print sum_a;
+print sum_b;
+print sum_b * 256 + sum_a;

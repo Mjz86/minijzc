@@ -1,0 +1,21 @@
+// aa12_prime_trial — trial division for three candidates: each candidate's
+// divisor sweep keeps the candidate, divisor and quotient live, and the
+// three verdicts stay live to the end.
+fn is_prime(n) {
+  if (n < 2) { return 0; }
+  let d = 2;
+  while (d * d <= n) {
+    if (n % d == 0) { return 0; }
+    d = d + 1;
+  }
+  return 1;
+}
+let c1 = input(); let c2 = input(); let c3 = input();
+let v1 = is_prime(c1);
+let v2 = is_prime(c2);
+let v3 = is_prime(c3);
+let count = v1 + v2 + v3;
+print v1;
+print v2;
+print v3;
+print count;

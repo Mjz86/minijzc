@@ -1,0 +1,19 @@
+// aa02_horner — polynomial evaluation the natural way: Horner's rule with
+// every coefficient read once. Moderate pressure: the running value and the
+// index stay live, the coefficient stream alternates.
+fn poly(x) {
+  let r = 3;
+  r = r * x + 2;
+  r = r * x + 5;
+  r = r * x - 7;
+  r = r * x + 11;
+  return r;
+}
+let x4 = input();
+print poly(x4);
+print poly(-2);
+print poly(0);
+let x = 7;
+let a = x * x * x * x;
+let b = poly(x) - a;
+print b;

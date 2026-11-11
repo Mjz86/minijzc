@@ -1,0 +1,23 @@
+// aa18_interest — a compound-interest schedule: three principal streams
+// at different rates advancing year by year, each year's interest and the
+// payment tallies live together (the natural "several accounts" shape).
+let a = input();
+let b = 850;
+let c = 620;
+let paid = 0;
+let year = 0;
+while (year < 12) {
+  let ia = a / 20;
+  let ib = b / 25;
+  let ic = c / 50;
+  a = a + ia;
+  b = b + ib;
+  c = c + ic;
+  paid = paid + ia + ib + ic;
+  year = year + 1;
+}
+print a;
+print b;
+print c;
+print paid;
+print year;

@@ -257,6 +257,25 @@ add_test(NAME general_examples
           --stdin=${CMAKE_CURRENT_SOURCE_DIR}/examples/general.in -O3)
 set_tests_properties(general_examples PROPERTIES TIMEOUT 120 LABELS fuzz)
 
+# checkpoint 21: the register-audit examples — all twenty natural programs
+# (examples/audit, RESULTS.md holds the committed audit table) through
+# --check-all (the five runners must agree; a mismatch exits nonzero) and
+# --reg-audit (the table prints even under --quiet — its absence would
+# itself be the failure). Input files ride along where the program reads.
+if(MJZ_BASH)
+add_test(NAME reg_audit_examples
+  COMMAND ${MJZ_BASH} -c [==[for f in "$1"/examples/audit/aa*.mjz; do
+    s=$(basename "$f" .mjz)
+    i=""
+    if [ -f "$1/examples/audit/$s.in" ]; then i="--stdin=$1/examples/audit/$s.in"; fi
+    out=$("$2" "$f" --check-all --reg-audit --quiet $i 2>&1) || { echo "FAIL $s"; exit 1; }
+    echo "$out" | grep -q "totals:" || { echo "no audit table for $s"; exit 1; }
+  done
+  exit 0]==]
+          ${MJZ_BASH} ${CMAKE_CURRENT_SOURCE_DIR} $<TARGET_FILE:minijz>)
+set_tests_properties(reg_audit_examples PROPERTIES TIMEOUT 300 LABELS regr)
+endif()
+
 # ---------------------------------------------------------------------------
 # regression gates (ctest -L regr): the historical bug repros (bug ledger 1-6,
 # examples/BUGFIXES.md) through --check-all, the hand-written stress battery,

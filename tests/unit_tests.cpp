@@ -928,6 +928,116 @@ int main() {
     }
   }
 
+  // ---- checkpoint 21: the register-allocation audit -----------------------
+  {
+    // (a) the low-pressure baseline: one row, everything housed, no spill
+    // traffic, the callee-saved subset within the 5-register pool
+    {
+      const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                      "while (i <= n) {\n  s = s + i;\n  i = i + 1;\n}\n"
+                      "print s;\n";
+      Program P = compile(s);
+      UT(P.ok, "reg-audit: series program compiles");
+      RegAuditOut A = reg_audit(fns_of(P, 2), P.fn_names);
+      UT(A.rows.size() == 1, "reg-audit: one fn row");
+      UT(A.rows[0].spill_slots == 0,
+         "reg-audit: the two-value loop spills nothing");
+      UT(A.rows[0].vregs == A.rows[0].housed, "reg-audit: vregs all housed");
+      UT(A.rows[0].regs <= 5, "reg-audit: within the 5-register pool");
+      UT(A.tot_reloads == 0 && A.tot_stores == 0,
+         "reg-audit: no spill traffic");
+      UT(A.zero_spill_fns == 1, "reg-audit: counted spill-free");
+      UT(A.worst_traffic == 0, "reg-audit: no worst row when nothing spills");
+    }
+    // (b) the pressure cooker: spills, traffic, and the totals consistency
+    // (every total is the sum of the rows; the worst row is the max)
+    {
+      const char *s =
+          "let n = input();\n"
+          "let a0 = 1; let a1 = 1; let a2 = 1; let a3 = 1;\n"
+          "let a4 = 1; let a5 = 1; let a6 = 1; let a7 = 1;\n"
+          "while (a0 < n) {\n"
+          "  a0 = a0 + a1; a1 = a1 + a2; a2 = a2 + a3; a3 = a3 + a4;\n"
+          "  a4 = a4 + a5; a5 = a5 + a6; a6 = a6 + a7; a7 = a7 + 1;\n"
+          "}\nprint a0 + a7;\n";
+      Program P = compile(s);
+      UT(P.ok, "reg-audit: accumulator program compiles");
+      RegAuditOut A = reg_audit(fns_of(P, 2), P.fn_names);
+      UT(A.rows.size() == 1, "reg-audit: cooker one row");
+      UT(A.tot_spill_slots > 0, "reg-audit: eight live accumulators spill");
+      UT(A.tot_reloads > 0 && A.tot_stores > 0,
+         "reg-audit: spill traffic counted on both sides");
+      UT(A.tot_vregs == A.tot_housed + A.tot_spill_slots,
+         "reg-audit: vregs = housed + spilled");
+      UT(A.rows[A.worst].reloads + A.rows[A.worst].stores == A.worst_traffic,
+         "reg-audit: the worst row's traffic matches the headline");
+      UT(A.worst < A.rows.size() && A.rows[A.worst].spill_slots > 0,
+         "reg-audit: the worst row spills");
+    }
+    // (c) multi-fn programs: one row per surviving fn, names borrowed from
+    // the fn table, per-fn accounting independent (a callee can spill while
+    // the caller stays clean)
+    {
+      const char *s =
+          "fn combine(p, q, r, s, t, u) {\n"
+          "  if (u <= 0) { return p + q * 2 + r * 3 + s * 4 + t * 5; }\n"
+          "  return combine(q, r, s, t, (p + t) / 2, u - 1) + p;\n"
+          "}\n"
+          "let x = input();\nprint combine(x, x + 1, x + 2, x + 3, x + 4, x / "
+          "2);\n";
+      Program P = compile(s);
+      UT(P.ok, "reg-audit: recursive combiner compiles");
+      RegAuditOut A = reg_audit(fns_of(P, 2), P.fn_names);
+      UT(A.rows.size() == 2, "reg-audit: two rows (main + combiner)");
+      UT(A.rows[0].name == "<main>" && A.rows[1].name == "combine",
+         "reg-audit: rows carry the fn names");
+      UT(A.rows[1].spill_slots > A.rows[0].spill_slots,
+         "reg-audit: the six rotating params carry the pressure");
+      UT(A.tot_blocks == A.rows[0].blocks + A.rows[1].blocks,
+         "reg-audit: block totals are the row sum");
+      {
+        uint32_t zs = 0;
+        for (const RegAuditRow &r : A.rows)
+          zs += (r.spill_slots == 0) ? 1 : 0;
+        UT(A.zero_spill_fns == zs,
+           "reg-audit: the spill-free count matches its rows");
+      }
+    }
+    // (d) the table text: header + one line per fn + totals + worst; the
+    // fn name must print with its OWN length (a string_view has no NUL --
+    // the row name is followed by the columns, never by the source text)
+    {
+      const char *s = "fn sum_to(n) { if (n <= 0) { return 0; } return "
+                      "sum_to(n - 1) + n; }\n"
+                      "print sum_to(input());\n";
+      Program P = compile(s);
+      UT(P.ok, "reg-audit: text program compiles");
+      RegAuditOut A = reg_audit(fns_of(P, 2), P.fn_names);
+      std::string t = reg_audit_text(A, P.fn_names);
+      UT(t.find("reg-audit:") == 0, "reg-audit: table starts with the banner");
+      UT(t.find("vregs") != std::string::npos &&
+             t.find("totals:") != std::string::npos,
+         "reg-audit: table has the column header and totals");
+      UT(t.find("  sum_to ") != std::string::npos,
+         "reg-audit: the fn row is padded to its own name");
+      UT(t.find("(n)") == std::string::npos,
+         "reg-audit: the name view never leaks past its token");
+    }
+    // (e) empty functions and the degenerate single-print program: the
+    // audit must produce a row with zeros, not crash
+    {
+      const char *s = "print 7;\n";
+      Program P = compile(s);
+      UT(P.ok, "reg-audit: trivial program compiles");
+      RegAuditOut A = reg_audit(fns_of(P, 2), P.fn_names);
+      UT(A.rows.size() == 1 && A.rows[0].spill_slots == 0 &&
+             A.rows[0].housed == 0,
+         "reg-audit: the folded program audits as an empty row");
+      UT(A.rows.size() == 1 && A.tot_blocks >= 1,
+         "reg-audit: the folded program still has its block");
+    }
+  }
+
   std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
   return ut_fails ? 1 : 0;
 }

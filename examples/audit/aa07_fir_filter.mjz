@@ -1,0 +1,32 @@
+// aa07_fir_filter — a five-tap FIR filter over a twelve-sample signal:
+// the natural sliding-window shape. The whole window stays live while it
+// slides, and the coefficient set is fixed.
+let sig = array(12);
+let i = 0;
+while (i < 12) {
+  if (i == 1 || i == 8) { sig[i] = 0; }
+  else {
+    if (i < 6) { sig[i] = i + 2; } else { sig[i] = i - 4; }
+  }
+  i = i + 1;
+}
+let hot = input();
+sig[0] = hot; sig[2] = 4; sig[4] = 9; sig[5] = -5; sig[9] = 5; sig[11] = 7;
+let out = 0;
+let acc = 0;
+i = 4;
+while (i < 12) {
+  let w0 = sig[i - 4];
+  let w1 = sig[i - 3];
+  let w2 = sig[i - 2];
+  let w3 = sig[i - 1];
+  let w4 = sig[i];
+  let y = 2 * w0 + w1 - 3 * w2 + w3 + w4 / 2;
+  acc = acc + y;
+  if (i == 7) { print y; }
+  if (i == 11) { print y; }
+  out = out + 1;
+  i = i + 1;
+}
+print acc;
+print out;

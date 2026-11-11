@@ -1,0 +1,28 @@
+// aa06_matmul — 3x3 matrix multiply plus the trace of the product: each
+// dot product keeps a row element and a column element live beside the
+// accumulator, and the trace keeps three partial sums.
+let m = array(9);
+let k = array(9);
+let seed = input();
+let i = 0;
+while (i < 9) { m[i] = i + 1; k[i] = 9 - i + seed; i = i + 1; }
+m[8] = 10;
+let trace = 0;
+i = 0;
+while (i < 3) {
+  let j = 0;
+  while (j < 3) {
+    let d = 0;
+    let t = 0;
+    while (t < 3) {
+      d = d + m[i * 3 + t] * k[t * 3 + j];
+      t = t + 1;
+    }
+    if (i == j) { trace = trace + d; }
+    if (i == 0 && j == 2) { print d; }
+    if (i == 2 && j == 0) { print d; }
+    j = j + 1;
+  }
+  i = i + 1;
+}
+print trace;

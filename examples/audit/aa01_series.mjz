@@ -1,0 +1,20 @@
+// aa01_series — the low-pressure baseline: one accumulator, one counter.
+// Natural arithmetic work (sum + triangular number + digit folding) that
+// should never spill: at most three values live at any point.
+let n = input();
+let sum = 0;
+let i = 1;
+while (i <= n) {
+  sum = sum + i;
+  i = i + 1;
+}
+let tri = n * (n + 1) / 2;
+let dig = 0;
+let rest = sum;
+while (rest > 0) {
+  dig = dig + rest % 10;
+  rest = rest / 10;
+}
+print sum;
+print tri;
+print dig;

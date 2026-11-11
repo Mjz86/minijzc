@@ -38,10 +38,13 @@ src/minijz/           the compiler as a header-only constexpr library
                         tailrec (tce_self/tce_merge), cdfold
   opt/driver.hpp         the pass manager (tiered fixpoint, -O0..-O3)
   opt/optimize_api.hpp   the light DECLARATION of optimize()/optimize_light()
-  back/                  vm (interpreter + steppable VmCtx), bytecode,
-                        emit_plan (EmitPlan), stack_alloc,
+  back/                  vm (bytecode: opcodes + emit_bytecode) +
+                        vm_step (steppable VmCtx + vm_run) +
+                        interp_ssa (the SSA interpreter) — the vm tripart,
+                        bytecode, emit_plan (EmitPlan), stack_alloc,
                         emit_c (+ emit_c_impl), emit_x64 (+ emit_x64_impl:
-                        chordal regalloc via mjz_lib)
+                        codegen) + regalloc (the chordal allocator) +
+                        regaudit (+ regaudit_impl: the --reg-audit table)
   runtime/astrun.hpp     the AST oracle (reference semantics)
   prog/                  program (LIGHT types + the compile() boundary),
                         compile_impl (the pipeline body), printers (IR/
@@ -57,7 +60,9 @@ src/minijz/           the compiler as a header-only constexpr library
 src/minijz.hpp         umbrella (single-TU / constexpr build)
 src/tu/*.cpp           the multi-cpp translation units (9 REAL TUs)
 tests/                  constexpr_check.cpp (cx proofs), unit_tests.cpp
-examples/ demos/        showcase programs (+ general.in input tape), BUGFIXES.md
+examples/ demos/        showcase programs (+ general.in input tape), BUGFIXES.md;
+                        examples/audit/ = 20 natural programs + RESULTS.md
+                        (the register-allocation audit)
 bugrepro/               historical repros for bugs 1-6, examples/BUGFIXES.md
 cmake/                  run_showcases.cmake
 ```
@@ -300,6 +305,17 @@ fuzzer's pass rotations.
 Every run verifies oracle (AST) vs SSA vs optimized vs destroyed vs VM,
 and `--fuzz-native` additionally builds the C and asm backends at -O0/-O2
 and compares byte-for-byte.
+
+## `--reg-audit` — the register-allocation table
+
+Prints the x86-64 register-allocation audit after the compile report:
+one row per surviving fn — reachable blocks, vregs, the values housed
+in the five callee-saved registers (rbx/r12-r15), the spill slots, the
+reload/store spill traffic, the registers pushed. The plan is the SAME
+chordal coloring the codegen gets (one allocator, two consumers), the
+traffic counts are the exact `movq -N(%rbp),..` counts of the emitted
+asm, and the twenty natural programs in `examples/audit/` (with their
+committed `RESULTS.md`) exercise it across the pressure classes.
 
 ## `--debugger` — the interactive facility
 
@@ -728,6 +744,71 @@ The checkpoint-15 additions, per the request:
   and the random-cfg window 12731+ ran clean, native parity included.
   (checkpoint 20 adds case 19 — taildup off, seeds >= 14231 — and the
   table is 32 names now.)
+
+## 7. checkpoint 21: backend modularity, the register-allocation audit — DONE
+
+The backend becomes modular (the checkpoint's two biggest files split,
+byte-identical, the full battery + an asm/bytecode corpus diff
+protecting every step) and grows a second consumer for the register
+allocator — the audit the checkpoint's twenty natural example programs
+exercise:
+
+* **`back/vm.hpp` (~1044) → the vm tripart**: `vm.hpp` (the bytecode
+  layer — the `Bc` opcodes, bc_name/bc_rd_u32/bc_put_u32/bc_size,
+  `emit_bytecode`) now includes `back/vm_step.hpp` (the steppable
+  machine: `VmCtx` + `vm_init` + `vm_step_op` + `vm_run` — the
+  debugger's live view) and `back/interp_ssa.hpp` (`run_prog`, the SSA
+  interpreter with its explicit frame stack). The parent-includes-
+  children convention preserves the historical single-file definition
+  order exactly, so every includer keeps working unchanged.
+* **`back/emit_x64_impl.hpp` (~888) → regalloc + codegen**:
+  `back/regalloc.hpp` carries the whole allocator (`RaPlan` + `ra_plan`
+  — block liveness, the SSA interference graph, the mjz_lib chordal
+  coloring, the 5-register assignment and spill-slot ordinals);
+  emit_x64_impl.hpp keeps the per-fn codegen + the program entry and
+  includes regalloc at the same position, so behavior is unchanged.
+  The backend stack now reads as a pipeline of light plan/impl pairs:
+  emit_plan (the emission plan) / regalloc (the allocator) / emit_x64
+  (the codegen) / emit_c / vm + vm_step + interp_ssa / regaudit (the
+  audit below).
+* **`--reg-audit` (the register-allocation audit)**: `back/regaudit.hpp`
+  (light declarations + `RegAuditRow`/`RegAuditOut`, the emit_x64.hpp
+  pattern) + `back/regaudit_impl.hpp` (compiled once — via the light
+  header in the header-only build, via tu/backends.cpp in the multi-TU
+  build). The audit re-runs `make_emit_plan` + `ra_plan` — the SAME
+  plan the codegen gets, one allocator two consumers — and reports per
+  fn: reachable blocks, vregs with a home, the ones HOUSED in the five
+  callee-saved registers (rbx/r12-r15), the SPILL SLOTS, and the spill
+  traffic — reloads (one per textual use of a spilled vreg, the
+  codegen's own dead-skip discipline so dead instructions don't count)
+  and stores (one per live def, one per spilled incoming param). The
+  accounting is exact: verified by grep against the emitted asm — the
+  audit's `movq -N(%rbp),..` counts match the .s file instruction for
+  instruction. Printed under `--quiet` too (an explicit flag is an
+  explicit ask); the row names print with their OWN length (a
+  string_view has no NUL — the %.*s lesson the codegen learned with
+  std::string).
+* **twenty natural audit programs** (`examples/audit/aa01..aa20` +
+  `.in` tapes + `RESULTS.md`): series, Horner, eight-accumulator
+  pressure cookers, one-pass statistics, bubble sort, 3x3 matmul, FIR
+  filter, Fletcher checksums, gcd/lcm pairs, fib/tribo, three-seed
+  Collatz, trial division, digit ciphers, ledger state machines,
+  calendar arithmetic, unit-conversion chains, Game-of-Life neighbor
+  census, interest schedules, wide RECURSIVE calls (the inliner eats
+  constant calls — recursion is what keeps calls real), and deep
+  recursion. Every program is input()-driven where the optimizer would
+  otherwise fold it to a constant chain — the honest register-allocation
+  view of natural code — and the set deliberately spans the pressure
+  classes: zero-spill (aa02/07/08/12/17/20) through 22 spills (the
+  three-seed Collatz). RESULTS.md is the committed audit table (644
+  vregs, 537 housed, 107 spill slots, 200+145 spill traffic across the
+  twenty) with the reading guide. The `reg_audit_examples` ctest runs
+  all twenty through `--check-all --reg-audit`: a runner mismatch exits
+  nonzero, and a missing audit table is itself a failure.
+* **fuzz**: the rotation window 14831-15130 (native parity included, 20
+  fixtures committed as fuzz_native/fz14831..14851) and 15131-15430,
+  the random-cfg window 14231-14430, and the bait window 14231-14530
+  re-verified — all clean.
 
 The original wishlist (kept verbatim for reference):
 

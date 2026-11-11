@@ -1,0 +1,31 @@
+// aa14_ledger — an account ledger state machine over an event stream
+// (runtime input): balance, held funds, fee tally and the counts of each
+// event class all stay live while the events arrive one by one.
+let n = input();
+let balance = 1000;
+let held = 0;
+let fees = 0;
+let debits = 0;
+let credits = 0;
+let i = 0;
+while (i < n) {
+  let ev = input();
+  if (ev > 0) {
+    balance = balance + ev;
+    credits = credits + 1;
+  } else {
+    if (ev < -50) {
+      held = held - ev;
+      fees = fees + 1;
+    } else {
+      balance = balance + ev;
+      debits = debits + 1;
+    }
+  }
+  i = i + 1;
+}
+print balance;
+print held;
+print fees * 25;
+print credits;
+print debits;

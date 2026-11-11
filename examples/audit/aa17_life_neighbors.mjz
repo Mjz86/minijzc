@@ -1,0 +1,35 @@
+// aa17_life_neighbors — the Game of Life neighbor census for a 3x3 patch:
+// all eight neighbors are read simultaneously for the center cell's next
+// state, beside the center and the generation counter — the natural shape
+// that outruns a five-register pool.
+let grid = array(9);
+let g = 0;
+while (g < 9) {
+  if (g % 2 == 0) { grid[g] = 1; } else { grid[g] = 0; }
+  g = g + 1;
+}
+let hot = input();
+grid[0] = hot;
+let gen = 0;
+let census = 0;
+while (gen < 3) {
+  let n0 = grid[0];
+  let n1 = grid[1];
+  let n2 = grid[2];
+  let n3 = grid[3];
+  let n5 = grid[5];
+  let n6 = grid[6];
+  let n7 = grid[7];
+  let n8 = grid[8];
+  let c = n0 + n1 + n2 + n3 + n5 + n6 + n7 + n8;
+  let center = grid[4];
+  if (center == 1) {
+    if (c < 2 || c > 3) { grid[4] = 0; } else { census = census + 1; }
+  } else {
+    if (c == 3) { grid[4] = 1; census = census + 10; }
+  }
+  gen = gen + 1;
+}
+print census;
+print grid[4];
+print gen;
