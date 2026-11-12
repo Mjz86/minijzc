@@ -257,6 +257,25 @@ add_test(NAME general_examples
           --stdin=${CMAKE_CURRENT_SOURCE_DIR}/examples/general.in -O3)
 set_tests_properties(general_examples PROPERTIES TIMEOUT 120 LABELS fuzz)
 
+# checkpoint 21: the register-audit examples — all twenty natural programs
+# (examples/audit, RESULTS.md holds the committed audit table) through
+# --check-all (the five runners must agree; a mismatch exits nonzero) and
+# --reg-audit (the table prints even under --quiet — its absence would
+# itself be the failure). Input files ride along where the program reads.
+if(MJZ_BASH)
+add_test(NAME reg_audit_examples
+  COMMAND ${MJZ_BASH} -c [==[for f in "$1"/examples/audit/aa*.mjz; do
+    s=$(basename "$f" .mjz)
+    i=""
+    if [ -f "$1/examples/audit/$s.in" ]; then i="--stdin=$1/examples/audit/$s.in"; fi
+    out=$("$2" "$f" --check-all --reg-audit --quiet $i 2>&1) || { echo "FAIL $s"; exit 1; }
+    echo "$out" | grep -q "totals:" || { echo "no audit table for $s"; exit 1; }
+  done
+  exit 0]==]
+          ${MJZ_BASH} ${CMAKE_CURRENT_SOURCE_DIR} $<TARGET_FILE:minijz>)
+set_tests_properties(reg_audit_examples PROPERTIES TIMEOUT 300 LABELS regr)
+endif()
+
 # ---------------------------------------------------------------------------
 # regression gates (ctest -L regr): the historical bug repros (bug ledger 1-6,
 # examples/BUGFIXES.md) through --check-all, the hand-written stress battery,
@@ -331,6 +350,56 @@ add_test(NAME passpause_debugger_session
   COMMAND ${MJZ_BASH} -c [==[printf 'opt break sccp\nopt\nopt show 1\nopt continue\nopt break unswitch\nopt\nopt continue\ncheck\nquit\n' | "$1" "$2" --debugger]==]
           ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/bkpt_tour.mjz)
 set_tests_properties(passpause_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
+
+# checkpoint 19: the body-if unswitch as a scripted session — the demo's
+# loop has a variant head test plus an invariant inner branch; `opt break
+# unswitch` arms, `opt` pauses the timeline right after the versioning
+# (the version-merge blocks and the cloned loop are visible there),
+# `opt show` dumps the paused IR, `opt continue` collects in full, and
+# the five-way check proves the versioned program end to end
+if(MJZ_BASH)
+add_test(NAME bifunswitch_debugger_session
+  COMMAND ${MJZ_BASH} -c [==[printf 'opt break unswitch\nopt\nopt show 2\nopt continue\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/bif_tour.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/demos/bif_tour.in)
+set_tests_properties(bifunswitch_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
+
+# checkpoint 20: the tail-duplication pass as a scripted session — the
+# demo's loop body hides an if/else merge whose value feeds the header
+# phi through the post-arm join (the born phi) and whose terminator is
+# the second if's cbr; `opt break taildup` pauses the timeline right
+# after the first duplication (the arms carry the copied tail, the born
+# phi keys the latch), `opt show` dumps it, `opt continue` collects in
+# full (the exit-tail merge fires in round 2), and the five-way check
+# proves the duplicated program end to end
+if(MJZ_BASH)
+add_test(NAME taildup_debugger_session
+  COMMAND ${MJZ_BASH} -c [==[printf 'opt break taildup\nopt\nopt show 21\nopt continue\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/taildup_tour.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/demos/taildup_tour.in)
+set_tests_properties(taildup_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
+endif()
+
+# checkpoint 22: loop rotation proper — the natural while with a
+# per-iteration print (LCF purity gate fails, runtime trip count defeats
+# unroll/unswitch) through the five runners; the scripted session pauses
+# the timeline at the rotation (`opt break rotate` — the header has just
+# lost its test: phis + fall-through Br, the guard and the latch test
+# carry the moved condition), `opt show` dumps it, and the five-way check
+# proves the rotated program end to end
+if(MJZ_BASH)
+add_test(NAME rotate_tour
+  COMMAND ${MJZ_BASH} -c [==["$1" "$2" --stdin="$3" --check-all --quiet]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.in)
+set_tests_properties(rotate_tour PROPERTIES TIMEOUT 60 LABELS regr)
+add_test(NAME rotate_debugger_session
+  COMMAND ${MJZ_BASH} -c [==[printf 'opt break rotate\nopt\nopt show 33\nopt continue\nvm run\ncheck\nquit\n' | "$1" "$2" --debugger --stdin="$3"]==]
+          ${MJZ_BASH} $<TARGET_FILE:minijz> ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.mjz
+          ${CMAKE_CURRENT_SOURCE_DIR}/demos/rotate_tour.in)
+set_tests_properties(rotate_debugger_session PROPERTIES TIMEOUT 60 LABELS regr)
 endif()
 
 # bug 6 (see examples/BUGFIXES.md §6): the exact pass configuration that

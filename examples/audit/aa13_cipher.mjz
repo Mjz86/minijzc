@@ -1,0 +1,17 @@
+// aa13_cipher — a digit-stream Caesar transform with carry: the incoming
+// digits (runtime input), the shifted digit, the carry and the running
+// checksum rotate per step — natural runtime-value pressure.
+let n = input();
+let carry = 0;
+let chk = 0;
+let i = 0;
+while (i < n) {
+  let d = input();
+  let s = (d + 5 + carry) % 10;
+  carry = (d + 5 + carry) / 10;
+  chk = (chk + s * (i + 1)) % 97;
+  print s;
+  i = i + 1;
+}
+print carry;
+print chk;

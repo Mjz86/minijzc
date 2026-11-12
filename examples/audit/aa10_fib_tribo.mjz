@@ -1,0 +1,25 @@
+// aa10_fib_tribo — the two classic linear recurrences interleaved in one
+// scan: fib (two live) and tribonacci (three live) side by side, plus the
+// index and the rotation temporaries.
+let f0 = 0;
+let f1 = 1;
+let t0 = 0;
+let t1 = 1;
+let t2 = 1;
+let bound = input();
+let i = 0;
+while (i < bound) {
+  let f2 = f0 + f1;
+  f0 = f1;
+  f1 = f2;
+  let t3 = t0 + t1 + t2;
+  t0 = t1;
+  t1 = t2;
+  t2 = t3;
+  i = i + 1;
+}
+print f0;
+print f1;
+print t0;
+print t1;
+print t2;

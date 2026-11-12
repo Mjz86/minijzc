@@ -36,56 +36,68 @@ constexpr void lin_const(LinForm &L, val_t k, val_t cv) {
 // the chain being expanded); everything else becomes a leaf term. `use_idx`
 // (or NONE) enforces def-before-use when scopes are block-local. Absorbed
 // instruction indices are recorded in `absorbed`.
+// `analysis` (the recurrence scan's mode, checkpoint 20): multi-use defs
+// absorb too. Reassociation RE-emits the chain it expands, so absorbing a
+// shared def there would duplicate or delete live computation; the lcf
+// recurrence scan only READS the linear form (the whole loop is deleted
+// when the closed form commits), and a def's VALUE does not depend on how
+// many users it has -- absorbing the induction update (whose users are the
+// feedback phi + the accumulator it feeds: always >= 2 uses) is exactly
+// what turns `while (i < B) { s = s + i; i = i + 1; }` into the sum-of-series
+// recurrence s' = s + i + 1 (coefficient on the induction), which the
+// analytic T(n) series and the runtime Tv construction both consume.
 constexpr void
 lin_expand(const Fn &fn, uint32_t nv, const std::vector<uint32_t> &defi,
            const std::vector<uint32_t> &defb, const std::vector<char> &kc,
            const std::vector<val_t> &kv, const std::vector<uint32_t> &uses,
            const std::vector<uint32_t> &ndefs, const std::vector<char> &scope,
            uint32_t use_idx, LinForm &L, val_t k, uint32_t v,
-           std::vector<uint32_t> &absorbed) {
+           std::vector<uint32_t> &absorbed, bool analysis = false) {
   if (v == NONE || k == 0)
     return;
   if (v < nv && kc[v]) {
     lin_const(L, k, kv[v]);
     return;
   }
-  if (v < nv && defi[v] != NONE && ndefs[v] == 1 && uses[v] == 1 &&
-      defb[v] < (uint32_t)scope.size() && scope[defb[v]] &&
-      (use_idx == NONE || defi[v] < use_idx)) {
+  if (v < nv && defi[v] != NONE && ndefs[v] == 1 &&
+      (uses[v] == 1 || analysis) && defb[v] < (uint32_t)scope.size() &&
+      scope[defb[v]] && (use_idx == NONE || defi[v] < use_idx)) {
     const Instr &D = fn.code[defi[v]];
     if (D.k == K::Bin && D.b == B::Add) {
       lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, defi[v], L, k,
-                 D.a, absorbed);
+                 D.a, absorbed, analysis);
       lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, defi[v], L, k,
-                 D.b2, absorbed);
+                 D.b2, absorbed, analysis);
       absorbed.push_back(defi[v]);
       return;
     }
     if (D.k == K::Bin && D.b == B::Sub) {
       lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, defi[v], L, k,
-                 D.a, absorbed);
+                 D.a, absorbed, analysis);
       lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, defi[v], L,
-                 (val_t)(0 - (uint64_t)k), D.b2, absorbed);
+                 (val_t)(0 - (uint64_t)k), D.b2, absorbed, analysis);
       absorbed.push_back(defi[v]);
       return;
     }
     if (D.k == K::Bin && D.b == B::Mul) {
       if (D.b2 != NONE && D.b2 < nv && kc[D.b2]) {
         lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, defi[v], L,
-                   (val_t)((uint64_t)k * (uint64_t)kv[D.b2]), D.a, absorbed);
+                   (val_t)((uint64_t)k * (uint64_t)kv[D.b2]), D.a, absorbed,
+                   analysis);
         absorbed.push_back(defi[v]);
         return;
       }
       if (D.a != NONE && D.a < nv && kc[D.a]) {
         lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, defi[v], L,
-                   (val_t)((uint64_t)k * (uint64_t)kv[D.a]), D.b2, absorbed);
+                   (val_t)((uint64_t)k * (uint64_t)kv[D.a]), D.b2, absorbed,
+                   analysis);
         absorbed.push_back(defi[v]);
         return;
       }
     }
     if (D.k == K::Copy && D.a != NONE) { // identity through a copy
       lin_expand(fn, nv, defi, defb, kc, kv, uses, ndefs, scope, defi[v], L, k,
-                 D.a, absorbed);
+                 D.a, absorbed, analysis);
       absorbed.push_back(defi[v]);
       return;
     }

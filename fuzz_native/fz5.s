@@ -257,7 +257,6 @@ main:
   testq %rbx, %rbx
   je .Lb66
 .Lb66:
-.Lb40:
   xorl %edi, %edi
   call exit
 .Lb17:
@@ -276,7 +275,8 @@ main:
   movq $5, %rdi
   call mjz_alloc
   movq %rax, %rbx
-  jmp .Lb40
+  xorl %edi, %edi
+  call exit
 .Lb62:
   movq $0, %r12
   jmp .Lb63

@@ -25,6 +25,7 @@ struct Cli {
   std::vector<std::string> native_O{"0"};
   std::string exe_name{}; // -o NAME: name of the --emit=exe executable
   bool emit_c{false}, emit_asm{false}, emit_bc{false}, emit_exe{false};
+  bool reg_audit{false}; // --reg-audit: the x86-64 register-allocation table
   bool do_run{false}, no_opt{false}, print_ir{false}, print_bc{false};
   long opt_diff_fn{-1}; // --opt-diff[=FN[:PASS]]: per-pass unified IR
   // diffs; FN picks the fn, the optional :PASS filter shows only that
@@ -94,6 +95,10 @@ static void usage() {
       "                    print a timing table (uses the native compiler "
       "below)\n"
       "  --emit=c,asm,bc   write backend files (.c / .s / .mbc + .mbc.lst)\n"
+      "  --reg-audit      print the register-allocation audit table (the\n"
+      "                    SAME chordal-coloring plan the x86-64 codegen\n"
+      "                    gets: per fn — vregs housed in rbx/r12-r15,\n"
+      "                    spill slots, reload/store traffic, regs used)\n"
       "  --emit=exe         also build an executable with the native\n"
       "                    compiler (uses --cc and the first --native-O\n"
       "                    level; -o NAME renames it)\n"
@@ -138,7 +143,7 @@ static void usage() {
       "ifconv,\n"
       "                    unroll, lcf, constcall, scctco, tailrec, cdfold,\n"
       "                    deadargs, fnspec, icf, argpromo, gvn, unswitch,\n"
-      "                    lsimp, inline) —\n"
+      "                    lsimp, taildup, rotate, inline) —\n"
       "                    applied on top of the -O preset, so e.g. `-O1\n"
       "                    --enable=lcf` is legal\n"
       "  --unroll=N         full-unroll loops with constant trip count <= N\n"
@@ -233,6 +238,8 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
       C.do_run = true;
     else if (a == "--no-exec" || a == "--compile-only")
       C.no_exec = true;
+    else if (a == "--reg-audit")
+      C.reg_audit = true; // print the register-allocation audit table
     else if (a == "--check-all")
       C.check_all = true;
     else if (a == "--debug-plan")
@@ -424,6 +431,10 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_unswitch = on;
   else if (eq("lsimp"))
     p.p_lsimp = on;
+  else if (eq("taildup"))
+    p.p_taildup = on;
+  else if (eq("rotate"))
+    p.p_rotate = on;
   else if (eq("inline"))
     p.do_inline = on;
   else {

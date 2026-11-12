@@ -1,0 +1,49 @@
+// rotate_tour.mjz — the loop-rotation tour (checkpoint 22).
+//
+// Three while loops, each chosen to reach the rotation (toggle #33, tier 2,
+// the LAST loop consumer):
+//   * the first: a per-iteration print fails the LCF purity gate and the
+//     runtime trip count defeats unroll/unswitch — the plain natural
+//     while. The test moves to the latch edge: the header keeps only its
+//     phis and falls through; `opt break rotate` in the debugger pauses
+//     the timeline right at the reshaping.
+//   * the second: a fn call IN the loop condition — the whole moved
+//     header (the call + the compare) keeps its exact side-effect count
+//     (k trips = k+1 header runs in both forms: the guard copy is the
+//     1st, the latch copy of iteration i is the (i+1)-th). probe's prints
+//     prove the count.
+//   * the third: reads after the loop — the exit phis deliver the entry
+//     values on a zero-trip and the last-iteration values otherwise.
+let n = input();
+let s = 0;
+let i = 1;
+while (i <= n) {
+  print i;
+  s = s + i;
+  i = i + 1;
+}
+print s;
+print i;
+
+fn probe(x) {
+  print x;
+  return x * 2;
+}
+let m = input();
+let j = 0;
+let t = 0;
+while (probe(j) < m) {
+  t = t + j;
+  j = j + 1;
+}
+print t;
+
+let k = input();
+let a = 0;
+let b = 1;
+while (b < k) {
+  a = a + b;
+  b = b + a;
+}
+print a;
+print b;

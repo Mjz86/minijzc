@@ -1,125 +1,173 @@
-# Checkpoint 18 — compound-condition loop unswitching, the lcf split, pass-breakpoint auto-pause
+# Checkpoint 22 — loop rotation proper (the latch merge, consumed exactly as predicted)
 
-branchA @ (one commit on top of checkpoint 17's `f651041`). The
-checkpoint-17 CONTINUE backlog, all four items in one commit:
-the unswitch extension for short-circuit conditions, the
-lcf.hpp code-quality split, the debugger's `opt break`
-auto-pause, and the next fuzz windows. Battery all green,
-re-verified immediately before the commit.
+branchA @ (one commit on top of checkpoint 21's `9d4d234`). The
+CONTINUE backlog named it — "loop rotation proper (the taildup gates
+already point at it: the latch merge — the merge whose continuation
+IS the loop header — is the exact shape rotation consumes)" — and
+this checkpoint consumed it. One new pass (`rotate`, toggle #33),
+one selftest-caught regression class fixed on the spot, one fuzz
+vocabulary gap closed (rotation bait), the audit table regenerated
+against the rotated code, and the strongest fixture-stability
+discipline yet (the below-floor gate, verified on both older
+windows). Battery all green, re-verified immediately before the
+commit.
 
 ## What landed
 
-### 1. Compound-condition loop unswitching (`unswitch` extended, still toggle #30)
+### 1. Loop rotation proper (`rotate`, toggle #33, tier 2, LAST loop consumer — `opt/loop/rotate.hpp`)
 
-The while-lowering spreads `while (a && b)` / `while (a || b)` over a
-diamond: the header tests a, the elbow E tests b, the 1/0 blocks
-TT/FF feed the merge mm whose phi+cbr IS the loop's exit edge. The
-trivial unswitch bailed on those (the header's cbr has BOTH arms
-in-loop, so `loop_shape_of` fails and nothing versions the loop).
+The canonical test-first loop becomes test-last with a one-shot
+guard. The design decision that makes it exact in THIS IR:
 
-When BOTH leaf tests are SSA-proven loop-invariant (defined outside,
-dominating the preheader — licm's header scan + the ordinary hoist put
-the compares in the preheader by the time tier 2 runs), the whole
-guard chain is now versioned as one:
+- The whole non-phi h-body MOVES (never copies-in-place) to the two
+  edges — a guard copy appended to the preheader (the 1st header
+  run) and an edge test appended to the latch (the (i+1)-th header
+  run). Moving (not cloning into place) is what preserves side-effect
+  counts: k trips = k+1 header runs in both forms, and the guard
+  copy IS the 1st while the latch copy of iteration i IS the (i+1)-th
+  (nothing sits between a latch end and the next header top), so
+  Prints, Inputs, Calls, Div/Mod traps and Bkpt observations all
+  fire identically in count and order.
+- The header phis keep keys AND args unchanged — pre still enters h
+  (the guard's loop arm) and the latch still branches back, so
+  nothing re-keys; preds(h) is literally the same {pre, latch}.
+- Loop-internal readers of a moved def get a fresh header phi
+  carrying (guard copy, latch copy) — exactly the (pre, latch)
+  pattern the original phis use. The after-loop region F (reachable
+  from X loop-free) reads an h-phi through a fresh exit phi whose
+  args are the header phi's OWN (pre_arg, latch_arg) pair relocated
+  past the loop — and a moved h-body def through (guard copy, latch
+  copy).
+- Result: one control transfer fewer per iteration (the header cbr +
+  the latch br fuse into the latch cbr); tier-0 splices the now-empty
+  fall-through chain afterwards.
 
-```
-&& : pre: cbr(a) g2 / fx ; g2: cbr(b) H' / fx ; fx: br X
-|| : pre: cbr(a) t1 / g2 ; g2: cbr(b) t1 / fx ; t1: br H' ; fx: br X
-```
+Soundness envelope (the strict unroll/lcf family): canonical shape
+(loop_shape_of), unique pre + latch with latch != h, dedicated
+`br h` preheader, the ONLY exit edge is the header's (exit_inventory
+empty — no breaks) with preds(X) == {h}, a single-pred X carrying a
+phi bails (paranoia — the tier-0 degenerater should have removed
+those), h-body <= ROT_BODY_MAX (8) instrs, and outside uses of
+loop-defined values only through the HDEF set (h-phis + h-body defs,
+the only values that exist on a 0-trip path) and only in F — anything
+else bails (dominance forbade it before the rotation anyway). The
+guard reads only values dominating the preheader — the checkpoint-20
+lcf-rt use-before-def lesson is structurally impossible here: every
+h-body read is an h-phi (mapped to pre_args), an earlier h-body def
+(the guard's own copy), or a def dominating h which necessarily
+dominates pre.
 
-(per-arm polarity: && exits on either false, || enters on either
-true). The true path H' is a full fresh-vreg clone whose header
-branches straight to the REAL body — the entire condition diamond is
-bypassed and becomes unreachable in the clone (unreach removes it;
-in the clone the condition cannot change, so the dead exit edge is
-semantically harmless, exactly like the original). The mm->X edge
-becomes the zero-iteration edge: X's phi args keyed to mm are rekeyed
-to the new false-side block fx and take each header phi's ENTRY value
-(the zero-iteration original left the variables untouched); break
-edges are rekeyed to their clones as before; merge phis at X keep the
-per-path meanings of header phis read on the false path. All the
-pred-count math preserves the ≤2 preds invariant on the live CFG (the
-transient extra preds are dead original/diamond blocks, removed by
-unreach within the same tier round).
+Position: tier 2, after cdfold. Unswitch/unroll/lcf all require the
+test-first shape, so they get their chance first and the rotated loop
+(header ends in Br) is simply invisible to them afterwards — one
+rotation per call, the fixpoint driver re-analyzes, nothing
+re-rotates.
 
-Safety gates beyond the trivial path's: the diamond blocks
-(h/E/TT/FF/mm) must be pure — Const/Copy/Bin with `nt` on Div/Mod —
-because the false path skips them and skipped side effects would be a
-miscompile (the invariance check already rejects anything that
-computes the conditions in-loop; this is belt and braces), and the
-bypass target must be entered only through mm (no phis to rekey).
-Nested short-circuits (`a && b && c`, `(a && b) || c`) stay
-unversioned — the matcher handles exactly two leaf tests.
+### 2. The selftest-caught regression: the header-increment loop
 
-Unit checks pin all three polarity paths for both && and ||, the
-non-invariant rejection, and a guarded-division loop (the && guard is
-control-flow-sensitive; the versioning must not hoist the division).
+The `break_continue` showcase (`while (1) { i = i+1; if (i > 10)
+break; ... }`) failed with an infinite loop on the first working
+draft — tier-0 folds the constant header test and splices the break
+into the header's cbr, so the INCREMENT lives in the header: an
+h-phi whose latch arg IS a moved h-body def. Three phi paths needed
+routing through the moved def's fresh header phi:
 
-### 2. Code quality: the lcf split (+ constcall's real home)
+- the header phi's own latch-side arg (the back edge must carry the
+  def's per-position value, not the moved def itself);
+- the latch copy's read of that phi (it needs the value the phi takes
+  at the NEXT header position — which is exactly the phi_v carrier);
+- the exit phi's latch-side arg (the (k+1)-th computation, i.e. the
+  latch copy's own output).
 
-`opt/loop/lcf.hpp` was the tree's biggest function (~1150 lines of one
-`opt_lcf`). Now:
+Plus the copy-dst rewrite the checkpoint-20 landmine list already
+named: the first draft's copies kept the ORIGINAL dst while the
+guard/latch cbrs read the fresh vregs — both copies defined the same
+vreg, the tests read never-defined values (the oracle-vs-compiled
+mismatch was immediate). The unit series (c) pins the exact program.
 
-- `opt/loop/lcf_sim.hpp` — the general any-condition simulator
-  (`lcf_sim_fold`: the "fold the GCD demo to a constant" path) + the
-  shared budgets.
-- `opt/loop/lcf_rt.hpp` — the runtime-trip guarded closed form
-  (`lcf_rt_fold` + the `LcfEvo` affine-recurrence record).
-- `lcf.hpp` (now ~707) — the driver: scan, loop shape, induction,
-  trip counts, the const-trip closed forms and the exact simulation
-  fallback. Behavior is byte-identical: the extractions are verbatim
-  moves behind explicit call contracts (the selftest's LCF demos,
-  `lcf_rt_*` included, pin the counts).
-- The const-call evaluator — which historically squatted in
-  `loop/lcf_rt.hpp` under a header comment describing the runtime
-  trip counts — moved to its real home
-  `opt/interprocedural/constcall.hpp` (driver/callgraph/callcse/
-  minijz.hpp includes updated).
+### 3. The fuzz vocabulary gap: rotation bait
 
-### 3. Debugger: `opt break` auto-pause
+The window's first run reported `rotations: 0` — the fuzzer's plain
+while loops are constant-bound and constant-driven (SCCP/unroll eat
+every one of them; the rt-lcf bait loops are pure, so lcf eats
+those). The missing vocabulary, now planted for seeds >= 15531
+(MJZ_ROTATE_SEED_FLOOR, fuzz_gen): a RUNTIME start (`input() % 12` —
+clamped, because this bait EXECUTES its loop — no closed form), a
+constant bound/step (unroll cannot count, unswitch has no
+invariant), and a PER-ITERATION PRINT (the LCF purity gate
+rejects) — the exact while that survives every earlier consumer and
+lands in the rotation. 121 bait loops in the 15531-15830 window,
+143 rotations performed, native parity on 20 fixtures.
 
-`opt break PASS` now ARMS the pass breakpoint in addition to showing
-the current view. The next `opt [FN]` collection PAUSES there: the
-timeline truncates after that pass's first snapshot, the pause banner
-names it, and the pass's diff against the previous snapshot is
-printed — the breakpoint between passes now actually stops, the way
-`vm break` stops execution. `opt continue` disarms and re-collects
-the full timeline. New scripted ctest `passpause_debugger_session`
-arms sccp + unswitch, pauses, inspects with `opt show`, continues, and
-five-way checks.
+### 4. The strengthened fixture discipline (the below-floor gate)
 
-### 4. Fuzz
+fuzz_cfg_for now disables `p_rotate` for every seed BELOW the floor
+(not just an in-window off-case for variety): the pass joins the
+fuzz config only from 15531 up, so the committed fixtures of the
+older windows keep regenerating byte-identically under this and
+future binaries. Verified empirically on BOTH surviving windows:
+fz14831..14839 (checkpoint 21's) and fz14231..14239 (checkpoint
+20's) regenerate byte-for-byte with the new binary. Inside the
+window, case 20 (seed % 21 == 20) keeps the test-first shape for
+1-in-21 seeds — pass-interaction variety, the same shape as every
+window before it.
 
-- `MJZ_CC_SEED_FLOOR = 13331`: seeds >= this plant
-  `while (fl1 > 0 && fl2 > 0)` / `||` loops with both flags invariant
-  (never assigned inside) and termination riding on a guarded break —
-  the compound-unswitch bait. 127/300 programs in the new window carry
-  one (169 loops); committed fixtures keep byte-identical programs
-  (no new toggles, so the rotation stays %19 for everything >= 12731).
-- The fuzz report's vocabulary line grew a
-  `w/ compound-cond bait: N (M loops)` field.
-- Windows run in THIS session: rotation 13031-13330 and 13331-13630
-  (the new compound window), random-cfg 12931-13130, plus re-verified
-  12331-12630 / 12731-13030 / random-cfg 10801-11000 and 12731-12930 —
-  all clean, no timeouts. 8 native-parity checks in the bait window
-  (fixtures committed as fuzz_native/fz13331..13339 minus one
-  timeout-oracle seed).
+### 5. The register audit against the rotated code
+
+The checkpoint-21 audit exists to measure exactly this kind of
+change: `scripts/regen_audit_results.py` (committed) regenerates
+examples/audit/RESULTS.md from the current binary — the prose
+headers and input lines preserved verbatim, the tables and outputs
+rebuilt from fresh `--reg-audit --check-all` runs. The twenty
+programs' totals moved 644 vregs / 537 housed / 107 spill slots /
+345 traffic -> 710 / 573 / 137 / 424: the rotation's guard +
+latch-edge copies and the routing phis add live values at the loop
+edges (the FIR filter went spill-free -> 8 slots — the measured
+price of one fewer control transfer per iteration; horner,
+checksums, trial division, the Life census and the deep-recursion
+pair stay spill-free). The audit is the observer, not the judge:
+the tradeoff is now on the record.
+
+### 6. Demo + gates
+
+`demos/rotate_tour.mjz` + `.in`: three whiles — the plain impure
+natural loop, a CALL IN THE LOOP CONDITION (the whole moved header
+keeps its side-effect count — probe's prints prove k+1), and
+after-loop reads (the exit phis). `rotate_tour` ctest (five runners
++ the audit) and `rotate_debugger_session` (scripted: `opt break
+rotate` pauses the timeline, `opt show 33` dumps the rotated loop —
+guard in b0, phis + fall-through Br in the header, edge test in the
+latch, exit phis at X). 34 new unit checks (the series a-k: shape,
+five-runner parity, zero-trip, the header-increment regression,
+call counts, nested, polarity flip, the surviving-break bail, the
+lcf precedence, the toggle, bkpt parity, a two-caller callee's own
+rotation).
 
 ## Battery (re-verified before the commit)
 
-selftest 207/207 | ctest 39/39 (new passpause session) | units
-6191/6191 (+16 compound-unswitch checks) | `format`/`check-format`
-clean | fuzz 1-200 (selftest), 12331-12630, 12731-13030,
-13031-13330, 13331-13630, random-cfg 10801-11000, 12731-12930,
-12931-13130 — all clean.
+selftest 207/207 | ctest 44/44 (new rotate_tour +
+rotate_debugger_session) | units 6328/6328 (+3 toggle-table growth,
++34 rotation checks) | `format`/`check-format` clean | fuzz
+15531-15830 (143 rotations, 20 parity fixtures committed) +
+15831-16130 (167 rotations) + 14831-15130 re-verified +
+14231-14530 re-verified + random-cfg 14431-14730 and 15531-15830
+(67 rotations) — all clean, 0 mismatches; the old windows
+regenerate their fixtures byte-identically.
 
 ## Known limits
 
-- Compound unswitch handles exactly TWO leaf tests (`a && b`,
-  `a || b`); deeper boolean trees stay unversioned (documented in
-  the README wishlist notes).
-- A real Windows/MSVC run remains the one unverified step; this
-  session's sandbox had no zig/MinGW either, so nothing was
-  re-cross-verified Windows-shaped — nothing in this checkpoint
-  touches build/platform code (one ctest added), and the ckpt-16
-  Windows machinery is unchanged.
+- A single-block self-loop (latch == header — an inlined loop
+  spliced into one block) bails: the documented envelope, not a
+  silent skip (the unit test (k) documents it).
+- Loops with a SURVIVING break edge stay test-first (exit_inventory
+  non-empty) — the strict unroll/lcf family discipline; tier-0 folds
+  the classic `while(1)+break` into the header so most of those DO
+  rotate (the unit test (c) is exactly that program).
+- The audit table regenerated at 137 spill slots vs 107: rotation
+  trades register pressure for per-iteration branch count on this
+  backend's five-register pool — the honest measurement, not a
+  regression to hide (live-range splitting / rematerialization of
+  the guard copies are the natural follow-ups, and the audit now
+  measures them).
+- A real Windows/MSVC run remains the one unverified step (no
+  MSVC/zig/MinGW in this sandbox; native parity ran on g++).

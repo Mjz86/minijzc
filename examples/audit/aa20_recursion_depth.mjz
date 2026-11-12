@@ -1,0 +1,23 @@
+// aa20_recursion_depth — the natural deep-recursion pair: a plain sum_to
+// recursion beside caller locals that stay live across every nested call,
+// plus a two-argument addend variant — the shapes that decide what the
+// callee-saved pool must preserve versus spill.
+fn sum_to(n) {
+  if (n <= 0) { return 0; }
+  return sum_to(n - 1) + n;
+}
+fn weighted(n, w) {
+  if (n <= 0) { return 0; }
+  return weighted(n - 1, w) + n * w;
+}
+let base = input();
+let offset = 60;
+let s = sum_to(base);
+let w = weighted(base, 3);
+let total = s + w + offset;
+let diff = w - s;
+print s;
+print w;
+print total;
+print diff;
+print sum_to(offset) - sum_to(base);

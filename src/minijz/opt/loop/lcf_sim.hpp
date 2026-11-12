@@ -27,7 +27,13 @@ inline constexpr uint64_t LCF_SIM_BUDGET = 40000000ull;        // sim steps
 // Returns true when the loop was folded to constants.
 struct LcfSimIn {
   uint32_t h{}, pre{}, latch{}, X{}, body{};
-  Instr hterm{}; // h's terminator (Cbr on hterm.a)
+  Instr hterm{};       // h's terminator (Cbr on hterm.a)
+  bool exit_on_true{}; // checkpoint 19: break-style headers (a folded
+  // `break` became the test: the TRUE arm leaves) exit on test-TRUE, not
+  // on test-false — the simulator must evaluate the polarity it is given,
+  // the way the analytic trip counter does (the checkpoint-17 fix covered
+  // only that side; the body-if unswitch bait reshapes loops this way and
+  // exposed the simulator's)
   const std::vector<HPhi> *hphis{};
   const std::vector<char> *inL{};
   const std::vector<char> *kc{};
@@ -163,9 +169,10 @@ constexpr bool lcf_sim_fold(Fn &fn, OptStats &os, const LcfSimIn &In) {
       }
       if (trap)
         break;
-      if (val[In.hterm.a] == 0) { // header test fails: exit with the
-        done = true;              // current phi values as final values
-        break;
+      if (In.exit_on_true ? (val[In.hterm.a] != 0)
+                          : (val[In.hterm.a] == 0)) { // the header test
+        done = true; // exits NOW (break-style: on TRUE; the ordinary while
+        break;       // shape: on FALSE) — current phis are the finals
       }
       for (uint32_t cb : chain) {
         for (uint32_t i = fn.blocks[cb].begin; i + 1 < fn.blocks[cb].end;

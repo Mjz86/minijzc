@@ -1,0 +1,25 @@
+// aa04_stats — one-pass statistics the natural way: count, sum, sum of
+// squares, minimum, maximum and the current sample all live together in
+// the scan loop (six-plus live values), then mean/variance from them.
+let count = 0;
+let sum = 0;
+let sumsq = 0;
+let mn = 1000000;
+let mx = -1000000;
+let x = 17;
+while (x > 0) {
+  count = count + 1;
+  sum = sum + x;
+  sumsq = sumsq + x * x;
+  if (x < mn) { mn = x; }
+  if (x > mx) { mx = x; }
+  x = x * 3 / 10;
+}
+let mean = sum / count;
+let var = sumsq / count - mean * mean;
+print count;
+print sum;
+print mn;
+print mx;
+print mean;
+print var;

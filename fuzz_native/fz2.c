@@ -30,7 +30,6 @@ static void mjz_store(int64_t h, int64_t i, int64_t v) {
 
 int main(void) {
   /* main: source lines 8..51 */
-  int64_t r0;
   int64_t r1;
   int64_t r3;
   int64_t r4;
@@ -111,10 +110,6 @@ L39:;
   r10 = (int64_t)((uint64_t)-33 - (uint64_t)r11);
   /* 40:8 */
   if (!((r10 != 0))) goto L34;
-  r10 = 1;
-L35:;
-  /* 40:1 */
-  if (!((r10 != 0))) goto L31;
   /* 41:8 */
   r8 = (int64_t)((uint64_t)r8 - (uint64_t)1);
   /* 42:11 */
@@ -134,9 +129,6 @@ L37:;
   r11 = 1;
   goto L39;
 L34:;
-  r10 = 0;
-  goto L35;
-L31:;
   /* 45:7 */
   r8 = mjz_arena[r3 + 1];
   /* 45:10 */
@@ -203,10 +195,8 @@ L54:;
   r4 = 79 / r7;
   /* 50:8 */
   if (-1 >= r4) goto L57;
-  r0 = 1;
-L58:;
   /* 50:1 */
-  printf("%lld\n", (long long)r0);
+  printf("%lld\n", (long long)1);
   /* 51:1 */
   printf("%lld\n", (long long)r3);
   return 0;
@@ -220,6 +210,9 @@ L53:;
   r4 = 0;
   goto L54;
 L57:;
-  r0 = 0;
-  goto L58;
+  /* 50:1 */
+  printf("%lld\n", (long long)0);
+  /* 51:1 */
+  printf("%lld\n", (long long)r3);
+  return 0;
 }

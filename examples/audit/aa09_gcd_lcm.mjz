@@ -1,0 +1,24 @@
+// aa09_gcd_lcm — Euclid over three pairs with the lcm from each gcd:
+// the remainders, both operands of the current pair and the three
+// gathered results stay live across the scan.
+fn gcd(a, b) {
+  while (b != 0) {
+    let t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+let x1 = input(); let x2 = input(); let x3 = input();
+let p1 = gcd(x1, x2);
+let p2 = gcd(x2, x3);
+let p3 = gcd(288, x3);
+let l1 = x1 / p1 * x2;
+let l2 = x2 / p2 * x3;
+let l3 = 288 / p3 * x3;
+print p1;
+print p2;
+print p3;
+print l1;
+print l2;
+print l3;

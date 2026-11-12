@@ -1,0 +1,32 @@
+// aa15_calendar — calendar arithmetic: days between two dates and the
+// day-of-week roll, with the month-length switch and the year/month/day
+// carries all live at once (the natural "many small live values" shape).
+fn days_in(m) {
+  if (m == 4 || m == 6 || m == 9 || m == 11) { return 30; }
+  if (m == 2) { return 28; }
+  return 31;
+}
+fn days_since(y, m, d) {
+  let total = d;
+  let mm = 1;
+  while (mm < m) {
+    total = total + days_in(mm);
+    mm = mm + 1;
+  }
+  let yy = 1900;
+  while (yy < y) {
+    if (yy % 4 == 0) { total = total + 366; } else { total = total + 365; }
+    yy = yy + 1;
+  }
+  return total;
+}
+let y2 = input();
+let a = days_since(1997, 3, 14);
+let b = days_since(y2, 11, 11);
+let gap = b - a;
+let dow = (a + 5) % 7;
+print a;
+print b;
+print gap;
+print dow;
+print gap / 365;

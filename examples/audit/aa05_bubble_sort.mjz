@@ -1,0 +1,30 @@
+// aa05_bubble_sort — the classic: array sort with swap counting. The
+// array lives in the arena; the loop keeps the two in-flight elements,
+// the indices and the swap/pass counters live.
+let n = 10;
+let arr = array(10);
+arr[0] = 5; arr[1] = 2; arr[2] = 9; arr[3] = 1; arr[4] = 7;
+arr[5] = 3; arr[6] = 8; arr[7] = 0; arr[8] = 6; arr[9] = 4;
+let passes = 0;
+let swaps = 0;
+let done = 0;
+while (done == 0) {
+  done = 1;
+  passes = passes + 1;
+  let j = 0;
+  while (j < n - 1) {
+    if (arr[j] > arr[j + 1]) {
+      let t = arr[j];
+      arr[j] = arr[j + 1];
+      arr[j + 1] = t;
+      swaps = swaps + 1;
+      done = 0;
+    }
+    j = j + 1;
+  }
+}
+print arr[0];
+print arr[4];
+print arr[9];
+print passes;
+print swaps;

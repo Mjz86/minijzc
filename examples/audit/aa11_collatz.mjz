@@ -1,0 +1,30 @@
+// aa11_collatz — three Collatz seeds scanned together: per-seed step
+// counts, the running max altitude and the global sums all stay live
+// while each seed's current value advances.
+let s1 = 27;
+let s2 = 31;
+let s3 = 97;
+let steps = 0;
+let maxalt = 0;
+let total = 0;
+while (s1 != 1 || s2 != 1 || s3 != 1) {
+  if (s1 != 1) {
+    if (s1 % 2 == 0) { s1 = s1 / 2; } else { s1 = 3 * s1 + 1; }
+    if (s1 > maxalt) { maxalt = s1; }
+    total = total + s1;
+  }
+  if (s2 != 1) {
+    if (s2 % 2 == 0) { s2 = s2 / 2; } else { s2 = 3 * s2 + 1; }
+    if (s2 > maxalt) { maxalt = s2; }
+    total = total + s2;
+  }
+  if (s3 != 1) {
+    if (s3 % 2 == 0) { s3 = s3 / 2; } else { s3 = 3 * s3 + 1; }
+    if (s3 > maxalt) { maxalt = s3; }
+    total = total + s3;
+  }
+  steps = steps + 1;
+}
+print steps;
+print maxalt;
+print total;

@@ -38,7 +38,19 @@ struct GenCtx {
   bool bkpt_mode{false}; // sprinkle `breakpoint` stmts (seeds >= the floor)
   bool gvn_mode{false};  // plant shadow-pair merges (seeds >= that floor)
   bool unsw_mode{false}; // plant invariant-flag while loops (unswitch bait)
+  bool bif_mode{false};  // plant invariant-inner-if while loops (the
+                         // checkpoint-19 body-if unswitch bait: the header
+                         // test stays variant, the body branch versions)
+  bool td_mode{false};   // plant small-tail merges + pure runtime-trip
+                         // loops (taildup bait + the lcf-rt regression
+                         // flavor that caught the guard-bound miscompile)
+  bool rot_mode{false};  // plant rotation-bait while loops (runtime start,
+                         // impure body: survives every earlier consumer)
   int n_unswbait{};      // ... count (for the report)
+  int n_bifbait{};       // body-if bait loops planted (for the report)
+  int n_tdbait{};        // taildup bait merges planted (for the report)
+  int n_rtbait{};        // pure runtime-trip loops planted (for the report)
+  int n_rotbait{};       // rotation-bait loops planted (for the report)
   bool cc_mode{false};   // plant short-circuit-condition while loops
                          // (compound unswitch bait: && / || of two invariant
                          // flags; seeds >= that floor)
@@ -359,7 +371,7 @@ inline void GenCtx::gen_stmt(int depth) {
   // leaves: print / assignment / flat array store / 2-D store / merge elbow
   int r = pick(0, depth <= 0 ? 4 : 10);
   if (r <= (depth <= 0 ? 4 : 3)) {
-    int leaf = pick(0, gvn_mode ? 7 : 6);
+    int leaf = pick(0, td_mode ? 8 : (gvn_mode ? 7 : 6));
     if (leaf <= 1) { // flat array store: constant / runtime index
       std::vector<int> flat{};
       for (int i = 0; i < (int)arrays.size(); ++i)
@@ -474,6 +486,44 @@ inline void GenCtx::gen_stmt(int depth) {
       n_gvnbait++;
       return;
     }
+    if (leaf == 8) { // TAIL-DUP BAIT (checkpoint 20): an if/else whose
+      // merge immediately branches again — the next if's condition
+      // computation lives IN the merge, so the merge's terminator is a
+      // cbr whose arms are single-pred (the exact shape that survives
+      // tier-0's splice). The values are OBSERVED per arm and past the
+      // chain, so a mis-routed merge phi or born phi shows immediately.
+      // The loop flavor exercises the in-loop routing: the merge feeds the
+      // header phi through the post-arm join (the born-site shape) while
+      // per-iteration prints observe both strides.
+      if (pick(0, 1)) { // in-loop: the born-site latch routing
+        std::string bf = "bf" + std::to_string(counter_id++);
+        std::string tx = "tx" + std::to_string(counter_id++);
+        std::string tc = "tc" + std::to_string(counter_id++);
+        std::string fin = use_input ? "input()" : std::to_string(pick(-3, 3));
+        src += "let " + bf + " = " + fin + ";\n";
+        src += "let " + tx + " = 0;\nlet " + tc + " = 0;\n";
+        src += "while (" + tc + " < " + std::to_string(pick(3, 6)) + ") {\n";
+        src += "  " + tc + " = " + tc + " + 1;\n";
+        src += "  if (" + bf + " > 0) { " + tx + " = " + tx +
+               " + 1; } else { " + tx + " = " + tx + " + 2; }\n";
+        src += "  if (" + tx + " > " + std::to_string(pick(0, 3)) +
+               ") { print " + tx + "; } else { print " + tx + " + 100; }\n";
+        src += "}\n";
+        src += "print " + tx + " + " + tc + ";\n";
+      } else { // fn-level: the if-chain (merge terminator = next cbr)
+        std::string av = "a" + std::to_string(counter_id++);
+        std::string tx = "tx" + std::to_string(counter_id++);
+        std::string ain = use_input ? "input()" : std::to_string(pick(-9, 9));
+        src += "let " + av + " = " + ain + ";\n";
+        src += "let " + tx + " = 0;\n";
+        src += "if (" + av + " > 0) { " + tx + " = " + av + " + 1; } else { " +
+               tx + " = " + av + " + 2; }\n";
+        src += "if (" + tx + " > " + std::to_string(pick(0, 4)) + ") { print " +
+               tx + "; } else { print " + tx + " + 100; }\n";
+      }
+      n_tdbait++;
+      return;
+    }
     std::string e; // print (occasionally a raw handle value: stkarr bait)
     if (!arrays.empty() && pick(0, 11) == 0) {
       const Arr &A = arrays[pick(0, (int)arrays.size() - 1)];
@@ -515,6 +565,85 @@ inline void GenCtx::gen_stmt(int depth) {
   }
   if (r == 6 && depth >= 2) { // bounded while with a fresh counter
     std::string cn = "c" + std::to_string(counter_id++);
+    if (rot_mode && pick(0, 3) == 0) {
+      // ROTATION BAIT (checkpoint 22): the while the rotation consumes —
+      // a RUNTIME start (input, clamped so the loop cannot spin out on a
+      // huge or negative tape value — the bait EXECUTES its loop, no
+      // closed form) with a constant bound/step, so unroll cannot count
+      // the trips and unswitch has no invariant to version on, and a
+      // PER-ITERATION PRINT, so the LCF purity gate rejects the body.
+      // The test-first loop then survives all the earlier consumers and
+      // the rotation moves its test to the latch edge (guard copy in the
+      // preheader, moved h-body, exit phis); the print AFTER the loop
+      // makes the exit-phi value observable — the entry value on a
+      // zero-trip, the last iteration's otherwise.
+      std::string iv = "w" + std::to_string(counter_id++);
+      src += "let " + iv + " = input() % 12;\n"; // runtime + clamped
+      const int B = pick(14, 34), D = pick(1, 5);
+      src += "while (" + iv + " < " + std::to_string(B) + ") {\n";
+      src += "  print " + iv + ";\n"; // impure: the LCF purity gate
+      src += "  " + iv + " = " + iv + " + " + std::to_string(D) + ";\n";
+      src += "}\n";
+      src += "print " + iv + ";\n"; // the exit phi is observable
+      n_rotbait++;
+      return; // self-contained + early-returning (no rider statements)
+    }
+    if (td_mode && pick(0, 3) == 0) {
+      // RT-LCF BAIT (checkpoint 20's regression flavor): a PURE-body
+      // loop with a RUNTIME start and a constant bound/step, observed
+      // only PAST the loop — the exact vocabulary the fuzzer was missing
+      // (its loops always carried per-iteration prints, which the LCF
+      // purity gate rejects), which is why the guard's use-before-def
+      // of the in-loop bound Const survived every window. Half the
+      // plants make the accumulator read the induction itself
+      // (s = s + i: the recurrence chain, b != 0).
+      std::string iv = "r" + std::to_string(counter_id++);
+      std::string sv = "q" + std::to_string(counter_id++);
+      src += "let " + iv + " = input();\n"; // ALWAYS runtime (the guard)
+      src += "let " + sv + " = 0;\n";
+      const int B = pick(20, 60), D = pick(1, 3), K = pick(1, 7);
+      if (pick(0, 1))
+        src += "while (" + iv + " < " + std::to_string(B) + ") { " + iv +
+               " = " + iv + " + " + std::to_string(D) + "; " + sv + " = " + sv +
+               " + " + std::to_string(K) + "; }\n";
+      else // the induction-dependent recurrence (the series closed form)
+        src += "while (" + iv + " < " + std::to_string(B) + ") { " + iv +
+               " = " + iv + " + " + std::to_string(D) + "; " + sv + " = " + sv +
+               " + " + iv + "; }\n";
+      src += "print " + sv + " + " + iv + ";\n";
+      n_rtbait++;
+      return; // self-contained + early-returning (no rider statements)
+    }
+    if (bif_mode && pick(0, 2) == 0) {
+      // BODY-IF UNSWITCH BAIT (checkpoint 19): the loop's HEAD test is
+      // variant (the counter grows every iteration, so the trivial
+      // unswitcher has nothing to version on), but the body hides an
+      // inner if on an invariant flag (bf never assigned inside:
+      // deliberately NOT pushed to vars, so no generated statement
+      // can touch it) whose BOTH arms stay in-loop and keep the loop
+      // converging -- they just advance the counter by different
+      // strides. The body-if unswitch versions the loop: the true
+      // version runs the +1 arm forever, the false version the +2 arm,
+      // and the exits (the header's arm included) merge through
+      // version-merge blocks. The per-iteration print plus the
+      // post-loop print make the version-dependent values observable:
+      // the exit value of cn can overshoot the bound by 0 or 1
+      // depending on the version, so a miswired merge shows.
+      // (Self-contained and early-returning: the loop needs NO rider
+      // statements -- its own two prints are the observation.)
+      std::string bf = "bf" + std::to_string(counter_id++);
+      std::string bfin = use_input ? "input()" : std::to_string(pick(-3, 3));
+      src += "let " + bf + " = " + bfin + ";\n";
+      src += "let " + cn + " = " + std::to_string(pick(0, 3)) + ";\n";
+      src += "while (" + cn + " < " + std::to_string(pick(4, 7)) + ") {\n";
+      src += "  if (" + bf + " > 0) { " + cn + " = " + cn + " + 1; } else { " +
+             cn + " = " + cn + " + 2; }\n";
+      src += "  print " + cn + ";\n";
+      src += "}\n";
+      src += "print " + cn + ";\n";
+      n_bifbait++;
+      return;
+    }
     if (cc_mode && pick(0, 2) == 0) {
       // COMPOUND-COND UNSWITCH BAIT (checkpoint 18): the loop condition is
       // a SHORT-CIRCUIT of two invariant flags (never assigned inside: fl1
@@ -737,6 +866,23 @@ inline constexpr uint32_t MJZ_UNSWITCH_SEED_FLOOR = 12731;
 // compound-condition while loops (&& / || of two invariant flags: the
 // checkpoint-18 unswitch extension) start here — same discipline
 inline constexpr uint32_t MJZ_CC_SEED_FLOOR = 13331;
+// invariant-inner-if while loops (the checkpoint-19 body-if unswitch
+// bait: a variant head test plus an invariant body branch) start here
+inline constexpr uint32_t MJZ_BIF_SEED_FLOOR = 13631;
+// small-tail merges + pure runtime-trip loops (the checkpoint-20 tail
+// duplication bait, plus the rt-lcf regression flavor that would have
+// caught the guard-bound miscompile) start here — same discipline
+inline constexpr uint32_t MJZ_TAILDUP_SEED_FLOOR = 14231;
+// loop rotation proper (checkpoint 22) needs NO planted bait — the
+// generator's plain while loops ARE the candidates: their per-iteration
+// prints fail the LCF purity gate, their runtime trip counts defeat
+// unroll, and their loop-carried conditions defeat unswitch, so the
+// fuzzer's own vocabulary rotates them all by itself. The floor exists
+// for the fuzz_run OFF-case (1-in-21 seeds of the new window run the
+// old shape — the same discipline every pass window uses) and to keep
+// the committed fixtures of older windows regenerating byte-identically
+// (the pass joins the fuzz config only from here up).
+inline constexpr uint32_t MJZ_ROTATE_SEED_FLOOR = 15531;
 
 static GenCtx gen_program(uint32_t seed) {
   GenCtx g(seed);
@@ -744,6 +890,9 @@ static GenCtx gen_program(uint32_t seed) {
   g.gvn_mode = seed >= MJZ_GVN_SEED_FLOOR;       // see MJZ_GVN_SEED_FLOOR
   g.unsw_mode = seed >= MJZ_UNSWITCH_SEED_FLOOR; // see MJZ_UNSWITCH_SEED_FLOOR
   g.cc_mode = seed >= MJZ_CC_SEED_FLOOR;         // see MJZ_CC_SEED_FLOOR
+  g.bif_mode = seed >= MJZ_BIF_SEED_FLOOR;       // see MJZ_BIF_SEED_FLOOR
+  g.td_mode = seed >= MJZ_TAILDUP_SEED_FLOOR;    // see MJZ_TAILDUP_SEED_FLOOR
+  g.rot_mode = seed >= MJZ_ROTATE_SEED_FLOOR;    // see MJZ_ROTATE_SEED_FLOOR
   g.use_input = (seed & 1) != 0;                 // half the programs read stdin
   g.allow_mat = ((seed >> 2) & 7) == 0; // 1/8 of programs grow 2-D arrays
   g.bait = ((seed >> 5) & 3) == 0;      // 1/4 carry deliberate trap bait; the

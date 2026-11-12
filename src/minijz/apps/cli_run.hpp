@@ -12,6 +12,7 @@
 #include "../runtime/astrun.hpp"
 #include "../back/bytecode.hpp"
 #include "../back/emit_plan.hpp"
+#include "../back/regaudit.hpp"
 #include "../base/native_run.hpp"
 #include "../opt/optimize_api.hpp" // optimize_light (--opt-diff snapshots)
 #include "../front/diag.hpp"       // located diagnostics
@@ -51,7 +52,8 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
         "SCCP %u(+%ubr) | LD-FWD %u | LD-CSE %u | RANGE-CMP %u | "
         "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u | FNSPEC %u | ICF %u | "
-        "JT %u | ARG-PROMO %u | GVN %u | UNSWITCH %u | LSIMP %u\n"
+        "JT %u | ARG-PROMO %u | GVN %u | UNSWITCH %u | LSIMP %u | "
+        "TAILDUP %u | ROTATE %u\n"
         "  destroy: split-edges %u | copies %u | self %u | cycles %u | "
         "copy-fused %u\n",
         P.fns.size(), ssa_i, (unsigned)phis, opt_i, dst_i, (unsigned)os.iters,
@@ -70,8 +72,17 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.rangecmps, (unsigned)os.cmpfacts, (unsigned)os.callcses,
         (unsigned)os.deadargs, (unsigned)os.fnspecs, (unsigned)os.icf,
         (unsigned)os.jthreads, (unsigned)os.argpromos, (unsigned)os.gvns,
-        (unsigned)os.unswitches, (unsigned)os.lsimps, (unsigned)de_c,
-        (unsigned)dz_c, (unsigned)dse, (unsigned)dcy, (unsigned)dfu);
+        (unsigned)os.unswitches, (unsigned)os.lsimps, (unsigned)os.taildups,
+        (unsigned)os.rotations, (unsigned)de_c, (unsigned)dz_c, (unsigned)dse,
+        (unsigned)dcy, (unsigned)dfu);
+  }
+  if (C.reg_audit) {
+    // the register-allocation audit (--reg-audit): the SAME RaPlan
+    // the x86-64 codegen gets, as a table — one allocator, two
+    // consumers, so the audit cannot drift from the emitted asm.
+    // Printed even under --quiet/brief: the flag is an explicit ask.
+    RegAuditOut RA = reg_audit(fns_of(P, 2), P.fn_names);
+    std::printf("%s", reg_audit_text(RA, P.fn_names).c_str());
   }
   if (C.print_ir) {
     for (size_t f = 0; f < P.fns.size(); ++f) {

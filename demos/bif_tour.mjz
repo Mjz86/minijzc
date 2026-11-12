@@ -1,0 +1,18 @@
+// bif_tour.mjz — the checkpoint-19 feature tour: a while loop whose HEAD
+// test is a real per-iteration condition, with an invariant INNER branch
+// (the body-if unswitch bait). The body-if unswitch versions the loop:
+// pre: cbr(bf > 0) enters the true version (the +1 stride, the original
+// loop) or the false version (the +2 stride, the clone); both versions
+// keep running the loop, and every exit (the header's arm included)
+// merges through a version-merge block — the exit value of c differs
+// between the versions (+1 lands exactly on the bound; +2 overshoots by
+// one), so the merge is observable. The scripted debugger session below
+// (bifunswitch_debugger_session) arms `opt break unswitch` and inspects
+// the versioned IR right where it happens.
+let bf = input();
+let c = 0;
+while (c < 5) {
+  if (bf > 0) { c = c + 1; } else { c = c + 2; }
+  print c;
+}
+print 100 + c;

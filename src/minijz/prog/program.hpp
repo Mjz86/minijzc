@@ -118,7 +118,10 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.argpromos += U.ostats.argpromos;
     t.gvns += U.ostats.gvns;
     t.unswitches += U.ostats.unswitches;
+    t.body_unswitches += U.ostats.body_unswitches;
     t.lsimps += U.ostats.lsimps;
+    t.taildups += U.ostats.taildups;
+    t.rotations += U.ostats.rotations;
     if (U.ostats.iters > t.iters)
       t.iters = U.ostats.iters;
   }

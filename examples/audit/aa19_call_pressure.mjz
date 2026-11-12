@@ -1,0 +1,22 @@
+// aa19_call_pressure — calls with wide signatures: a six-argument
+// function called twice with locals that stay live ACROSS the calls (the
+// callee-saved pool earns its name), results gathered to the end.
+fn combine(p, q, r, s, t, u) {
+  if (u <= 0) { return p + q * 2 + r * 3 + s * 4 + t * 5; }
+  return combine(q, r, s, t, (p + t) / 2, u - 1) + p;
+}
+let x1 = input();
+let x2 = 12;
+let x3 = 13;
+let x4 = 14;
+let x5 = 15;
+let x6 = 16;
+let keep1 = x1 * x6;
+let keep2 = x2 + x3;
+let r1 = combine(x1, x2, x3, x4, x5, x6 / 2);
+let r2 = combine(keep1, keep2, r1, x4 - 3, x5 + 2, x6 / 4);
+let r3 = combine(r1, r2, keep1, keep2, x1, x2 / 2);
+print r1;
+print r2;
+print r3;
+print keep1 + keep2;
