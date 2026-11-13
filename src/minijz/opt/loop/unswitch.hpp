@@ -44,8 +44,8 @@
 #include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
 #include "loop_shape.hpp"
-#include "unswitch_shape.hpp"
 #include "unswitch_bif.hpp"
+#include "unswitch_shape.hpp"
 
 constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
   if (A.n != fn.nblocks() || !fn.nblocks())
@@ -179,8 +179,8 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
             if (pred < nb && inL[pred]) {
               if (pred == primary) {        // the zero-iteration edge:
                 return hphi_idx(v) != NONE; // only header phis have an
-              } // entry value to carry; others bail
-              return true; // break edge: rekey + remap
+              }                             // entry value to carry; others bail
+              return true;                  // break edge: rekey + remap
             }
             if (F[b] && pred < nb && F[pred])
               return hphi_idx(v) != NONE; // dominance forbids this for
@@ -211,7 +211,7 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
             if (!F[b])
               return true;              // through-only: remap
             return hphi_idx(v) != NONE; // on the false path only header
-          }; // phis have a value to read
+          };                            // phis have a value to read
           if (!plain_ok(I.a) || !plain_ok(I.b2) || !plain_ok(I.c2))
             bad = true;
           else

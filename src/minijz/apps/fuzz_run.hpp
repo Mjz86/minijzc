@@ -9,12 +9,12 @@
 // which mismatch reports reach stdout can interleave (each report is
 // printed atomically under the fuzz mutex).
 
+#include "../back/bytecode.hpp"
+#include "../base/native_run.hpp"
 #include "../base/pass_cfg.hpp"
 #include "../prog/program.hpp"
 #include "../prog/runners.hpp"
 #include "../runtime/astrun.hpp"
-#include "../back/bytecode.hpp"
-#include "../base/native_run.hpp"
 #include "fuzz_gen.hpp"
 
 #include <atomic>

@@ -5,8 +5,8 @@
 // the pass bodies — the definition lives with the pipeline TU (driver.hpp,
 // included via prog/compile_impl.hpp).
 
-#include "../ir/instr.hpp"
 #include "../base/pass_cfg.hpp"
+#include "../ir/instr.hpp"
 
 struct An; // opt/analysis/an.hpp
 

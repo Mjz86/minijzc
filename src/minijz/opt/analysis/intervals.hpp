@@ -144,7 +144,7 @@ constexpr void iv_refine(Iv &x, Iv &y, B cmp, bool taken) {
     y = t;
     cmp = (cmp == B::Gt) ? B::Lt : B::Le;
     swapped = true; // refine in the mirrored space, restore at the end:
-  } // x/y are CALLER-BINDINGS (x <-> D.a), so the swap must
+  }                 // x/y are CALLER-BINDINGS (x <-> D.a), so the swap must
     // not leak out -- the old leak exchanged the operands'
     // intervals on every Gt/Ge edge, e.g. `while (c > 0)`
     // pinned c to [0,0] in the body (fuzz cfg seed 4412).

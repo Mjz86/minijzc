@@ -138,7 +138,7 @@ constexpr bool opt_taildup(Fn &fn, const An &A, OptStats &os) {
         continue;
       if (U1 == U0)
         U1 = NONE; // degenerate two-arm cbr: one continuation
-    } // Exit/Ret: no continuation (U0/U1 stay NONE)
+    }              // Exit/Ret: no continuation (U0/U1 stay NONE)
     bool succs_ok = true;
     for (uint32_t U : {U0, U1}) {
       if (U == NONE)

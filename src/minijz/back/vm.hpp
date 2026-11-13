@@ -182,5 +182,5 @@ constexpr std::vector<uint8_t> emit_bytecode(const std::vector<Fn> &fns) {
 // steppable machine in vm_step.hpp (VmCtx + vm_init + vm_step_op +
 // vm_run — the debugger's live view) and the SSA interpreter in
 // interp_ssa.hpp (run_prog).
-#include "vm_step.hpp"
 #include "interp_ssa.hpp"
+#include "vm_step.hpp"

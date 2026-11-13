@@ -3,8 +3,8 @@
 // div/mod-by-constant -> mulhi+shift (reciprocal from mjz_lib).
 
 #include "../../base/pass_cfg.hpp"
-#include "../../ir/instr.hpp"
 #include "../../graph_lib.hpp"
+#include "../../ir/instr.hpp"
 
 // --- 9a6. division/modulo by constant -> multiply + shift + bit ops ----------
 // The reciprocal (inv, shift) for |D| comes from mjz_lib's

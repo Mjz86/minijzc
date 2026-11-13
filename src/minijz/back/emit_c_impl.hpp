@@ -5,10 +5,10 @@
 // tu/backends.cpp in the multi-TU build (external definition) — include
 // it nowhere else.
 
-#include "../ir/instr.hpp"
 #include "../base/srcmap.hpp"
-#include "stack_alloc.hpp"
+#include "../ir/instr.hpp"
 #include "emit_plan.hpp"
+#include "stack_alloc.hpp"
 
 #include <string>
 #include <string_view>

@@ -14,9 +14,9 @@
 #include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
 #include "../linear/linform.hpp"
-#include "loop_shape.hpp" // HPhi (the shared header-phi record)
-#include "lcf_sim.hpp"    // lcf_sim_fold + the budgets
 #include "lcf_rt.hpp"     // LcfEvo + lcf_rt_fold
+#include "lcf_sim.hpp"    // lcf_sim_fold + the budgets
+#include "loop_shape.hpp" // HPhi (the shared header-phi record)
 
 // --- 9d5. loop closed-form evaluation (constant trip counts) -----------------
 // A counted loop with a constant trip count N whose body is pure scalar math
@@ -173,7 +173,7 @@ constexpr bool opt_lcf(Fn &fn, const An &A, OptStats &os) {
     if (hterm.t == X && hterm.f != NONE && inL[hterm.f]) {
       body = hterm.f;
       exit_on_true = true; // break-style: TRUE leaves (a folded `break`
-    } // became the header test: constant while-tests
+    }                      // became the header test: constant while-tests
     else if (hterm.f == X && hterm.t != NONE && inL[hterm.t]) {
       body = hterm.t;
       exit_on_true = false; // continue-style: the ordinary while shape

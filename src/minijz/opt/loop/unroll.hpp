@@ -115,8 +115,8 @@ constexpr bool opt_unroll(Fn &fn, const An &A, OptStats &os, uint32_t limit) {
     } else if (hterm.f == X && hterm.t != NONE && inL[hterm.t]) {
       body = hterm.t;
       exit_on_true = false; // continue-style: test TRUE runs the body,
-    } // FALSE exits (the ordinary while shape)
-    else // both arms in-loop: no header exit at all
+    }                       // FALSE exits (the ordinary while shape)
+    else                    // both arms in-loop: no header exit at all
       continue;
     if (body == h)
       continue; // self-loop header: skip this rare shape

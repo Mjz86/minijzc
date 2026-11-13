@@ -5,8 +5,8 @@
 
 #include "../base/pass_cfg.hpp"
 #include "../ir/instr.hpp"
-#include "analysis/an.hpp"
 #include "analysis/alias.hpp"
+#include "analysis/an.hpp"
 
 // ============================================================================
 // 9d4. mem2reg: array memory -> SSA registers ("memory to register lifting")

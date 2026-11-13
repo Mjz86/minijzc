@@ -3,14 +3,14 @@
 // call graph + SCC (mjz_lib Tarjan) + the inliner (9e2) + the
 // interprocedural driver hook (9e).
 
-#include "../../graph_lib.hpp"
 #include "../../base/pass_cfg.hpp"
+#include "../../graph_lib.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
 #include "../scalar/dce.hpp"
-#include "constcall.hpp"
-#include "callcse.hpp"
 #include "argpromo.hpp"
+#include "callcse.hpp"
+#include "constcall.hpp"
 #include "deadargs.hpp"
 #include "fnspec.hpp"
 #include "icf.hpp"

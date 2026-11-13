@@ -9,8 +9,8 @@
 
 #include "../ir/instr.hpp"
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 enum class Bc : uint8_t {

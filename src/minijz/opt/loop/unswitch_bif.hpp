@@ -334,7 +334,7 @@ constexpr bool unswitch_body_if(Fn &fn, const An &A, OptStats &os,
       if (exits[ei].from == from && exits[ei].to == to)
         return (long)ei;
     return -1; // cannot happen: every in-loop pred of an outside block
-  }; // is an inventoried exit source
+  };           // is an inventoried exit source
   auto vm_val = [&](long ei, uint32_t v) -> uint32_t {
     const std::vector<uint32_t> &vals = vm_vals[exits[(size_t)ei].to];
     for (size_t j = 0; j < vals.size(); ++j)

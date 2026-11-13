@@ -7,9 +7,9 @@
 // (constexpr) and by tu/backends.cpp in the multi-TU build — include it
 // nowhere else.
 
-#include "../graph_lib.hpp"
 #include "../base/pass_cfg.hpp"
 #include "../base/srcmap.hpp"
+#include "../graph_lib.hpp"
 #include "../ir/instr.hpp"
 #include "emit_plan.hpp"
 #include "regalloc.hpp"

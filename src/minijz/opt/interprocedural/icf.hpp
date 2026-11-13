@@ -149,7 +149,8 @@ constexpr bool opt_icf(std::vector<Fn> &fns, std::vector<OptStats> &ostats) {
   {
     std::vector<std::vector<uint64_t>> keys(n);
     for (uint32_t f = 0; f < n; ++f)
-      icf_serialize(fns[f], f, [](uint32_t) { return ICF_WILD; }, keys[f]);
+      icf_serialize(
+          fns[f], f, [](uint32_t) { return ICF_WILD; }, keys[f]);
     (void)icf_group(keys.data(), cand, rep);
   }
   // ---- refinement: concrete representatives, split on divergence ---------

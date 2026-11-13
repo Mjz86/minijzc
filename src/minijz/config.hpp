@@ -358,12 +358,12 @@
 //   compiles and runs a nontrivial program at build time.
 // ============================================================================
 
+#include <bit>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <bit>
-#include <chrono>
 #include <fstream>
 #include <random>
 #include <string>

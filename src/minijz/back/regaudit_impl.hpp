@@ -13,9 +13,9 @@
 // write (st_rax / the direct stores), and a spilled incoming param is
 // one prologue write. Nothing is estimated.
 
-#include "regaudit.hpp" // the struct half (pragma once breaks the cycle)
-#include "regalloc.hpp"
 #include "emit_plan.hpp"
+#include "regalloc.hpp"
+#include "regaudit.hpp" // the struct half (pragma once breaks the cycle)
 
 #include <bit> // std::popcount (the C++20 spelling; MSVC has no builtins)
 #include <cstdio>

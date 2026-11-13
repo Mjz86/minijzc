@@ -12,15 +12,15 @@
 // output tape are member state, so `vm state` shows EVERYTHING and
 // `vm step` moves exactly one bytecode op.
 
-#include "cli_parse.hpp"
-#include "../prog/program.hpp"
-#include "../prog/printers.hpp"
-#include "../back/vm.hpp"
 #include "../back/bytecode.hpp"
 #include "../back/emit_plan.hpp"
-#include "../runtime/astrun.hpp"
-#include "../opt/optimize_api.hpp"
+#include "../back/vm.hpp"
 #include "../front/diag.hpp"
+#include "../opt/optimize_api.hpp"
+#include "../prog/printers.hpp"
+#include "../prog/program.hpp"
+#include "../runtime/astrun.hpp"
+#include "cli_parse.hpp"
 
 #include <cstdio>
 #include <cstring>

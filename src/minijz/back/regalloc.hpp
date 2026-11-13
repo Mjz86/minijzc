@@ -10,8 +10,8 @@
 // the classic -N(%rbp) slots). The audit layer (regaudit.hpp) reads the
 // SAME plan the codegen gets — one allocator, two consumers.
 
-#include "../graph_lib.hpp"
 #include "../base/pass_cfg.hpp"
+#include "../graph_lib.hpp"
 #include "../ir/instr.hpp"
 #include "emit_plan.hpp"
 

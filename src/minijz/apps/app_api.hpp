@@ -4,9 +4,9 @@
 // every heavy app entry (compiled once in their own TUs). tu/main.cpp
 // includes ONLY this — parsing and dispatch never pay for the pipeline.
 
-#include "cli_parse.hpp"
 #include "../fwd.hpp"
 #include "../prog/program.hpp" // Program/RunOut by value in signatures
+#include "cli_parse.hpp"
 
 #include <string>
 

@@ -10,10 +10,10 @@
 // prog/compile_impl.hpp, compiled once (tu/prog.cpp in the multi-TU
 // build; constexpr-inline in the header-only build).
 
+#include "../base/pass_cfg.hpp" // PassCfg / OptStats
 #include "../front/ast.hpp"     // Parsed (the parser's output type)
 #include "../ir/instr.hpp"      // Fn (the IR container)
 #include "../ir/stats.hpp"      // SsaStats / DestrStats
-#include "../base/pass_cfg.hpp" // PassCfg / OptStats
 
 #include <string_view>
 #include <vector>

@@ -3,11 +3,11 @@
 // constexpr tours: curated in-compile-time checks + the general
 // simulator/vocabulary tours used by --selftest and the cx build.
 
+#include "../apps/fuzz_gen.hpp"
 #include "../opt/analysis/an.hpp" // analyze() for the tour checks
-#include "../runtime/astrun.hpp"  // run_ast (the oracle)
 #include "../prog/program.hpp"
 #include "../prog/runners.hpp"
-#include "../apps/fuzz_gen.hpp"
+#include "../runtime/astrun.hpp" // run_ast (the oracle)
 
 // ============================================================================
 // 16. constexpr pipeline — the whole compiler runs at compile time
