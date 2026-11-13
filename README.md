@@ -30,10 +30,14 @@ src/minijz/           the compiler as a header-only constexpr library
                         (value numbering: consts + phi congruence + bins),
                         unreach, splice, dce, ifconv, taildup (checkpoint
                         20: small 2-pred tails duplicated into their arms)
-  opt/loop/              licm, unroll, lcf, lcf_rt, unswitch (+
-                        unswitch_shape: the shared shape/matcher/clone
-                        layer, unswitch_bif: the body-if scan + commit),
-                        rotate (checkpoint 22: loop rotation proper)
+  opt/loop/              licm, unroll, lcf (the slim driver) +
+                        lcf_impl (checkpoint 24: the scan tables, the
+                        per-phase shape matchers, the plan gates, the
+                        emitters + rewire tail), lcf_sim, lcf_rt,
+                        unswitch (+ unswitch_shape: the shared shape/
+                        matcher/clone layer, unswitch_bif: the body-if
+                        scan + commit), rotate (checkpoint 22: loop
+                        rotation proper)
   opt/linear/            linform, reassoc, divmagic
   opt/interprocedural/   callgraph (Tarjan + inliner), scctco, scctco_fold,
                         tailrec (tce_self/tce_merge), cdfold (the slim
@@ -955,6 +959,78 @@ Pure refactor, zero behavior change, byte-identical outputs.
   support layer). The next-biggest remaining targets, in backlog
   order: `opt/loop/lcf.hpp`'s opt_lcf (~640), `opt/loop/unroll.hpp`
   (~470), `opt/scalar/fold.hpp` (~450) — the same treatment applies.
+
+## 10. checkpoint 24: lcf decomposed (the code-quality continuation, round two) — DONE
+
+The backlog's #1 named target, consumed: `opt/loop/lcf.hpp`'s
+opt_lcf — at 640 lines the biggest function left in the tree — got
+the full cdfold treatment (support layer + slim driver, one small
+constexpr function per phase, scan bounds and emission order
+preserved exactly). Pure refactor, zero behavior change.
+
+* **the split**: `lcf.hpp` 718 -> 64 lines; the driver is a 24-line
+  opt_lcf (scan once, walk the headers nest-first, and per loop:
+  shape -> general-simulator-or-plan -> emit-and-rewire). The new
+  `lcf_impl.hpp` (980 lines) holds LcfScan/LcfLoop (the pass-wide
+  and per-loop state), lcf_pow/lcf_geo (the series algebra — lcf_pow
+  has no callers, kept as lcf_geo's documented companion), the five
+  shape matchers (lcf_loop_edges/lcf_inloop/lcf_unique_entry,
+  lcf_single_exit/lcf_block_exit_ok, lcf_arms, lcf_gather_hphis/
+  lcf_one_hphi, lcf_find_ind/lcf_try_ind_phi/lcf_step_match/
+  lcf_cond_uses_ind), the plan gates (lcf_bound/lcf_bound_outside,
+  lcf_trip_count/lcf_exits_now, lcf_zero_trip, lcf_outside_uses_ok,
+  lcf_pre_avoids_exit, lcf_body_pure, lcf_maytrap_scan,
+  lcf_analyze/lcf_one_evo/lcf_lin_to_evo, lcf_rt_ready), the two
+  dispatchers (lcf_sim_call, lcf_rt_call — LcfGo {Skip, Folded,
+  Emit} is the plan's tri-state), the emitters (lcf_splice,
+  lcf_emit_closed/lcf_emit_one_closed/lcf_push_closed/
+  lcf_push_scaled, the N-iteration simulator lcf_sim_n ->
+  lcf_sim_iterations/lcf_sim_header_pass/lcf_sim_chain_pass/
+  lcf_latch_transfer/lcf_eval1/lcf_emit_sim_batch) and the rewire
+  tail (lcf_rewire_preheader, lcf_rewrite_uses, lcf_rekey_exit_phis).
+* **the landmines, now documented in one place** (lcf_impl.hpp's
+  header): every block scan stays bounded by the PASS-ENTRY nb (no
+  fn.nblocks() substitutions); the fallback simulator's operand
+  check reads only a/b2/c2, never I.args (the original's asymmetry,
+  kept not "fixed"); LcfRtIn.C stays unset exactly as the old inline
+  dispatcher left it; the analytic scan stops at the first failing
+  phi but still records that phi's evo entry; the vreg allocation
+  order of the emitters (fv, then c/t/c2 per shape) is preserved to
+  the call. One behavioral trap caught in review before it could
+  ship: the original `continue`s the WHOLE header loop when the test
+  value is not header-defined — the general simulator is NOT tried
+  — so lcf_find_ind returns bool (gate failed = skip loop) instead
+  of leaving ind==NONE (gate passed, no induction = simulator).
+  And loop_shape.hpp's look-alike helpers (loop_scan, in_loop_flags,
+  header_phis, loop_shape_of) are deliberately NOT reused: their
+  semantics differ (kc marks the LAST def, no ndefs==1; exactly one
+  internal pred required where lcf tolerates several back-edges; no
+  exit polarity) — lcf keeps its own scans, with a comment saying
+  why.
+* **Verification**: 93 CLI parity runs (--check-all / -O0 / bogus
+  flag-error variants) + 30 stdin-aware runs (audit tapes) + the
+  full 206-check --demo suite (every lcf_* demo: additive, geometric,
+  runtime_init, rt_dynamic_bound, rt_le, rt_edge_max, sim_fallback,
+  nested) diffed byte-identical against the pre-refactor binary; the
+  register-audit table regenerates byte-identically (710 vregs /
+  137 spills / 424 traffic, the committed baseline untouched);
+  differential fuzz on the 16131-16280 (rotation) and 14231-14430
+  (taildup+rt-lcf) windows identical modulo timing lines, zero
+  mismatches; selftest 207/207, ctest 44/44, units 6328/6328,
+  check-format clean; the new header is self-contained (header order
+  98/98 + umbrella, up from 97) and every quoted include portable
+  (414/414, up from 410).
+* **Measured shape** (top-level brace-matched functions in
+  src/minijz/**/*.hpp): 253 -> 317 (+64; 66 new small functions,
+  the old 3-file trio merged into the driver); <= 10 lines
+  76 -> 101, 11-20 50 -> 84, 21-40 42 -> 48; the 71+ bucket 69 -> 68
+  — the 640-line opt_lcf is gone and nothing in the lcf pair
+  exceeds 25 lines (lcf_geo, lcf_push_closed; the driver is 24).
+  The next-biggest remaining targets, in backlog order:
+  `opt/loop/unroll.hpp`'s opt_unroll (~470), `opt/scalar/fold.hpp`'s
+  opt_constprop (~450), `opt/loop/unswitch_bif.hpp`'s
+  unswitch_body_if (~432), taildup (~419), mem2reg (~415),
+  rotate (~405) — the same treatment applies.
 
 The original wishlist (kept verbatim for reference):
 
