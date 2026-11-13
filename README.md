@@ -30,13 +30,20 @@ src/minijz/           the compiler as a header-only constexpr library
                         (value numbering: consts + phi congruence + bins),
                         unreach, splice, dce, ifconv, taildup (checkpoint
                         20: small 2-pred tails duplicated into their arms)
-  opt/loop/              licm, unroll, lcf, lcf_rt, unswitch (+
-                        unswitch_shape: the shared shape/matcher/clone
-                        layer, unswitch_bif: the body-if scan + commit),
-                        rotate (checkpoint 22: loop rotation proper)
+  opt/loop/              licm, unroll, lcf (the slim driver) +
+                        lcf_impl (checkpoint 24: the scan tables, the
+                        per-phase shape matchers, the plan gates, the
+                        emitters + rewire tail), lcf_sim, lcf_rt,
+                        unswitch (+ unswitch_shape: the shared shape/
+                        matcher/clone layer, unswitch_bif: the body-if
+                        scan + commit), rotate (checkpoint 22: loop
+                        rotation proper)
   opt/linear/            linform, reassoc, divmagic
   opt/interprocedural/   callgraph (Tarjan + inliner), scctco, scctco_fold,
-                        tailrec (tce_self/tce_merge), cdfold
+                        tailrec (tce_self/tce_merge), cdfold (the slim
+                        driver) + cdfold_impl (checkpoint 23: the CdAff
+                        algebra, the resolver, the per-phase matchers, the
+                        two-buffer emitter — every function small)
   opt/driver.hpp         the pass manager (tiered fixpoint, -O0..-O3)
   opt/optimize_api.hpp   the light DECLARATION of optimize()/optimize_light()
   back/                  vm (bytecode: opcodes + emit_bytecode) +
@@ -54,9 +61,12 @@ src/minijz/           the compiler as a header-only constexpr library
                         repl), app_api (the extern app boundary),
                         app_main (the shared main body), demo, fuzz_gen,
                         fuzz_run (parallel differential fuzzer), shrink,
-                        debugger + dbg_support (the interactive session:
-                        command handlers + the machines/breakpoint-scan/
-                        naming/snapshot support layer)
+                        debugger (the slim session loop + dispatch;
+                        checkpoint 23 finished the split: dbg_sess the
+                        session state + watch/stop engines, dbg_cmds the
+                        command families, dbg_opt the pass explorer,
+                        dbg_vm the machine half, dbg_support the
+                        machines/breakpoint-scan/naming/snapshot layer)
   tests/cx_tours.hpp    the constexpr/compile-time tour battery
 src/minijz.hpp         umbrella (single-TU / constexpr build)
 src/tu/*.cpp           the multi-cpp translation units (9 REAL TUs)
@@ -883,6 +893,144 @@ LAST loop consumer — `opt/loop/rotate.hpp`):
   and 15831-16130 (167 rotations), the re-verified windows
   14831-15130 and 14231-14530 (both byte-stable: the below-floor
   gate), random-cfg 14431-14730 and 15531-15830 — all clean.
+
+## 9. checkpoint 23: the code-quality continuation (function decomposition + the debugger/cdfold file splits) — DONE
+
+The CONTINUE backlog's item 4, consumed: "break the large functions
+(each ~10 lines unless it genuinely needs more room), break the big
+files" — applied to the two next-biggest files the backlog named.
+Pure refactor, zero behavior change, byte-identical outputs.
+
+* **cdfold** (`opt/interprocedural/cdfold.hpp` 809 lines with ONE
+  642-line function -> a 33-line slim driver + `cdfold_impl.hpp`,
+  the support layer): the CdAff algebra (cd_aff_eq/cd_term) and the
+  bounded resolver (cd_resolve, decomposed into cd_resolve_bin /
+  cd_resolve_phi / cd_aff_mul / cd_aff_addsub); a shared cd_def_site
+  replaces TEN inline copies of the last-def scan — with the scan
+  bound passed EXPLICITLY, because the difference is load-bearing
+  (the resolver sees the CURRENT block count, the shape matchers the
+  PASS-ENTRY one; the closed-form blocks earlier folds append are
+  deliberately invisible to the matchers); the 642-line matcher
+  became 20+ small constexpr functions, one per phase, in the old
+  order (cd_membership, cd_loop_edges, cd_collect_hphis,
+  cd_classify_latches, cd_find_selector, cd_find_countdown,
+  cd_classify_adds, cd_classify_exits with cd_cbr_np_zero /
+  cd_cbr_bh_zero_trap over a shared cd_eq_zero_vreg, cd_check_xblocks
+  with cd_x_ret/cd_x_br/cd_x_uses_ok, cd_sel_sound with entry/toggle
+  proofs, cd_body_pure); the fold became the CdGen two-buffer emitter
+  (cd_emit_guard/parity/toggle/triangle/add_one, cd_rewrite_uses,
+  cd_patch_pre, cd_cf_terminator, cd_splice_pre, cd_append_cf,
+  cd_sever_loop) orchestrated by cd_apply — the vreg ALLOCATION ORDER
+  (the nt()/konst() call sequence) is preserved exactly, so the
+  emitted IR is byte-identical. The dead state the original
+  accumulated (kval, Xt/Xf, the const*const re-resolve) dropped.
+* **debugger** (`apps/debugger.hpp` 970 lines -> 171, plus four new
+  focused files): `dbg_sess.hpp` the DbgSess session state with the
+  watchpoint engine (watch_step 68 lines -> watch_slot_of /
+  watch_last / watch_rebaseline / watch_report / watch_refresh) and
+  the stop engine (run_bounded 61 -> stop_at + stop_report + a slim
+  loop; the manual-bp message keeps its two shapes — with/without the
+  ops count — via the ops argument); `dbg_cmds.hpp` the eleven
+  command families (the ir dump lambda, the vars enrichment, the
+  bkpt observation builder, the watch add/del paths — each a named
+  function); `dbg_opt.hpp` the pass explorer (dbg_cmd_opt 158 ->
+  dbg_snap_idx + show/diff/break/continue/list/collect, each small;
+  the pause report its own function); `dbg_vm.hpp` the machine half
+  (dbg_cmd_vm 143 -> per-subcommand functions; the traced single
+  step — trace line, stack top, breakpoint observation — is
+  dbg_vm_step_one + dbg_vm_show_bkpt); debugger.hpp keeps the help
+  text, the banner, tokenize/dispatch, and a 25-line session loop
+  (run_debugger was 89).
+* **Verification**: the strongest available for a no-behavior-change
+  claim — a scripted `--debugger` session exercising EVERY command
+  path (src/fns/ir/cfg/stats/plan/bc/bkpts/vars/watch, opt
+  break/continue/show/diff/list, vm reset/step/run/break/line/
+  unbreak/breaks/until/dis/state, check) diffs byte-identical
+  against the pre-refactor binary; `--check-all` runtime parity
+  identical; the register-audit table regenerates byte-identically
+  (RESULTS.md untouched by regen_audit_results.py); selftest 207/207,
+  ctest 44/44, units 6328/6328, check-format clean; the new headers
+  are self-contained (header_order 97/97 + umbrella, up from 92) and
+  every quoted include portable (410/410).
+* **Measured shape**: 457 -> 527 functions (70 new small ones);
+  functions <= 10 lines 301 -> 332; the 71+ bucket 62 -> 58 (the
+  642/158/143/89/68-line monsters gone; the biggest function in the
+  touched files is now dbg_vm_state at 80, pre-existing in the
+  support layer). The next-biggest remaining targets, in backlog
+  order: `opt/loop/lcf.hpp`'s opt_lcf (~640), `opt/loop/unroll.hpp`
+  (~470), `opt/scalar/fold.hpp` (~450) — the same treatment applies.
+
+## 10. checkpoint 24: lcf decomposed (the code-quality continuation, round two) — DONE
+
+The backlog's #1 named target, consumed: `opt/loop/lcf.hpp`'s
+opt_lcf — at 640 lines the biggest function left in the tree — got
+the full cdfold treatment (support layer + slim driver, one small
+constexpr function per phase, scan bounds and emission order
+preserved exactly). Pure refactor, zero behavior change.
+
+* **the split**: `lcf.hpp` 718 -> 64 lines; the driver is a 24-line
+  opt_lcf (scan once, walk the headers nest-first, and per loop:
+  shape -> general-simulator-or-plan -> emit-and-rewire). The new
+  `lcf_impl.hpp` (980 lines) holds LcfScan/LcfLoop (the pass-wide
+  and per-loop state), lcf_pow/lcf_geo (the series algebra — lcf_pow
+  has no callers, kept as lcf_geo's documented companion), the five
+  shape matchers (lcf_loop_edges/lcf_inloop/lcf_unique_entry,
+  lcf_single_exit/lcf_block_exit_ok, lcf_arms, lcf_gather_hphis/
+  lcf_one_hphi, lcf_find_ind/lcf_try_ind_phi/lcf_step_match/
+  lcf_cond_uses_ind), the plan gates (lcf_bound/lcf_bound_outside,
+  lcf_trip_count/lcf_exits_now, lcf_zero_trip, lcf_outside_uses_ok,
+  lcf_pre_avoids_exit, lcf_body_pure, lcf_maytrap_scan,
+  lcf_analyze/lcf_one_evo/lcf_lin_to_evo, lcf_rt_ready), the two
+  dispatchers (lcf_sim_call, lcf_rt_call — LcfGo {Skip, Folded,
+  Emit} is the plan's tri-state), the emitters (lcf_splice,
+  lcf_emit_closed/lcf_emit_one_closed/lcf_push_closed/
+  lcf_push_scaled, the N-iteration simulator lcf_sim_n ->
+  lcf_sim_iterations/lcf_sim_header_pass/lcf_sim_chain_pass/
+  lcf_latch_transfer/lcf_eval1/lcf_emit_sim_batch) and the rewire
+  tail (lcf_rewire_preheader, lcf_rewrite_uses, lcf_rekey_exit_phis).
+* **the landmines, now documented in one place** (lcf_impl.hpp's
+  header): every block scan stays bounded by the PASS-ENTRY nb (no
+  fn.nblocks() substitutions); the fallback simulator's operand
+  check reads only a/b2/c2, never I.args (the original's asymmetry,
+  kept not "fixed"); LcfRtIn.C stays unset exactly as the old inline
+  dispatcher left it; the analytic scan stops at the first failing
+  phi but still records that phi's evo entry; the vreg allocation
+  order of the emitters (fv, then c/t/c2 per shape) is preserved to
+  the call. One behavioral trap caught in review before it could
+  ship: the original `continue`s the WHOLE header loop when the test
+  value is not header-defined — the general simulator is NOT tried
+  — so lcf_find_ind returns bool (gate failed = skip loop) instead
+  of leaving ind==NONE (gate passed, no induction = simulator).
+  And loop_shape.hpp's look-alike helpers (loop_scan, in_loop_flags,
+  header_phis, loop_shape_of) are deliberately NOT reused: their
+  semantics differ (kc marks the LAST def, no ndefs==1; exactly one
+  internal pred required where lcf tolerates several back-edges; no
+  exit polarity) — lcf keeps its own scans, with a comment saying
+  why.
+* **Verification**: 93 CLI parity runs (--check-all / -O0 / bogus
+  flag-error variants) + 30 stdin-aware runs (audit tapes) + the
+  full 206-check --demo suite (every lcf_* demo: additive, geometric,
+  runtime_init, rt_dynamic_bound, rt_le, rt_edge_max, sim_fallback,
+  nested) diffed byte-identical against the pre-refactor binary; the
+  register-audit table regenerates byte-identically (710 vregs /
+  137 spills / 424 traffic, the committed baseline untouched);
+  differential fuzz on the 16131-16280 (rotation) and 14231-14430
+  (taildup+rt-lcf) windows identical modulo timing lines, zero
+  mismatches; selftest 207/207, ctest 44/44, units 6328/6328,
+  check-format clean; the new header is self-contained (header order
+  98/98 + umbrella, up from 97) and every quoted include portable
+  (414/414, up from 410).
+* **Measured shape** (top-level brace-matched functions in
+  src/minijz/**/*.hpp): 253 -> 317 (+64; 66 new small functions,
+  the old 3-file trio merged into the driver); <= 10 lines
+  76 -> 101, 11-20 50 -> 84, 21-40 42 -> 48; the 71+ bucket 69 -> 68
+  — the 640-line opt_lcf is gone and nothing in the lcf pair
+  exceeds 25 lines (lcf_geo, lcf_push_closed; the driver is 24).
+  The next-biggest remaining targets, in backlog order:
+  `opt/loop/unroll.hpp`'s opt_unroll (~470), `opt/scalar/fold.hpp`'s
+  opt_constprop (~450), `opt/loop/unswitch_bif.hpp`'s
+  unswitch_body_if (~432), taildup (~419), mem2reg (~415),
+  rotate (~405) — the same treatment applies.
 
 The original wishlist (kept verbatim for reference):
 

@@ -1,173 +1,117 @@
-# Checkpoint 22 — loop rotation proper (the latch merge, consumed exactly as predicted)
+# Checkpoint 24 — lcf decomposed (the code-quality continuation, round two)
 
-branchA @ (one commit on top of checkpoint 21's `9d4d234`). The
-CONTINUE backlog named it — "loop rotation proper (the taildup gates
-already point at it: the latch merge — the merge whose continuation
-IS the loop header — is the exact shape rotation consumes)" — and
-this checkpoint consumed it. One new pass (`rotate`, toggle #33),
-one selftest-caught regression class fixed on the spot, one fuzz
-vocabulary gap closed (rotation bait), the audit table regenerated
-against the rotated code, and the strongest fixture-stability
-discipline yet (the below-floor gate, verified on both older
-windows). Battery all green, re-verified immediately before the
-commit.
+branchA @ (one commit on top of checkpoint 23's code-quality commit).
+The CONTINUE backlog's item 1 named `opt/loop/lcf.hpp`'s opt_lcf
+(~640 lines) as the next-biggest function in the tree; this
+checkpoint consumed it with the same treatment cdfold got at 23:
+support layer + slim driver, one small constexpr function per phase,
+scan bounds and emission order preserved exactly. Pure refactor,
+zero behavior change, verified byte-identical.
 
 ## What landed
 
-### 1. Loop rotation proper (`rotate`, toggle #33, tier 2, LAST loop consumer — `opt/loop/rotate.hpp`)
+### lcf: the 640-line driver, decomposed (`lcf.hpp` 718 -> 64 + `lcf_impl.hpp` 980)
 
-The canonical test-first loop becomes test-last with a one-shot
-guard. The design decision that makes it exact in THIS IR:
+The single 640-line `opt_lcf` (scan + loop recognition + trip
+counting + three fold strategies inline) became a 24-line driver
+plus a support layer of 66 constexpr functions — nothing in the
+pair exceeds 25 lines:
 
-- The whole non-phi h-body MOVES (never copies-in-place) to the two
-  edges — a guard copy appended to the preheader (the 1st header
-  run) and an edge test appended to the latch (the (i+1)-th header
-  run). Moving (not cloning into place) is what preserves side-effect
-  counts: k trips = k+1 header runs in both forms, and the guard
-  copy IS the 1st while the latch copy of iteration i IS the (i+1)-th
-  (nothing sits between a latch end and the next header top), so
-  Prints, Inputs, Calls, Div/Mod traps and Bkpt observations all
-  fire identically in count and order.
-- The header phis keep keys AND args unchanged — pre still enters h
-  (the guard's loop arm) and the latch still branches back, so
-  nothing re-keys; preds(h) is literally the same {pre, latch}.
-- Loop-internal readers of a moved def get a fresh header phi
-  carrying (guard copy, latch copy) — exactly the (pre, latch)
-  pattern the original phis use. The after-loop region F (reachable
-  from X loop-free) reads an h-phi through a fresh exit phi whose
-  args are the header phi's OWN (pre_arg, latch_arg) pair relocated
-  past the loop — and a moved h-body def through (guard copy, latch
-  copy).
-- Result: one control transfer fewer per iteration (the header cbr +
-  the latch br fuse into the latch cbr); tier-0 splices the now-empty
-  fall-through chain afterwards.
+- **LcfScan** (the pass-wide tables) + **LcfLoop** (the per-loop
+  shape): all the state the original held in 40+ locals, now
+  grouped; lcf_scan fills kc/kv (ndefs==1 const marking — stricter
+  than loop_shape.hpp's loop_scan), defi/defb, uses/ndefs, and the
+  nest-descending header list.
+- **the five shape matchers**, in the original's order: edges
+  (lcf_loop_edges/lcf_inloop/lcf_unique_entry — several back-edges
+  tolerated, the LAST is the latch), the unique header-only exit
+  (lcf_single_exit/lcf_block_exit_ok), the arms + exit polarity
+  (lcf_arms), the (pre,latch)-keyed header phis
+  (lcf_gather_hphis/lcf_one_hphi), and the induction match
+  (lcf_find_ind -> lcf_try_ind_phi -> lcf_step_match +
+  lcf_cond_uses_ind).
+- **the plan gates**: lcf_bound/lcf_bound_outside (runtime bounds
+  must be defined outside the loop), lcf_trip_count/lcf_exits_now
+  (the exact stepping, LCF_TRIP_BUDGET-capped, polarity-aware),
+  lcf_zero_trip (the N==0 header rewrite), lcf_outside_uses_ok,
+  lcf_pre_avoids_exit, lcf_body_pure, lcf_maytrap_scan (unproven
+  Div/Mod), and the analytic scan (lcf_analyze -> lcf_one_evo ->
+  lcf_lin_to_evo over lin_expand's analysis mode).
+- **LcfGo {Skip, Folded, Emit}** — the plan's tri-state: zero-trip
+  and runtime-version folds return Folded (the driver returns
+  true), a failed gate returns Skip, a constant trip returns Emit.
+  The two dispatchers (lcf_sim_call for the no-induction general
+  simulator, lcf_rt_call for the guarded runtime closed form) fill
+  their In structs field-for-field as the original did — including
+  leaving LcfRtIn.C unset.
+- **the emitters**: lcf_splice (the preheader insert + block-range
+  fixup, bounded by pass-entry nb), the closed form
+  (lcf_emit_closed -> lcf_emit_one_closed -> lcf_push_closed ->
+  lcf_push_scaled: the four K1/K0 shapes with the exact vreg
+  allocation order fv-then-c/t/c2), and the N-iteration fallback
+  simulator (lcf_sim_n -> lcf_phi_inputs_const/lcf_loop_instrs/
+  lcf_loop_operands_const/lcf_body_chain/lcf_sim_iterations ->
+  lcf_sim_header_pass/lcf_sim_chain_pass/lcf_latch_transfer/
+  lcf_eval1 -> lcf_emit_sim_batch).
+- **the rewire tail**: lcf_rewire -> lcf_rewire_preheader (pre ->
+  X), lcf_rewrite_uses (outside uses -> final values),
+  lcf_rekey_exit_phis (the h-edge departs from pre),
+  recompute_preds.
 
-Soundness envelope (the strict unroll/lcf family): canonical shape
-(loop_shape_of), unique pre + latch with latch != h, dedicated
-`br h` preheader, the ONLY exit edge is the header's (exit_inventory
-empty — no breaks) with preds(X) == {h}, a single-pred X carrying a
-phi bails (paranoia — the tier-0 degenerater should have removed
-those), h-body <= ROT_BODY_MAX (8) instrs, and outside uses of
-loop-defined values only through the HDEF set (h-phis + h-body defs,
-the only values that exist on a 0-trip path) and only in F — anything
-else bails (dominance forbade it before the rotation anyway). The
-guard reads only values dominating the preheader — the checkpoint-20
-lcf-rt use-before-def lesson is structurally impossible here: every
-h-body read is an h-phi (mapped to pre_args), an earlier h-body def
-(the guard's own copy), or a def dominating h which necessarily
-dominates pre.
+### The trap caught in review
 
-Position: tier 2, after cdfold. Unswitch/unroll/lcf all require the
-test-first shape, so they get their chance first and the rotated loop
-(header ends in Br) is simply invisible to them afterwards — one
-rotation per call, the fixpoint driver re-analyzes, nothing
-re-rotates.
+The original `continue`s the WHOLE header loop when the test value
+is not header-defined — the general simulator is NOT tried for that
+loop. A naive "ind == NONE -> simulator" driver would have changed
+behavior. lcf_find_ind therefore returns bool: false = gate failed
+(skip the loop entirely), true = gate passed (ind may still be
+NONE, and only then does the driver try the simulator). This is
+documented at both the function and the README ledger.
 
-### 2. The selftest-caught regression: the header-increment loop
+### Deliberate non-reuse
 
-The `break_continue` showcase (`while (1) { i = i+1; if (i > 10)
-break; ... }`) failed with an infinite loop on the first working
-draft — tier-0 folds the constant header test and splices the break
-into the header's cbr, so the INCREMENT lives in the header: an
-h-phi whose latch arg IS a moved h-body def. Three phi paths needed
-routing through the moved def's fresh header phi:
+loop_shape.hpp's look-alike helpers are NOT used: loop_scan marks
+kc/kv from the LAST def (lcf requires ndefs==1) and carries no
+uses/ndefs; loop_shape_of requires exactly one internal pred (lcf
+tolerates several back-edges) and derives no exit polarity.
+lcf keeps its own scans, with a comment in lcf_impl.hpp explaining
+why (a future unification must reconcile the semantics first).
 
-- the header phi's own latch-side arg (the back edge must carry the
-  def's per-position value, not the moved def itself);
-- the latch copy's read of that phi (it needs the value the phi takes
-  at the NEXT header position — which is exactly the phi_v carrier);
-- the exit phi's latch-side arg (the (k+1)-th computation, i.e. the
-  latch copy's own output).
+## Verification (the strongest available differential)
 
-Plus the copy-dst rewrite the checkpoint-20 landmine list already
-named: the first draft's copies kept the ORIGINAL dst while the
-guard/latch cbrs read the fresh vregs — both copies defined the same
-vreg, the tests read never-defined values (the oracle-vs-compiled
-mismatch was immediate). The unit series (c) pins the exact program.
+* 93 CLI parity runs over demos/ + examples/ + examples/audit/
+  (--check-all, -O0, and flag-error variants), all diffed
+  byte-identical against the pre-refactor binary.
+* 30 stdin-aware --check-all runs (audit tapes piped in) —
+  identical, including the per-pass counter line (`LCF a+s+g|r`).
+* The full 206-check --demo suite (every lcf_* demo: additive,
+  geometric, runtime_init, rt_dynamic_bound, rt_le, rt_edge_max,
+  sim_fallback, nested) — identical.
+* The register-audit table regenerated byte-identically
+  (regen_audit_results.py; RESULTS.md untouched: 710 vregs /
+  573 housed / 137 spills / 424 traffic).
+* Differential fuzz, old binary vs new, on the committed windows:
+  16131-16280 (rotation) and 14231-14430 (taildup + rt-lcf) —
+  outputs identical modulo timing lines, zero mismatches.
+* selftest 207/207, ctest 44/44, units 6328/6328, check-format
+  clean; header order 98/98 + umbrella (the new lcf_impl.hpp is
+  self-contained); include portability 414/414.
 
-### 3. The fuzz vocabulary gap: rotation bait
+## Measured shape
 
-The window's first run reported `rotations: 0` — the fuzzer's plain
-while loops are constant-bound and constant-driven (SCCP/unroll eat
-every one of them; the rt-lcf bait loops are pure, so lcf eats
-those). The missing vocabulary, now planted for seeds >= 15531
-(MJZ_ROTATE_SEED_FLOOR, fuzz_gen): a RUNTIME start (`input() % 12` —
-clamped, because this bait EXECUTES its loop — no closed form), a
-constant bound/step (unroll cannot count, unswitch has no
-invariant), and a PER-ITERATION PRINT (the LCF purity gate
-rejects) — the exact while that survives every earlier consumer and
-lands in the rotation. 121 bait loops in the 15531-15830 window,
-143 rotations performed, native parity on 20 fixtures.
-
-### 4. The strengthened fixture discipline (the below-floor gate)
-
-fuzz_cfg_for now disables `p_rotate` for every seed BELOW the floor
-(not just an in-window off-case for variety): the pass joins the
-fuzz config only from 15531 up, so the committed fixtures of the
-older windows keep regenerating byte-identically under this and
-future binaries. Verified empirically on BOTH surviving windows:
-fz14831..14839 (checkpoint 21's) and fz14231..14239 (checkpoint
-20's) regenerate byte-for-byte with the new binary. Inside the
-window, case 20 (seed % 21 == 20) keeps the test-first shape for
-1-in-21 seeds — pass-interaction variety, the same shape as every
-window before it.
-
-### 5. The register audit against the rotated code
-
-The checkpoint-21 audit exists to measure exactly this kind of
-change: `scripts/regen_audit_results.py` (committed) regenerates
-examples/audit/RESULTS.md from the current binary — the prose
-headers and input lines preserved verbatim, the tables and outputs
-rebuilt from fresh `--reg-audit --check-all` runs. The twenty
-programs' totals moved 644 vregs / 537 housed / 107 spill slots /
-345 traffic -> 710 / 573 / 137 / 424: the rotation's guard +
-latch-edge copies and the routing phis add live values at the loop
-edges (the FIR filter went spill-free -> 8 slots — the measured
-price of one fewer control transfer per iteration; horner,
-checksums, trial division, the Life census and the deep-recursion
-pair stay spill-free). The audit is the observer, not the judge:
-the tradeoff is now on the record.
-
-### 6. Demo + gates
-
-`demos/rotate_tour.mjz` + `.in`: three whiles — the plain impure
-natural loop, a CALL IN THE LOOP CONDITION (the whole moved header
-keeps its side-effect count — probe's prints prove k+1), and
-after-loop reads (the exit phis). `rotate_tour` ctest (five runners
-+ the audit) and `rotate_debugger_session` (scripted: `opt break
-rotate` pauses the timeline, `opt show 33` dumps the rotated loop —
-guard in b0, phis + fall-through Br in the header, edge test in the
-latch, exit phis at X). 34 new unit checks (the series a-k: shape,
-five-runner parity, zero-trip, the header-increment regression,
-call counts, nested, polarity flip, the surviving-break bail, the
-lcf precedence, the toggle, bkpt parity, a two-caller callee's own
-rotation).
-
-## Battery (re-verified before the commit)
-
-selftest 207/207 | ctest 44/44 (new rotate_tour +
-rotate_debugger_session) | units 6328/6328 (+3 toggle-table growth,
-+34 rotation checks) | `format`/`check-format` clean | fuzz
-15531-15830 (143 rotations, 20 parity fixtures committed) +
-15831-16130 (167 rotations) + 14831-15130 re-verified +
-14231-14530 re-verified + random-cfg 14431-14730 and 15531-15830
-(67 rotations) — all clean, 0 mismatches; the old windows
-regenerate their fixtures byte-identically.
+Top-level brace-matched functions in src/minijz/**/*.hpp: 253 ->
+317 (+64: 66 new small functions, the old trio replaced by the
+driver). <= 10 lines: 76 -> 101; 11-20: 50 -> 84; 21-40: 42 -> 48;
+71+: 69 -> 68 — the 640-line opt_lcf is gone; the biggest function
+in the tree is now opt_unroll (~470), the next backlog target.
 
 ## Known limits
 
-- A single-block self-loop (latch == header — an inlined loop
-  spliced into one block) bails: the documented envelope, not a
-  silent skip (the unit test (k) documents it).
-- Loops with a SURVIVING break edge stay test-first (exit_inventory
-  non-empty) — the strict unroll/lcf family discipline; tier-0 folds
-  the classic `while(1)+break` into the header so most of those DO
-  rotate (the unit test (c) is exactly that program).
-- The audit table regenerated at 137 spill slots vs 107: rotation
-  trades register pressure for per-iteration branch count on this
-  backend's five-register pool — the honest measurement, not a
-  regression to hide (live-range splitting / rematerialization of
-  the guard copies are the natural follow-ups, and the audit now
-  measures them).
-- A real Windows/MSVC run remains the one unverified step (no
-  MSVC/zig/MinGW in this sandbox; native parity ran on g++).
+* The 71+ bucket barely moved (69 -> 68): this checkpoint consumed
+  ONE function, by design — the backlog is a queue, not a batch.
+* The tree-wide function census uses a brace-matching heuristic
+  (scripts convention), not a compiler database; the per-file
+  numbers (66 functions in lcf_impl.hpp, driver 24 lines) are
+  exact.
+* No MSVC run (unchanged since checkpoint 16: no MSVC in the
+  sandbox; native parity ran on g++).
