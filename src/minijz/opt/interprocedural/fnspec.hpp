@@ -3,6 +3,35 @@
 // interprocedural function specialization (partial evaluation of a
 // constant argument without inlining).
 
+// ALGORITHM (opt_fnspec): (1) collect the call `sites` ({f, i, g}),
+//   the same scan argpromo uses. (2) per callee g ascending under
+//   SPEC_GROWTH_CAP -- guards (tce_sel, slot_of, nparams,
+//   SPEC_BODY_CAP, entry block at code position 0 and phi-free, no
+//   param redefinition, arity match, >= 2 sites) -- find the first
+//   param p that is USED in g and, per spec_def_const, CONSTANT at
+//   every site; dv holds the distinct values in first-appearance
+//   order (<= SPEC_VALUES_CAP). (3) one clone per value: the
+//   permutation mp maps p to a fresh vreg t (new_anon_vreg based at
+//   the vacated nparams-1 slot), params above p shift down, all else
+//   is untouched; an entry Const defines t at position 0 (block 0
+//   absorbs it); Phi's stale `c` tag stays (the deadargs policy).
+//   (4) redirect: every site carrying this value drops arg p and
+//   retargets C.c to the clone, which reuses name and src_index.
+// DATA STRUCTURES: the Site/vals/dv vectors, the per-clone vreg
+//   permutation mp with the fresh bound-constant vreg t, and the
+//   SPEC_BODY_CAP / SPEC_VALUES_CAP / SPEC_GROWTH_CAP budgets.
+// THEORY: binding a parameter that every site passes as the SAME
+//   constant is value-preserving -- the clone computes with a local
+//   Const where the generic read a param holding that Const. The
+//   guards make it SSA-clean (params have no internal defs, the
+//   entry block starts at 0) and injective (t claims the base id the
+//   dropped param vacated, so no two vregs share a base var). A
+//   clone's internal calls still target the generic, so recursion
+//   stays correct and keeps the generic alive when needed.
+// DOWNSTREAM: the final round's tier-0 re-fold propagates each bound
+//   constant through its clone (branch pruning, divmagic, ...) with
+//   NO body duplication into callers; one value covering all sites
+//   leaves the generic uncalled for the dead-fn sweep.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 

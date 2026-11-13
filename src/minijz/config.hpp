@@ -396,6 +396,26 @@ static int g_checks = 0, g_fails = 0;
 // ============================================================================
 // 1. values & wrapping/trapping arithmetic (shared by both interpreters)
 // ============================================================================
+// THEORY (the semantic contract every backend must reproduce):
+//   * WRAPPING. val_t is a SIGNED 64-bit value, but add/sub/mul/
+//   and/or/xor compute in (uint64_t) casts: well-defined in C++
+//   (never UB), bit-identical to two's-complement hardware, so the
+//   AST oracle, the SSA interpreter, the VM, the lowered C and the
+//   native asm all agree bit-for-bit (the --check-all parity chain).
+//   * TRAPS. Exactly two arithmetic traps exist -- Div/Mod by zero
+//   and INT64_MIN / -1 (the overflowing quotient) -- and they are
+//   OBSERVABLE: Rv.trap aborts the runner with TRAP + a located
+//   diagnostic (trap_src). The optimizer must therefore preserve
+//   them (sccp never makes a trapping op constant; licm hoists
+//   div/mod only under the context-free divisor safety; trapelim
+//   proves non-trapping and marks nt).
+//   * SHIFTS mask the amount to 6 bits (w_shamt): the x86-64
+//   behavior, one answer for any operand in every runner.
+//   * COMPARISONS are signed on val_t and yield EXACTLY 0/1 --
+//   the compare-domain facts in fold.hpp build on that.
+//   * The 512-frame depth cap and the 16 MiB arena below are part
+//   of the same contract: every backend must trap at the same
+//   program points, so the runners stay interchangeable.
 using val_t = int64_t;
 constexpr uint32_t NONE = ~uint32_t(0); // "no vreg/block/index" sentinel
 struct Rv {                             // result of one arithmetic op

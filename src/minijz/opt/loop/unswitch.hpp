@@ -39,6 +39,36 @@
 // keep their (remapped) operands; Bkpt observations clone with it, so
 // observation parity is preserved (the false path executes zero body
 // instructions, exactly like the original with the condition false).
+// ---- ALGORITHM --------------------------------------------------------
+// Per header h of S.headers: in_loop_flags; path selection via
+// loop_shape_of (header test NOT invariant -> unswitch_bif.hpp's
+// body-if path); trivial (primary = h, bypass = sh.body) or
+// compound (compound_shape_of: primary = mm). Gates: cond_invariant
+// per guard; dedicated `br h' preheader; growth cap 1..120;
+// exit_inventory; header_phis; region F (worklist from X); the
+// outside-use safety scan. Commit: guards g2/fx/t1 first; then
+// alloc_clone + emit_loop_clone; pre becomes the guard cbr; the
+// merge phis at X (phi_final); the rewire sweep; recompute_preds.
+// ---- DATA STRUCTURES --------------------------------------------------
+// S (LoopScan defi/defb/kc/kv), inL, sh/cs/bs, guard1/guard2, exits
+// (ExitEdge), hphis (HPhi), F, loopdef, read_on_false/phi_final,
+// the CloneMap C (bmap/fresh), entry_pred/false_pred, x_side_pred.
+// ---- THEORY: the versioning argument ----------------------------------
+// cond_invariant proves the guard an SSA value defined outside, not
+// a constant, dominating the preheader: an SSA value cannot change
+// mid-loop, so the original resolved the header test the SAME way
+// every iteration -- duplicating the loop under each arm of that
+// invariant branch is exact. The false arm runs zero body
+// instructions (Bkpt observations clone with it: parity); the true
+// arm is a fresh-vreg clone with the test gone. Outside uses: a
+// header phi read in F takes its preheader value (merge phi at X:
+// pre_arg zero-iteration side, C.fresh after the loop ran); a
+// non-phi loop value read in F is impossible under SSA dominance
+// (bail); reads outside F happen only after the loop ran, remapping.
+// ---- WHAT IT ENABLES --------------------------------------------------
+// Tier 2 runs it BEFORE unroll: the versioned true arm loses its
+// exit edge, so unroll/lcf skip it anyway; the abandoned side dies
+// under unreach + copyprop in the same tier round.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../../ir/phi_norm.hpp"

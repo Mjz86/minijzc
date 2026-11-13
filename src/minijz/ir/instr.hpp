@@ -1,6 +1,43 @@
 #pragma once
 // === instr.hpp ========================================
 // IR core: vregs, versions, Instr/Block/Fn, enums K/B, helpers.
+//
+// REPRESENTATION THEORY (why the IR looks like this):
+//   * FLAT CODE VECTOR + BLOCK RANGES, not linked blocks. fn.code is
+//     one vector; a Block is just [begin,end) into it. Passes that
+//     rewrite the graph EMIT by appending (unroll's copies, licm's
+//     preheader inserts, lcf's closed forms): existing ranges stay
+//     valid, so a pass never has to renumber anything mid-flight.
+//     The scan tables in the loop passes are keyed by instr index
+//     into this vector (defi[dst] = i).
+//   * TWO-TIER SSA NAMING. vregs 0..nvars-1 are the SOURCE
+//     variables (0..nparams-1 are the parameters). ssa_construct
+//     then gives every new definition its own vreg id >= nvars and
+//     records its provenance: version_base[v-nvars] = the source
+//     variable (base_of(v), used to name it "x3") and version_no =
+//     the version subscript. Pass-introduced temps (unroll copies,
+//     inlining, destruction moves) get "anonymous" versions via
+//     new_anon_vreg (version_no carries the 0x10000+ marker) --
+//     they are ordinary SSA values, just not user-named.
+//   * PHIS ARE PRED-KEYD IN t/f, NOT POSITIONAL. A Phi names the
+//     predecessor BLOCK id each arg arrives from (t/f reuse the
+//     branch-target fields). CFG edits can therefore prune/rekey
+//     phi args by pred identity alone (destruct, splice, unroll's
+//     rekey) -- positions would have to be renumbered on every
+//     edge change. Phis also sit at the HEAD of their block (the
+//     phis-first invariant, checked by every `if (k != Phi) break`
+//     scan in the tree).
+//   * MEMORY IS AN ARENA OF ARRAYS. Alloc/Load/Store/Len/Input
+//     operate on handles; mem2reg promotes the provably-local
+//     arrays into SSA vregs and deletes the arena traffic.
+//   * nt = "no trap PROVEN" is a proof-carrying purity marker: a
+//     range/alias analysis (trapelim) proved this Div/Mod/Load/
+//     Store cannot trap, so backends skip the guard and the
+//     pipeline may treat the op as pure/hoistable.
+//   * DUAL GRAPH BOOKKEEPING. succ holds TWO slots per block (the
+//     Br/Cbr targets); preds is the reverse adjacency rebuilt by
+//     recompute_preds in ascending source order. Passes mutate
+//     succ + code, then call recompute_preds once at the end.
 
 #include "../config.hpp"
 

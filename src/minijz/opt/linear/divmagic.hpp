@@ -1,6 +1,28 @@
 #pragma once
 // === divmagic.hpp ========================================
 // div/mod-by-constant -> mulhi+shift (reciprocal from mjz_lib).
+//
+// THEORY (division by invariant integers -- the magic numbers):
+//   q = floor(n/D) is computable as floor(n * m / 2^s) when the
+//   "magic number" m slightly OVER-estimates 2^s / D: with
+//   eps = m*D - 2^s >= 0, the classical theorem (Granlund-
+//   Montgomery, cf. Hacker's Delight ch.10) gives exactness for
+//   all n in [0, 2^63] whenever m <= 2^63 and the error budget
+//   holds. divmagic_of checks the certificate per divisor in
+//   128-bit arithmetic (the exactness gate below, the 9a6
+//   banner); the reciprocal itself comes from mjz_lib sized for
+//   [0, 2^63] -- which covers |INT64_MIN|'s bit pattern too.
+//   SIGNED lowering (truncating, D a known safe constant -- no
+//   trap is possible): |n| by xor/sub against the sign mask
+//   (sg = n >>a 63), q on |n|, sign re-applied by xor/sub, D<0
+//   negates; r = n - q*D, wrapping-exact (the identity q*D + r
+//   = n holds in mod-2^64 arithmetic). POWERS OF TWO bias the
+//   dividend before the arithmetic shift (round toward zero),
+//   and the remainder gets the negative-dividend correction.
+//   ECONOMICS: div is ~20-40 cycles on x86-64; mulhi+shift+sign
+//   fixups are ~5. Fires only for RUNTIME dividends with constant
+//   divisor outside {0,1,-1} (constant dividends are fold's; 0
+//   and -1 are the trap sources and stay guards).
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

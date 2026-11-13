@@ -9,6 +9,30 @@
 // anything live across a call needs no extra saving; the rest spill to
 // the classic -N(%rbp) slots). The audit layer (regaudit.hpp) reads the
 // SAME plan the codegen gets — one allocator, two consumers.
+//
+// MECHANICS (liveness -> interference -> coloring -> homes):
+//   * BACKWARD LIVENESS. lin/lout per block, computed by a backward
+//     fixpoint (up to 64 rounds): live-out(b) = union of live-in of
+//     b's successors; inside a block, scan instructions BACKWARD
+//     with def-kills-use (a def removes its vreg from live, a use
+//     adds it). Dead instrs (P.dead) and inlined consts (P.kc) are
+//     invisible to the reader -- the fused Cbr reads the compare's
+//     OPERANDS (each_use), which is what keeps slots alive where
+//     the branch fusion needs them.
+//   * INTERFERENCE. Walk each block backward with `live` seeded
+//     from live-out: at a def, add edges (def, every vreg live
+//     after it), then kill the def. Parameters interfere with
+//     everything live into entry AND PAIRWISE ALWAYS (the prologue
+//     unconditionally moves every argument into its home -- fuzz
+//     seed 804, documented at the edge() calls above).
+//   * COLORING. mjz_lib's color_chordal_graph: greedy in maximum-
+//     cardinality-search order, OPTIMAL on chordal graphs (colors =
+//     clique number), and these interference graphs are SSA-shaped
+//     enough to be chordal in practice.
+//   * HOMES. color 0..4 = rbx,r12..r15 (callee-saved: anything
+//     live across a call needs no save); color >= 5 spills to
+//     -N(%rbp) with spill[] ordinals; usedmask drives the prologue's
+//     counted push/pop of the used subset only.
 
 #include "../graph_lib.hpp"
 #include "../base/pass_cfg.hpp"

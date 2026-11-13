@@ -2,6 +2,33 @@
 // === callcse.hpp ========================================
 // common-subexpression elimination of calls to provably-pure functions.
 
+// ALGORITHM (opt_callcse): (1) build pure[f] with fn_pure_closure,
+//   shared with constcall.hpp -- one purity oracle for both passes.
+//   (2) per fn, analyze() the body and walk the DOMINATOR TREE with
+//   an explicit DFS stack (Fr{b, ci, mark}); entering block b scans
+//   its code once: every Call to a pure callee of matching arity is
+//   looked up in `table` (a linear scan -- tables stay tiny); a hit
+//   rewrites the call in place to Copy e.val (SSA: dst always
+//   differs, ostats[f].callcses++), a miss pushes Ent{callee, args,
+//   val}. (3) leaving b truncates the table to its entry mark, so an
+//   entry is visible exactly while its block's subtree is on the
+//   stack (and for the rest of its own block).
+// DATA STRUCTURES: the pure[] table; the scoped CSE table of Ent
+//   records (callee, argument vector, result vreg); rows (the
+//   dom_tree child ranges); the mark-scoped DFS stack.
+// THEORY: the mark discipline makes every hit a call DOMINATED by
+//   its entry's call -- the first execution covers the second on
+//   every path. Purity makes (callee, args) a function: same result,
+//   same trap, same frame (a Depth-reading closure sees one frame
+//   for both calls). If the dominating call traps, the dominated one
+//   never runs; if it returns, the identical computation cannot trap
+//   -- so t2 = pure_f(a,b) -> Copy t1 is exact. Value-less calls are
+//   never deleted here: a pure call may still trap, which is
+//   observable; this pass only dedupes.
+// DOWNSTREAM: runs after the inliner rounds, where what remains is
+//   multi-use or recursive -- exactly the memoization shapes (a
+//   gcd(a,b) asked twice); the emitted Copies are plain dataflow for
+//   the per-fn fold/DCE rounds to remove.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"

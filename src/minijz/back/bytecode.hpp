@@ -1,6 +1,31 @@
 #pragma once
 // === bytecode.hpp ========================================
 // bytecode emission + listing/disassembly.
+//
+// WHAT (emit_bc_listing): a text disassembly of an emit_bytecode image
+// (the emission half lives in vm.hpp; this file is also the umbrella
+// that pulls the vm tripart in for the CLI/debugger/fuzz/shrink).
+//   * header line "; %zu bytes, %u fn(s)"; per fn "off=%u slots=%u"
+//     re-read from the [u32 nfns][nfns x (u32 off, u32 nslots)]
+//     directory; a fn's extent runs to the next fn's offset, or the
+//     image end for the last fn.
+//   * per op: "%6zu %-6s" (byte offset + bc_name) then the immediates
+//     -- Push prints its i64; Load/Store print the v%u slot id (the
+//     same home the machine's frames index); Jmp/Jz the absolute
+//     target offset; Call "f%u (%u args)"; Bkpt its SLOT ids (at most
+//     8 rendered, "..." beyond -- the operand bytes are ALWAYS walked,
+//     so the listing stays in lockstep with the encoder).
+//
+// DATA: reads only the image through the bc_defs.hpp accessors
+// (bc_rd_u32/bc_rd_i64, bc_name) -- no IR, no state; a static free
+// function, safe in every include mode.
+//
+// THEORY: the listing is the human-facing view of the very bytes
+// vm_step_op executes: the printed offsets are the pc values a
+// debugger session stops at, and Bkpt's slot list is what it shows.
+//
+// CONSUMERS: app_main.hpp (--list) and dbg_cmds.hpp (the debugger's
+// disasm command).
 
 #include "../ir/instr.hpp"
 #include "vm.hpp"

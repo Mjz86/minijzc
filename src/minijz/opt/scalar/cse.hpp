@@ -1,6 +1,36 @@
 #pragma once
 // === cse.hpp ========================================
 // dominator-scoped common subexpression elimination.
+//
+// ALGORITHM: opt_cse has three stages. (1) Seed kconst/kval from every
+//   K::Const, so two temps holding 7 key by VALUE, not by vreg. (2) A
+//   preorder walk of the dominator tree (A.dom_tree.range()) with an
+//   explicit stack; entering a block, scan its instrs once: each pure
+//   Bin (Div/Mod only when I.nt proves it safe) builds an Ent key from
+//   resolve()-d operands, commutatives order operands by the `lt` tag;
+//   a hit records ren[I.dst] = table[t].val and drop[i] = 1, a miss
+//   pushes. (3) A second pass rewrites all operands (I.a/I.b2/I.c2,
+//   I.args, Phi args included) with the completed map; the sweep then
+//   rebuilds fn.code, rewriting each fn.blocks range.
+// DATA STRUCTURES:
+//   * ren + resolve: renaming map vreg -> dominating def (chains are
+//     followed to the end).
+//   * kconst/kval: const temps, keyed by VALUE for the Ent key.
+//   * table of Ent {op,x,y,xv,yv,val}: the scoped CSE table; x/y NONE
+//     means a const operand, compared by xv/yv (tables stay tiny).
+//   * st of Fr {b,ci,mark}: the preorder stack; mark = table.size() at
+//     entry, so leaving a block truncates via table.resize(mark).
+//   * drop: per-instr bytes telling the sweep which instrs to omit.
+// THEORY: visibility is exactly "def dominates use" -- table entries
+//   live along the dominator path only, so a hit means the dominating
+//   def computes the same pure value on every path. Renaming waits for
+//   a SECOND pass: a Phi argument is a use on an INCOMING EDGE, and
+//   the replaced def's block may be scanned after the phi's block in
+//   preorder -- rewriting during the walk would leave the phi reading
+//   a dropped def; ren[v] = w implies w's def dominates every use of v.
+// ENABLES: duplicate Bins vanish and their operands unify on the
+//   surviving def: later passes see fewer instrs and one name per
+//   expression, with fn.blocks ranges rewritten in place.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

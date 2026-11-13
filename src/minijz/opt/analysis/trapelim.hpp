@@ -1,6 +1,36 @@
 #pragma once
 // === trapelim.hpp ========================================
 // trap elimination + range-proved comparison folding.
+//
+// ALGORITHM (opt_trapelim): bail unless RA.ok; run alias_analyze,
+// build defi, and fill alen with the constant length of every
+// Alloc whose handle is single (-1 = unknown). Then per block:
+// seed st from RA.entry and, per instr (phis skipped -- the entry
+// rule already covered them), fold a comparison iv_decide decides
+// into K::Const (os.rangecmps); mark Div/Mod `nt` when
+// nz(dv) && (nm1(dv) || nmin(dd)) (os.traps_killed); mark
+// Load/Store `nt` when the handle is single, alen >= 0, and the
+// index is a constant in [0,L) or an interval inside [0,L);
+// iv_transfer advances st through the block.
+//
+// DATA STRUCTURES: defi (vreg -> def instr); alen (alloc id ->
+// constant length, -1 unknown); the Iv predicates nz/nm1/nmin;
+// the per-block state st; AI, and RA -- the caller's Ranges.
+//
+// THEORY: Div/Mod trap only on divisor 0 or INT64_MIN / -1, so a
+// divisor interval excluding 0 (nz) that also excludes -1 (nm1),
+// or a dividend interval excluding INT64_MIN (nmin), makes the
+// trap impossible. Load/Store trap only on a bad handle or an
+// out-of-range index: AI.single pins the handle to ONE allocation,
+// alen supplies its constant length, and a constant or interval
+// index within [0,L) proves in-range. Comparisons never trap, so
+// an interval-decided outcome IS the runtime value. Every proof
+// leans on RA being a sound over-approximation (TOP fallback).
+//
+// DOWNSTREAM: `nt` lets every backend drop the guard, DCE/LICM
+// treat the instr as pure, and the closed-form / simulation loop
+// passes delete the loop computing it; folded comparisons become
+// constants the tier-0 fold threads into branches.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

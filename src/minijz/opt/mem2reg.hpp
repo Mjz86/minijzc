@@ -2,6 +2,38 @@
 // === mem2reg.hpp ========================================
 // mem2reg: array memory -> SSA registers + dead-store/dead-alloc
 // elimination for never-read arrays.
+//
+// DATA STRUCTURES (the promotion machinery's state):
+//   AI.single      alias analysis: vreg -> allocation id, NONE when
+//                  the handle is OBSCURE (may name >1 array) -- only
+//                  single-handle arrays are promotable
+//   Cls            per-allocation classification {len, lift, dead}:
+//                  lift = constant length <= 256, every Load/Store
+//                  single-handle + constant in-range index, loads
+//                  exist, and the 2048-slot budget admits it; dead =
+//                  never read with no may-trap store (Len -> L later)
+//   slot_base[id]  element j of allocation id is SLOT slot_base+j --
+//                  slots are the pseudo-variables SSA is built over
+//   sdefs[s]       def blocks per slot (the Alloc block for the
+//                  zero-init + every Store's block) -> IDF phi
+//                  placement, exactly an.hpp's construction
+//   init_vreg/init_slot_of  the Const-0 init vreg per slot (created
+//                  by the rebuild, ids >= nv) and its reverse map
+//   phis_at[b]     slot phis per block (placeholders first at block
+//                  starts, .c = slot id until renaming assigns dst)
+//
+// PIPELINE POSITION. Runs early (the scalar/loop passes then see
+// plain registers, not arena traffic); gated by the toggles
+// (lift_ok = the mem2reg toggle, delalloc_ok) and the program-wide
+// stkarr_ok gate from prog_handle_gates (deleting an allocation
+// shifts every later arena handle -- observable through handle
+// VALUES and Len-of-obscure -- so under that gate dead allocs are
+// pure weight). Bkpt-observed arrays stay in the arena (the
+// debugger must be able to dump their contents). The full slot
+// theory (init/store/load as pseudo-variable defs/uses) is the
+// 9d4 banner below; the stale-loop-array hazard (the init must be
+// pushed at the ALLOCATION SITE, not at entry) is documented at
+// the renaming walk.
 
 #include "../base/pass_cfg.hpp"
 #include "../ir/instr.hpp"

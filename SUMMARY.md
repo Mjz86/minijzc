@@ -1,117 +1,156 @@
-# Checkpoint 24 — lcf decomposed (the code-quality continuation, round two)
+# Checkpoint 25 — unroll decomposed (round three) + the algorithm/theory documentation wave
 
-branchA @ (one commit on top of checkpoint 23's code-quality commit).
-The CONTINUE backlog's item 1 named `opt/loop/lcf.hpp`'s opt_lcf
-(~640 lines) as the next-biggest function in the tree; this
-checkpoint consumed it with the same treatment cdfold got at 23:
-support layer + slim driver, one small constexpr function per phase,
-scan bounds and emission order preserved exactly. Pure refactor,
-zero behavior change, verified byte-identical.
+branchA @ (one commit on top of checkpoint 24's lcf commit).
+Two things landed, both under the byte-identical discipline:
+
+1. The CONTINUE backlog's item 1 consumed its next named target:
+   `opt/loop/unroll.hpp`'s opt_unroll — at 470 lines the biggest
+   function left in the tree — got the cdfold/lcf treatment.
+2. The standing documentation request ("explain each algorithm and
+   data structure in full detail with comments, especially the SSA
+   and optimization, also the theory"): 55 files now carry
+   theory-level header comments, ~1,570 inserted lines, zero code
+   churn.
 
 ## What landed
 
-### lcf: the 640-line driver, decomposed (`lcf.hpp` 718 -> 64 + `lcf_impl.hpp` 980)
+### unroll: the 470-line driver, decomposed (`unroll.hpp` 498 -> 62 + `unroll_impl.hpp` 782)
 
-The single 640-line `opt_lcf` (scan + loop recognition + trip
-counting + three fold strategies inline) became a 24-line driver
-plus a support layer of 66 constexpr functions — nothing in the
-pair exceeds 25 lines:
+The single opt_unroll became a 16-line driver plus a support layer
+of 33 small constexpr functions (largest 28 lines) + 3 structs:
 
-- **LcfScan** (the pass-wide tables) + **LcfLoop** (the per-loop
-  shape): all the state the original held in 40+ locals, now
-  grouped; lcf_scan fills kc/kv (ndefs==1 const marking — stricter
-  than loop_shape.hpp's loop_scan), defi/defb, uses/ndefs, and the
-  nest-descending header list.
-- **the five shape matchers**, in the original's order: edges
-  (lcf_loop_edges/lcf_inloop/lcf_unique_entry — several back-edges
-  tolerated, the LAST is the latch), the unique header-only exit
-  (lcf_single_exit/lcf_block_exit_ok), the arms + exit polarity
-  (lcf_arms), the (pre,latch)-keyed header phis
-  (lcf_gather_hphis/lcf_one_hphi), and the induction match
-  (lcf_find_ind -> lcf_try_ind_phi -> lcf_step_match +
-  lcf_cond_uses_ind).
-- **the plan gates**: lcf_bound/lcf_bound_outside (runtime bounds
-  must be defined outside the loop), lcf_trip_count/lcf_exits_now
-  (the exact stepping, LCF_TRIP_BUDGET-capped, polarity-aware),
-  lcf_zero_trip (the N==0 header rewrite), lcf_outside_uses_ok,
-  lcf_pre_avoids_exit, lcf_body_pure, lcf_maytrap_scan (unproven
-  Div/Mod), and the analytic scan (lcf_analyze -> lcf_one_evo ->
-  lcf_lin_to_evo over lin_expand's analysis mode).
-- **LcfGo {Skip, Folded, Emit}** — the plan's tri-state: zero-trip
-  and runtime-version folds return Folded (the driver returns
-  true), a failed gate returns Skip, a constant trip returns Emit.
-  The two dispatchers (lcf_sim_call for the no-induction general
-  simulator, lcf_rt_call for the guarded runtime closed form) fill
-  their In structs field-for-field as the original did — including
-  leaving LcfRtIn.C unset.
-- **the emitters**: lcf_splice (the preheader insert + block-range
-  fixup, bounded by pass-entry nb), the closed form
-  (lcf_emit_closed -> lcf_emit_one_closed -> lcf_push_closed ->
-  lcf_push_scaled: the four K1/K0 shapes with the exact vreg
-  allocation order fv-then-c/t/c2), and the N-iteration fallback
-  simulator (lcf_sim_n -> lcf_phi_inputs_const/lcf_loop_instrs/
-  lcf_loop_operands_const/lcf_body_chain/lcf_sim_iterations ->
-  lcf_sim_header_pass/lcf_sim_chain_pass/lcf_latch_transfer/
-  lcf_eval1 -> lcf_emit_sim_batch).
-- **the rewire tail**: lcf_rewire -> lcf_rewire_preheader (pre ->
-  X), lcf_rewrite_uses (outside uses -> final values),
-  lcf_rekey_exit_phis (the h-edge departs from pre),
-  recompute_preds.
+- **UnrScan/UnrLoop/UnrMaps**: the pass-wide tables, the per-loop
+  shape, and the commit's block/vreg/entry maps — the state the
+  original held in 20+ locals, now grouped.
+- **the scan**: unr_defs (LAST def and LAST Const win — no ndefs==1
+  strictness here, that is lcf's; documented in the contract),
+  unr_header_list (the nest-descending pair-swap sort).
+- **the shape matchers**, in the original's order: unr_loop_edges
+  (several in-loop preds tolerated, the LAST is the latch; outside
+  must be exactly one), unr_header_term (empty-header check BEFORE
+  the terminator read), unr_single_exit (the only-exit-edge scan),
+  unr_arms (break-style vs continue-style polarity + the self-loop
+  skip), unr_gather_hphis (ALL phis must be (pre,latch)-keyed),
+  unr_find_ind -> unr_try_ind -> unr_step_match/unr_test_uses_ind
+  (the FIRST matching phi wins; Sub allows only D.a == phi).
+- **the plan**: unr_trip (the trip count by RUNNING the loop's own
+  wrapping arithmetic — ivk pushed BEFORE the exit check, so ivk[K]
+  is the value the loop leaves in i; the cap break leaves K NONE;
+  `K > limit` kept as unreachable belt and braces), unr_growth_ok
+  (the (K+1)*instrs <= 400 cap).
+- **the safety scan**: unr_outside_uses_ok — strict form flags only
+  non-h-defined loop values; at the exit block X the phi relaxation
+  re-checks with PLAIN loopdef on args keyed to preds other than h
+  (both levels are the original's, documented at the functions).
+- **the commit**: unr_commit (os.unrolls++ BEFORE the K==0 shortcut),
+  unr_zero_trip (the in-place header rewrite), unr_build_maps (the
+  k-major allocation order — blocks then vregs — that the register
+  audit observes), unr_fill_entry + unr_mapv (the induction as
+  per-copy Consts; accumulators chained copy k-1 -> k), the emitters
+  (unr_emit_header_copy, unr_emit_body_copies -> unr_emit_body_block
+  -> unr_emit_term/unr_edge — the back edge becomes the NEXT copy's
+  header), and the rewire tail (unr_rewire_preheader,
+  unr_rekey_exit_phis, unr_rewrite_uses — only h-defined values may
+  escape, rewritten to the tail's values).
 
-### The trap caught in review
+The byte-identical contract is unroll_impl.hpp's header block; the
+one preserved landmine worth naming: unr_copy_succs' succ0 line
+reads bmap[k][succ0(b)] WITHOUT the `!= NONE` guard its succ1 line
+carries — the original's asymmetry, kept not "fixed" (the ckpt-24
+class of decision). loop_shape.hpp's look-alikes (loop_scan,
+in_loop_flags, header_phis, loop_shape_of) are deliberately NOT
+reused (lcf's precedent, the divergence documented in the contract).
 
-The original `continue`s the WHOLE header loop when the test value
-is not header-defined — the general simulator is NOT tried for that
-loop. A naive "ind == NONE -> simulator" driver would have changed
-behavior. lcf_find_ind therefore returns bool: false = gate failed
-(skip the loop entirely), true = gate passed (ind may still be
-NONE, and only then does the driver try the simulator). This is
-documented at both the function and the README ledger.
+### The documentation wave (55 files, ~1,570 comment lines)
 
-### Deliberate non-reuse
+Hand-written, the SSA/optimization core (16 files):
+- an.hpp — dominators (Lengauer-Tarjan), dominance intervals (the
+  O(1) containment test), natural loops, dominance frontiers, the
+  Cytron phi-placement theorem (minimal/non-pruned SSA and why the
+  NONE args are safe), the renaming-stack theory (why the epilogue
+  pops exactly what the prologue pushed; phi args seeded at the
+  predecessor's end).
+- ir/instr.hpp — the representation theory: flat code vector +
+  block ranges (append-only emission), the two-tier vreg/version
+  naming, pred-keyd phis in t/f, the arena memory model, the nt
+  proof-carrying purity marker.
+- ir/builder.hpp — the pre-SSA emission model (no phis ever emitted
+  here; short-circuit diamonds as multi-def temps; oracle-order
+  evaluation; the loop_stack discipline).
+- ir/phi_norm (why phis-first is load-bearing), ir/destruct.hpp
+  (parallel-copy lowering: the swap cycle/lost-copy problem, undef
+  args -> Const 0, critical edges, the snapshot rebuild).
+- opt/mem2reg.hpp — the slot machinery's data structures (AI.single,
+  Cls, slot_base, sdefs, init_vreg) and the pipeline gates.
+- back/interp_ssa.hpp — edge-parallel phi staging (read-all-then-
+  write-all = destruct's semantics) + the five-runner parity chain.
+- sccp.hpp — the lattice (TOP/CONST/OVERDEF), Tarski fixpoint,
+  sparse delta propagation, executable-edge conditionality.
+- gvn.hpp — the scoped-table watermark mechanism; dominator-based
+  GVN, not PRE.
+- licm.hpp — the soundness argument (purity because of zero-trip
+  loops; operand dominance into the preheader; the context-free
+  div/mod safety).
+- opt/driver.hpp — phase ordering: why a fixpoint at all, the tier
+  model, tier-2's load-bearing order (unswitch before unroll before
+  lcf, rotate LAST because the rotated header is invisible to the
+  other shape matchers).
+- divmagic.hpp — Granlund-Montgomery magic numbers (the exactness
+  certificate, the signed lowering, the economics).
+- callgraph.hpp — SCC scheduling (emission order = callees before
+  callers), the inline splice, the Depth adjustment.
+- regalloc.hpp — liveness -> interference -> chordal MCS coloring
+  -> homes (the fuzz-804 pairwise-param landmine referenced).
+- config.hpp — the wrapping/trap semantic contract every backend
+  must reproduce. fold.hpp — local vs conditional folding.
 
-loop_shape.hpp's look-alike helpers are NOT used: loop_scan marks
-kc/kv from the LAST def (lcf requires ndefs==1) and carries no
-uses/ndefs; loop_shape_of requires exactly one internal pred (lcf
-tolerates several back-edges) and derives no exit polarity.
-lcf keeps its own scans, with a comment in lcf_impl.hpp explaining
-why (a future unification must reconcile the semantics first).
+Parallel documentation passes (40 files, six agents, all
+insert-only, verified): scalar tier-2 (cse, copyprop, dce, canon,
+splice, ldelim, unreach), loop tier-2 (lsimp, unswitch,
+unswitch_bif, unswitch_shape, lcf, lcf_sim, lcf_rt, loop_shape),
+interprocedural tier-2 (icf, argpromo, deadargs, constcall,
+callcse, fnspec; tailrec, scctco, scctco_fold got full blocks,
+cdfold a THEORY-only add, cdfold_impl skipped as already adequate),
+linear + analysis (linform, reassoc, alias, intervals, trapelim),
+and the back end (vm, vm_step, stack_alloc, bytecode, emit_plan,
+emit_c + impl, emit_x64 + impl). rotate.hpp already had the tree's
+best theory header and was left as-is.
 
 ## Verification (the strongest available differential)
 
 * 93 CLI parity runs over demos/ + examples/ + examples/audit/
-  (--check-all, -O0, and flag-error variants), all diffed
-  byte-identical against the pre-refactor binary.
-* 30 stdin-aware --check-all runs (audit tapes piped in) —
-  identical, including the per-pass counter line (`LCF a+s+g|r`).
-* The full 206-check --demo suite (every lcf_* demo: additive,
-  geometric, runtime_init, rt_dynamic_bound, rt_le, rt_edge_max,
-  sim_fallback, nested) — identical.
+  (--check-all, --opt-report, -O0; the .in tapes piped in; the four
+  debugger tours), all diffed byte-identical against the
+  pre-refactor binary (build/minijz-ckpt24 saved before any edit).
+* The full 206-check --demo suite and selftest 207/207.
 * The register-audit table regenerated byte-identically
   (regen_audit_results.py; RESULTS.md untouched: 710 vregs /
-  573 housed / 137 spills / 424 traffic).
+  573 housed / 137 spill slots / 424 traffic).
 * Differential fuzz, old binary vs new, on the committed windows:
   16131-16280 (rotation) and 14231-14430 (taildup + rt-lcf) —
-  outputs identical modulo timing lines, zero mismatches.
-* selftest 207/207, ctest 44/44, units 6328/6328, check-format
-  clean; header order 98/98 + umbrella (the new lcf_impl.hpp is
-  self-contained); include portability 414/414.
+  identical modulo timing lines, zero mismatches.
+* ctest 44/44, units 6328/6328, check-format clean; header order
+  99/99 + umbrella (unroll_impl.hpp is self-contained); include
+  portability 419/419.
 
 ## Measured shape
 
-Top-level brace-matched functions in src/minijz/**/*.hpp: 253 ->
-317 (+64: 66 new small functions, the old trio replaced by the
-driver). <= 10 lines: 76 -> 101; 11-20: 50 -> 84; 21-40: 42 -> 48;
-71+: 69 -> 68 — the 640-line opt_lcf is gone; the biggest function
-in the tree is now opt_unroll (~470), the next backlog target.
+Top-level brace-matched functions in src/minijz/**/*.hpp: 286 ->
+319 (+33: the unroll pair's 34 functions, the old opt_unroll
+replaced). <= 10 lines: 85 -> 93; 11-20: 88 -> 109; 21-40: 40 ->
+45; 41-70: 13 (unchanged); 71+: 60 -> 59 — the 470-line opt_unroll
+is gone. The biggest function in the tree is now opt_constprop
+(~450, fold.hpp), the next backlog target.
 
 ## Known limits
 
-* The 71+ bucket barely moved (69 -> 68): this checkpoint consumed
-  ONE function, by design — the backlog is a queue, not a batch.
-* The tree-wide function census uses a brace-matching heuristic
-  (scripts convention), not a compiler database; the per-file
-  numbers (66 functions in lcf_impl.hpp, driver 24 lines) are
-  exact.
-* No MSVC run (unchanged since checkpoint 16: no MSVC in the
-  sandbox; native parity ran on g++).
+* unr_single_exit (28) and unr_trip (26) sit slightly over the 25
+  line bar the lcf pair used — splitting them further would trade
+  clarity for the metric; stated plainly instead of churning.
+* The comment wave covers src/minijz's ir/, opt/, back/ + config.
+  front/, apps/, prog/, base/, runtime/ keep their existing
+  (checkpoint-era) comments; the same treatment for them is in
+  CONTINUE.md's new item 6.
+* The tree-wide census remains the brace-matching heuristic; the
+  per-file numbers (33 functions, driver 16 lines) are exact.
+* No MSVC run (unchanged since checkpoint 16).

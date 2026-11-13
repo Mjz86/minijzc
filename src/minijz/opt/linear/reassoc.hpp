@@ -1,6 +1,35 @@
 #pragma once
 // === reassoc.hpp ========================================
 // block-local linear-combination canonicalization (+,-,*c chains).
+//
+// ALGORITHM (opt_reassoc, three sweeps): (1) one pass over all
+// blocks builds the per-vreg tables uses/ndefs/defi/defb; (2) a
+// second pass fills kc/kv from single-def Const instrs; (3) a
+// per-block rebuild into nc/nbl: `scope` marks only the current
+// block, roots are single-def Add/Sub Bin instrs, lin_expand
+// collects both operands (+1 / +-1), and when lin_cost(L) strictly
+// beats the absorbed chain's cost the root is replaced by
+// lin_emit's chain while the absorbed instrs ride `dropped`;
+// fn.code/fn.blocks are replaced only when something changed.
+//
+// DATA STRUCTURES: the nv-sized scan tables (uses, ndefs, defi,
+// defb, kc, kv); the block-local `scope` mask; `dropped`, the
+// instr indices absorbed by earlier roots; nc/nbl, the rebuilt
+// code and blocks; os.reassocs / os.reassoc_gone count rewrites.
+//
+// THEORY: read as x - y = x + (-1)*y, a chain of +, - and *c is a
+// linear combination, and collecting it sorts terms by vreg, sums
+// like coefficients and folds constants -- the canonical
+// representative of the whole commutativity/associativity
+// equivalence class. Chains that differ only in operand order or
+// grouping re-emit as the SAME minimal sequence, the textual shape
+// the dominator-scoped tier-0 cse can lock onto (the driver notes
+// this canonicalization feeds LCF). Only single-use intermediates
+// are absorbed, so no value moves past another use, and a rewrite
+// commits only on a strict instruction-count reduction: progress
+// guaranteed, the rebuilt chain is already minimal, rerun = no-op.
+//
+// DOWNSTREAM: canonical, cheaper chains that LCF then re-expands.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

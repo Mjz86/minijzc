@@ -12,6 +12,19 @@
 // fold first, enabling their parents). The heavyweight sub-algorithms
 // were extracted at checkpoints 16/18 (lcf_sim.hpp, lcf_rt.hpp); the
 // phase matchers, gates and emitters live in lcf_impl.hpp.
+// ---- THE FAMILY --------------------------------------------------------
+// loop_shape.hpp: the shared vocabulary (LoopScan, inL, HPhi, the
+// canonical shape). lcf_impl.hpp: this pass's own scan + the
+// per-phase matchers (lcf_shape), the plan gates (lcf_plan) and the
+// emitters (lcf_emit_and_rewire). lcf_sim.hpp: lcf_sim_fold + the
+// budgets. lcf_rt.hpp: lcf_rt_fold + LcfEvo.
+// ---- THEORY -----------------------------------------------------------
+// Every rewrite is EXACT: the series algebra is computed mod 2^64
+// (wrapping is fine); the simulator runs the program's own trapping
+// arithmetic and aborts on trap; runtime versioning fires the closed
+// form only under a guard that proves exactness, else the original
+// loop stays. One loop per call, headers nest-first: the fixpoint
+// driver re-analyzes, so inner loops fold first, enabling parents.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

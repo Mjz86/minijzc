@@ -30,14 +30,17 @@ src/minijz/           the compiler as a header-only constexpr library
                         (value numbering: consts + phi congruence + bins),
                         unreach, splice, dce, ifconv, taildup (checkpoint
                         20: small 2-pred tails duplicated into their arms)
-  opt/loop/              licm, unroll, lcf (the slim driver) +
-                        lcf_impl (checkpoint 24: the scan tables, the
-                        per-phase shape matchers, the plan gates, the
-                        emitters + rewire tail), lcf_sim, lcf_rt,
-                        unswitch (+ unswitch_shape: the shared shape/
-                        matcher/clone layer, unswitch_bif: the body-if
-                        scan + commit), rotate (checkpoint 22: loop
-                        rotation proper)
+  opt/loop/              licm, unroll (the slim driver) + unroll_impl
+                        (checkpoint 25: the scan tables, the shape
+                        matchers, the trip simulator, the safety scan,
+                        the emitters + rewire tail), lcf (the slim
+                        driver) + lcf_impl (checkpoint 24: the scan
+                        tables, the per-phase shape matchers, the plan
+                        gates, the emitters + rewire tail), lcf_sim,
+                        lcf_rt, unswitch (+ unswitch_shape: the shared
+                        shape/matcher/clone layer, unswitch_bif: the
+                        body-if scan + commit), rotate (checkpoint 22:
+                        loop rotation proper)
   opt/linear/            linform, reassoc, divmagic
   opt/interprocedural/   callgraph (Tarjan + inliner), scctco, scctco_fold,
                         tailrec (tce_self/tce_merge), cdfold (the slim
@@ -1261,3 +1264,72 @@ Code-size and IR cleanup
 the delivered zip root, not in the README — the embedded checkpoint-09
 copy was stale: it described main @ 4a0bf9c, before the TU split was
 merged into branchA.)
+
+## 11. checkpoint 25: unroll decomposed + the algorithm/theory documentation wave — DONE
+
+The backlog's #1 named target, consumed: `opt/loop/unroll.hpp`'s
+opt_unroll — at 470 lines the biggest function left in the tree —
+got the full cdfold/lcf treatment (support layer + slim driver, one
+small constexpr function per phase, scan bounds and emission order
+preserved exactly). Pure refactor, zero behavior change. Plus the
+standing documentation request: every algorithm and data structure
+in the SSA and optimization machinery now carries a theory-level
+header comment.
+
+* **the split**: `unroll.hpp` 498 -> 62 lines; the driver is a
+  16-line opt_unroll (scan once, walk the headers nest-first, per
+  loop: shape -> trip+growth -> safety -> commit; one unroll per
+  call). The new `unroll_impl.hpp` (782 lines) holds UnrScan/
+  UnrLoop/UnrMaps, the scan (unr_defs: LAST def and LAST Const win,
+  like lcf's; unr_header_list), the shape matchers (unr_loop_edges
+  with the LAST-is-the-latch rule, unr_header_term, unr_single_exit,
+  unr_arms with the break-style polarity, unr_gather_hphis,
+  unr_find_ind -> unr_try_ind -> unr_step_match +
+  unr_test_uses_ind), the plan (unr_trip: the wrapping-arithmetic
+  simulation, ivk pushed BEFORE the exit check so ivk[K] is the
+  value left in i; unr_growth_ok's 400 cap), the safety scan
+  (unr_outside_uses_ok with the X-block phi relaxation), the commit
+  (unr_zero_trip, unr_build_maps with the k-major allocation order,
+  unr_fill_entry, unr_mapv, unr_emit_header_copy / body_copies ->
+  emit_body_block -> unr_emit_term/unr_edge, and the rewire tail
+  unr_rewire_preheader / unr_rekey_exit_phis / unr_rewrite_uses).
+  33 small functions, the largest 28 lines; the byte-identical
+  contract (the landmines) is documented at unroll_impl.hpp's head:
+  PASS-ENTRY bounds, the succ0-without-NONE-guard asymmetry at
+  unr_copy_succs (the original's, kept not "fixed"), os.unrolls++
+  before the K==0 shortcut, K > limit kept as belt and braces,
+  loop_shape.hpp's look-alikes not reused (the lcf precedent).
+* **the documentation wave**: 55 files, ~1,570 inserted comment
+  lines, zero code churn. By hand (the SSA/optimization core, 16
+  files): an.hpp (dominators/intervals/natural loops/frontiers +
+  Cytron phi placement + renaming-stack theory), ir/instr.hpp (the
+  representation theory: flat code vector, two-tier naming,
+  pred-keyd phis, the nt marker), ir/builder (the pre-SSA emission
+  model), ir/phi_norm, ir/destruct (parallel-copy / lost-copy /
+  critical-edge theory), opt/mem2reg (the slot machinery's data
+  structures), back/interp_ssa (edge-parallel phi staging + the
+  runner-parity chain), sccp (lattice/Tarski/sparse-delta theory),
+  gvn (the scoped-table mechanism), licm (the purity/zero-trip
+  soundness argument), opt/driver (phase ordering: why a fixpoint,
+  the tier-2 order unswitch -> unroll -> lcf -> rotate LAST),
+  divmagic (Granlund-Montgomery magic numbers), callgraph (SCC
+  scheduling + the splice), regalloc (liveness -> interference ->
+  chordal coloring mechanics), config.hpp (the wrapping/trap
+  semantic contract), fold (local vs conditional folding). Via six
+  parallel documentation passes (40 files): scalar tier-2 (cse,
+  copyprop, dce, canon, splice, ldelim, unreach), the loop tier-2
+  family (lsimp, unswitch x3, lcf x4, loop_shape), the
+  interprocedural tier-2 (icf, argpromo, deadargs, constcall,
+  callcse, fnspec + tailrec/scctco/scctco_fold/cdfold), linear +
+  analysis (linform, reassoc, alias, intervals, trapelim), and the
+  back end (vm, vm_step, stack_alloc, bytecode, emit_plan, emit_c
+  x2, emit_x64 x2). rotate.hpp already carried the tree's best
+  theory header (the rotation diagram + the k+1 argument) and was
+  left as-is.
+* **the verification**: 93 CLI parity runs (stdin-aware, three flag
+  variants) + the debugger tours, all diffed byte-identical against
+  the pre-refactor binary; the register-audit table regenerated
+  byte-identically; differential fuzz old-vs-new on 16131-16280 and
+  14231-14430 — identical modulo timing lines, zero mismatches;
+  selftest 207/207, ctest 44/44, units 6328/6328, check-format
+  clean, header order 99/99 + umbrella, includes 419/419.

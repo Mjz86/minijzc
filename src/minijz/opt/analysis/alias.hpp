@@ -1,6 +1,36 @@
 #pragma once
 // === alias.hpp ========================================
 // handle aliasing: which vreg provably names exactly one allocation.
+//
+// ALGORITHM: alias_analyze seeds single[Alloc.dst] with a fresh id
+// (nallocs++), then runs a fixpoint loop (guard < 64) propagating
+// Copy (single[dst] = single[a]) and Phi (single iff both args are
+// in range, non-obscure and the SAME id; a NONE arg is obscure).
+// prog_handle_gates then scans every fn before optimization: any
+// Load/Store through an obscure handle clears lift_ok; any Len on
+// an obscure handle, or any observable use of a handle VALUE (Bin,
+// Cbr, Print, Ret, Alloc size, Load/Store index or stored value,
+// Call args), clears stkarr_ok.
+//
+// DATA STRUCTURES: AliasInfo::single (vreg -> alloc id, NONE =
+// obscure) and nallocs; lift_ok / stkarr_ok are the output gates.
+//
+// THEORY: the arena is one flat int64 array and a handle is the
+// index of an allocation's first slot, so aliasing is an identity
+// question. single[v] = id PROVES v names exactly that one site
+// (the Alloc itself, its copies, phis whose live args all carry
+// it); everything else stays "obscure" -- constants, arithmetic
+// results, loads, params, input(), call results, mixed phis: a
+// value that may name ANY array, or none. One def per vreg makes
+// single[v] a pure function of its def; transitions are monotone
+// NONE -> id, so the fixpoint terminates; and the optimizer only
+// removes or duplicates instructions (copies propagate
+// single-ness), so gates computed before it hold for the run.
+//
+// DOWNSTREAM: lift_ok gates mem2reg's array promotion (an obscure
+// Load/Store could read a promoted array's stale arena contents);
+// stkarr_ok lets the C backend demote arrays to stack slots, and
+// trapelim reruns alias_analyze for its Load/Store bounds proofs.
 
 #include "../../ir/instr.hpp"
 

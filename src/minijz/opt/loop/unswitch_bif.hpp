@@ -46,6 +46,36 @@
 // closure, so every VM on every path carries every value it must. The
 // walk itself is validated (cycle-guarded, sources checked) BEFORE
 // the commit's first edit: a bail leaves the fn untouched.
+// ---- ALGORITHM --------------------------------------------------------
+// unswitch_body_if, in phases: dedicated `br h' preheader; growth
+// cap 1..120; exit_inventory with primary NONE (the header's exit
+// arm is a REGULAR exit -- both versions keep running); loopdef;
+// arm_edge (pure arms: outside single-pred blocks, pred in-loop);
+// rr (reverse reachability to the exit targets). The scan builds
+// vm_vals[t] + the reads list; `routes' validates every read
+// BEFORE the commit's first edit -- a bail leaves the fn
+// untouched. Commit: the clone via alloc_clone + emit_loop_clone
+// (pre, NONE); the version rewrites bif: br A / bif': br B'; one
+// VM per exit edge (phi(v @ src, C.fresh[v] @ C.bmap[src]));
+// retarget the exit arms; pre becomes the guard cbr(bs.cond) h /
+// C.bmap[h]; the delivered walk emits merge phis; rewire; preds.
+// ---- DATA STRUCTURES --------------------------------------------------
+// bs (BifShape bif/A/B/cond), exits (ExitEdge), loopdef, arm_edge,
+// vm_vals + reads, vis, the CloneMap C (bmap/fresh), edge_vm +
+// vm_phi, edge_idx/vm_val, dcache + memo.
+// ---- THEORY: the body-if scan + commit discipline ----------------------
+// INV is an SSA value (cond_invariant): it cannot change mid-loop,
+// so the original picked the SAME arm every iteration -- the true
+// version (bif: br A) is exactly the original with B dead, and the
+// clone (bif': br B') is the INV-false version; both keep running
+// the loop, so nothing is skipped. Every exit edge gets a VM
+// holding the <=2-preds invariant the 2-arg phi needs. The
+// delivered walk restores SSA: the header phi used to dominate the
+// whole post-loop region; versioning breaks that dominance, so
+// phis are born at the merges, carrying every value every VM must.
+// ---- WHAT IT ENABLES --------------------------------------------------
+// The dead arms (B, A') degenerate under unreach + copyprop in the
+// same tier round, like the abandoned checkpoint-17/18 bodies.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../../ir/phi_norm.hpp"

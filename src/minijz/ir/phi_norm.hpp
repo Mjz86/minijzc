@@ -5,6 +5,17 @@
 // first non-phi. Passes that convert phis to Copy/Const in place break
 // that ordering — this restores it by stably moving the remaining phis
 // to the front. (Moved out of lcf.hpp when more passes needed it.)
+//
+// THEORY (why the invariant is load-bearing): every consumer in the
+// tree identifies a block's phi run with the same two-line idiom
+// (`if (I.k != K::Phi) break` / `skip while Phi`) -- SSA placement
+// (an.hpp 8c), the loop passes' header-phi gathers, destruct's
+// parallel-copy lowering, and the backends' phi-skipping emitters.
+// A phi sitting mid-block would be silently INVISIBLE to all of
+// them. The restore is STABLE (phis keep their relative order,
+// non-phis likewise): order among phis carries no semantics, but
+// stability keeps consecutive pipeline rounds from churning the
+// code vector -- and keeps round-to-round IR diffs byte-stable.
 
 #include "instr.hpp"
 

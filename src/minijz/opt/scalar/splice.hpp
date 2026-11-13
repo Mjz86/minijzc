@@ -1,6 +1,35 @@
 #pragma once
 // === splice.hpp ========================================
 // block splicing (single-pred/single-succ shortcutting).
+//
+// ALGORITHM: opt_splice pairs, then rebuilds. Pairing (one sweep over
+//   blocks): b is skipped if already in a pair this sweep (matchings
+//   only: no chains); s = fn.succ0(b) must be b's only successor, not
+//   b itself, not the entry 0, not already paired; it must have
+//   fn.preds[s] == {b} exactly and hold no Phi. Then s is absorbed
+//   (absorbed[s] = b, merges[b] = s, os.splices++) and phis in s's
+//   successors rekey pred ids s -> b (I.t/I.f, fn.preds[t]). Rebuild:
+//   absorbed blocks get empty ranges + NONE succs; an absorber emits
+//   its instrs minus the trailing Br, follows merges to the chain end
+//   whose terminator and succs (from the old_blocks/old_succ
+//   snapshots) become b's; fn.recompute_preds() closes.
+// DATA STRUCTURES:
+//   * absorbed (block -> absorber) + merges (absorber -> absorbed):
+//     the pair bookkeeping, one entry per splice.
+//   * old_blocks/old_succ: snapshots of ranges and succs -- the rebuild
+//     overwrites fn.blocks/fn.succ while chain ends still need the
+//     absorbed blocks' ORIGINAL successors.
+//   * nc: the rebuilt instr vector, ranges updated per block.
+// THEORY: the guard makes the merge a control-flow no-op: b ends in
+//   `br s` and s is entered only from b, so s's instrs already run
+//   right after b's on every path -- appending them to b and dropping
+//   the Br runs the same instrs in the same order. s == b (self-loop)
+//   and s == 0 (entry) are kept; s must be phi-free, and its
+//   successors' phis are rekeyed s -> b so every phi arg stays
+//   pred-identified for the pred-based passes that follow.
+// ENABLES: this collapses the jump chains that branch folding leaves
+//   behind; merged pairs become longer straight-line blocks so later
+//   scans see straight-line runs, with preds recomputed to match.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

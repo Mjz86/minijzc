@@ -2,6 +2,38 @@
 // === callgraph.hpp ========================================
 // call graph + SCC (mjz_lib Tarjan) + the inliner (9e2) + the
 // interprocedural driver hook (9e).
+//
+// THEORY (SCCs as the scheduling order, and the splice itself):
+//   * THE CALL GRAPH. adj: caller -> callees (with duplicates:
+//   each call site is an edge). Tarjan's SCC algorithm (mjz_lib)
+//   partitions it into strongly connected components; a
+//   single-member SCC with a self-edge is the recursive one
+//   (G.recursive). Everything downstream -- scctco, tailrec,
+//   deadargs, the inliner -- consumes scc_of/members, never the
+//   raw edges.
+//   * EMISSION-ORDER PROCESSING: SCCs are walked in emission
+//   order, which processes callees before callers -- so when a
+//   caller inlines a body, that body is already fully optimized,
+//   and the inlined copies land in their final shape. The
+//   re-optimization after each inlined round then folds constant
+//   arguments THROUGH the inlined body (9e's rounds).
+//   * THE SPLICE (opt_inline_one): the callee's blocks are
+//   renumbered into the caller; the caller's block splits at the
+//   call site -- the call instr's position becomes an unconditional
+//   edge into the callee's entry, and the callee's Ret edges
+//   become branches to the resume block, where the result vreg is
+//   the call's dst. Fresh vregs for every copied value keep SSA
+//   (the unroll naming trick again). K::Depth inside the copy
+//   would read the CALLER's depth, so it is adjusted: dadj =
+//   dm + 1 is materialized at the inline point (the 512-frame
+//   budget must stay exact). Main is never inlined (it would
+//   duplicate unbounded work and has nowhere to return to).
+//   * ORDER IN 9e: scctco (9e1b) runs BEFORE the inliner rounds --
+//   collapsing inner-SCC tail calls de-recursiveves the members,
+//   so the inliner can then inline them; tiny constant-index
+//   readers are cloned BEFORE that (fnspec) so the always-inline
+//   rule cannot bury them (the ordering note at the 9e body).
+//   Dead functions (unreachable from main) are swept at the end.
 
 #include "../../graph_lib.hpp"
 #include "../../base/pass_cfg.hpp"

@@ -2,6 +2,36 @@
 // === deadargs.hpp ========================================
 // interprocedural dead-argument elimination (DAE).
 
+// ALGORITHM (opt_deadargs): (1) analysis -- per fn g, alive[g][p]
+//   collects hard uses (any operand a/b2/c2, Bkpt args, and
+//   version_base entries below nparams: that base var survives as a
+//   local), softs[g][p] records Soft{h, q} forwarding edges (param p
+//   passed as argument q of a call to h); eligibility drops main,
+//   empty-param fns, tce_sel products, post-destruction shapes, param
+//   redefinitions, and arity-mismatched callees. (2) least fixpoint:
+//   alive(g, p) propagates through softs whenever the target argument
+//   is alive (or its fn ineligible). (3) dead[g][p] = eligible &&
+//   !alive. (4) rewrite 1 drops dead POSITIONS from I.args at every
+//   call site (caller vreg ids untouched); rewrite 2 compacts each
+//   DAE'd callee through the order-preserving permutation pi/mp --
+//   dst, a, b2, c2, args, var_names, version_base base ids,
+//   stk_arrays -- with Phi's stale `c` tag left as-is (unread after
+//   ssa_construct).
+// DATA STRUCTURES: the eligible/alive/softs/dead [g][p] tables, the
+//   Soft{h, q} forwarding edges, and pi, the compaction map over the
+//   callee's vreg space [0, nv).
+// THEORY: alive only grows, so the iteration computes the LEAST
+//   fixpoint -- exactly the observable parameters; a dead param is
+//   read by no instruction, forwarded to no live parameter, and shown
+//   by no Bkpt. Dropping an argument slot and dropping the parameter
+//   are the two ends of one calling-convention edge, both rewritten
+//   from the same dead table in this pass; pi is injective and
+//   order-preserving on the survivors, so every remaining reference
+//   stays consistent (base ids and SSA ids move together).
+// DOWNSTREAM: driven after eliminate_dead_fns (the surviving call
+//   sites are the final ones) and before the last per-fn round, whose
+//   DCE reaps caller argument expressions that just went dead
+//   (ostats[g].deadargs counts the removed params).
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 

@@ -26,6 +26,22 @@
 //   defs that define a PARAMETER vreg (fnspec's clones materialize those)
 //   are never touched -- params are defined "virtually".
 //
+// MECHANISM (the scoped table, and the numbering itself):
+//   * SCOPING. The walk is an explicit stack Fr{b, ci, mark} over the
+//     dominator tree in PREORDER. Entering a child pushes mark =
+//     table.size(); LEAVING it truncates the table back to mark --
+//     so an entry is in scope exactly at the blocks its defining
+//     vreg dominates (the same watermark discipline as cse/ldelim
+//     and the renaming stacks of ssa_construct).
+//   * NUMBERING. Two pure computations are the same value iff their
+//     operands are the same values and the operation is the same
+//     (congruence closure). resolve() chases ren chains so operands
+//     key by their canonical representative; constant operands key
+//     by VALUE (not by temp vreg), and commutative ops get one
+//     canonical operand order (the lt() sort) so i*7 == 7*i.
+//     This is dominator-based GVN, NOT GVN-PRE: it unifies values
+//     a dominator relationship already covers; it never hoists.
+//
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"

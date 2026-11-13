@@ -8,6 +8,36 @@
 // short-circuit matcher (checkpoint 18, moved verbatim), and the
 // checkpoint-19 body-if matcher (the classic LLVM "trivial" unswitch
 // of an invariant INNER branch).
+// ---- ALGORITHM --------------------------------------------------------
+// cond_invariant: def outside the loop (not inL), not a Const
+// (fold/sccp territory), defined in pre or dominating it.
+// exit_inventory: every in-loop -> outside edge, minus the
+// caller's primary->X edge; bails on a degenerate cbr or an
+// edge targeting pre/h. compound_shape_of: h's Cbr with BOTH
+// arms in-loop; h and the elbow E pure; TT/FF single-feeders
+// of the merge mm; the phi materializes the boolean (kv 1/0);
+// the body entered ONLY through mm. body_if_shape_of: an inner
+// Cbr (not h/latch), both arms in-loop, each arm single-pred
+// from bif, cond_invariant. alloc_clone: bmap + fresh BEFORE
+// any other new block; emit_loop_clone: append-only; phis remap
+// latch args and rekey entry edges to entry_pred; the cloned
+// header's test becomes br to `bypass' (NONE: the while-test
+// stays live in the clone).
+// ---- DATA STRUCTURES --------------------------------------------------
+// CompShape (pre/latch/E/TT/FF/mm/body/X/c1/c2/is_and), BifShape
+// (bif/A/B/cond), ExitEdge {from, to}, CloneMap {bmap, fresh}.
+// ---- THEORY -----------------------------------------------------------
+// One shared layer because all three paths version the loop with
+// the SAME full fresh-vreg clone: bmap/fresh are allocated before
+// any other new block so later ids (guards, version-merges) stay
+// stable, and the emission is append-only. The invariant gate is
+// the soundness core of every path -- an SSA value cannot change
+// mid-loop, so each version is exact; the not-a-constant rule
+// keeps constants in fold/sccp territory; the dominance clause
+// ensures the guard can read the condition at the preheader's end.
+// ---- WHAT IT ENABLES --------------------------------------------------
+// Consumed by unswitch.hpp (all three matchers + the clone) and
+// unswitch_bif.hpp (exit_inventory, clone, cond_invariant).
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../../ir/phi_norm.hpp"

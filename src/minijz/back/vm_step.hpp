@@ -6,6 +6,36 @@
 // IR — standalone-compilable on its own; vm.hpp includes this after the
 // same layer, so the parent-child order preserves the historical
 // definition order exactly (all includers unchanged).
+//
+// ALGORITHM:
+//   * vm_init(S, c, step_limit, ins): validate the header, push main's
+//     zeroed frame of fn_slots(0) slots, set pc = fn_off(0).
+//   * vm_step_op(S): fetch and run ONE opcode -- Push/Load/ArrLen/In/
+//     Depth push; Store pops into frames.back()[slot]; the 18 binops
+//     pop y, x and push the w_* wrap/trap result; Jmp/Jz rewrite pc;
+//     Call pops na args, pushes a callee frame with them in slots
+//     0..na-1 and saves the return pc on rets (cap
+//     MJZ_MAX_CALL_DEPTH = 512 callee activations); Ret pops a frame
+//     and re-pushes the value for the caller's Store; Bkpt counts one
+//     step, then skips its operand bytes.
+//   * vm_run: the historical one-shot API -- vm_init plus a while loop
+//     over vm_step_op, returning S.R.
+//
+// DATA STRUCTURES: VmCtx{c, pc, frames (slot vector per activation),
+// rets, fr_fn (debugger), st (operand stack), R (output + arena +
+// input tape), steps/step_limit, started/halted/trapped/timeout};
+// fn_at/fn_off/fn_slots/nfns re-read the directory; "steps" count
+// IR-equivalent ops (Store/Jmp/Jz/Print/Call/Ret/ArrSt/Halt/Bkpt),
+// so one limit means the same as in the SSA interpreter.
+//
+// THEORY: the machine must be steppable because the debugger must
+// observe state BETWEEN ops: stops at Bkpt slots and line breakpoints
+// (the per-byte srcs map), and value-change watchpoints re-resolve
+// the watched names after EVERY step -- vm_step_op exposes pc/frames/
+// st/arena for that stop/inspect/resume cycle (vm_run cannot).
+//
+// CONSUMERS: dbg_sess.hpp (run_bounded + watch_step) and dbg_support
+// drive VmCtx directly; cli_run.hpp and the tours use vm_run.
 
 #include "bc_defs.hpp"
 

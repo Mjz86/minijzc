@@ -7,6 +7,36 @@
 //   h --exit--> X          (the header Cbr's exit arm leaves the loop)
 // Extracted from the (previously triplicated) inline scans of unroll
 // and lcf; the new passes (unswitch, lsimp) build on it too.
+// ---- ALGORITHM / DATA STRUCTURES --------------------------------------
+// loop_scan: one pass over the fn -- defi/defb per vreg; kc/kv when
+// the def is a Const (marked from the LAST def: no ndefs table);
+// headers = A.inner[h]==h, sorted nest-descending so the innermost
+// loops come first. in_loop_flags: inL over all blocks from
+// A.loops.range()[h] plus the header. header_phis: h's phis keyed
+// to (pre, latch) as HPhi {dst, pre_arg, latch_arg}; ok iff EVERY
+// phi carries both keys (h has exactly the two preds). loop_shape_
+// of: unique outside pred (pre), unique latch, a Cbr terminator
+// with one arm staying (body) and one leaving (X) -> LoopShape
+// {pre, latch, X, body, ok}.
+// ---- THEORY: why one shared canonical shape ---------------------------
+// The shape -- one entry, one back edge, one header exit arm -- is
+// the contract every restructuring pass needs: it keys the phis by
+// (pre, latch), names the zero-iteration edge (h -> X), and gives
+// the versioning paths their entry-rekey target. It replaced the
+// triplicated inline scans of unroll and lcf. It is deliberately
+// minimal: the only-exit-edge property (no breaks) is NOT required
+// here -- callers that need it (unroll, lcf) check it themselves;
+// unswitch allows internal exit edges. lcf keeps its own scans on
+// purpose: LoopScan marks constants from the LAST def (lcf requires
+// a single def), and loop_shape_of demands exactly ONE internal
+// pred while lcf tolerates several back-edges (the last is the
+// latch) -- see the NOTE in lcf_impl.hpp; unroll_impl keeps a
+// local twin.
+// ---- WHAT IT ENABLES (the consumers) ----------------------------------
+// unswitch.hpp and rotate.hpp call loop_scan / in_loop_flags /
+// loop_shape_of / header_phis directly; unswitch_shape.hpp and
+// unswitch_bif.hpp build on them; lcf_impl.hpp and unroll_impl.hpp
+// include it for HPhi; lcf_sim/lcf_rt/lsimp take the vocabulary.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

@@ -1,6 +1,33 @@
 #pragma once
 // === fold.hpp ========================================
 // constant folding/propagation, branch folding, algebraic identities.
+//
+// THEORY (local folding, and what it is NOT):
+//   This is the LOCAL tier-0 fold: it propagates values a single
+//   def-site analysis can see -- every Const def makes its users
+//   foldable, with NO control-flow reasoning (that is SCCP's job:
+//   the conditional/loop-carried constants). Per round it
+//   re-collects known/kval (SSA: one def per vreg, so a Const
+//   def binds its value unambiguously) and iterates to a 12-round
+//   fixpoint:
+//     * Copy of a known const -> Const.
+//     * Bin on known consts -> the wrapped value (Const), with
+//       the trap discipline of config.hpp (a would-be trap keeps
+//       the op: traps are observable).
+//     * ALGEBRAIC IDENTITIES -> Copy-of-operand (os.copies) or
+//       Const (os.folds): annihilator/identity operand patterns,
+//       the two-def identities via the def-index map (0-(0-x)),
+//       and the COMPARE-DOMAIN FACTS: a compare result is exactly
+//       0/1, which decides (cmp)&1, (cmp)%2 (no trap), (cmp)>>k,
+//       (cmp)^1 = NOT cmp -- cmp_def/inv_cmp below.
+//     * K::Depth in main -> Const 1 (main's frame count).
+//     * BRANCH FOLDING: Cbr with a known cond -> Br toward the
+//       taken arm (os.brs_folded); identical arms -> Br
+//       (os.cbr_same); the dead arm becomes unreachable code for
+//       the unreach pass.
+//   Everything here is semantics-preserving by the one-def-per-
+//   vreg SSA property: a rewrite of the def rewrites the value
+//   every dominated use sees.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

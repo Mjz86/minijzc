@@ -1,6 +1,38 @@
 #pragma once
 // === sccp.hpp ========================================
 // sparse conditional constant propagation (SCCP).
+//
+// THEORY (the lattice, the fixpoint, and why it is SPARSE):
+//   * LATTICE per vreg: TOP ("not yet known") -> CONST ("provably
+//     this exact value on EVERY executable path") -> OVERDEF
+//     ("could be anything"). Descent is monotone (TOP->CN->OD
+//     only); over a finite-height lattice, iterating monotone
+//     transfer functions reaches a unique least fixpoint
+//     (Tarski) -- the best sound approximation of "constant on
+//     every executable path". The 9a0 banner below lists what
+//     that proves beyond the local fold.
+//   * SPARSE propagation. Instead of dense per-block dataflow,
+//     two worklists carry DELTAS only: ssa_wl holds vregs whose
+//     lattice just lowered (their USES -- the use lists built in
+//     the one scan up top -- are revisited), edge_wl holds
+//     out-edges that became executable (their target blocks are
+//     re-visited). Each instruction is re-evaluated only when an
+//     input actually changed: O(edges + use sites) propagations.
+//   * CONDITIONAL = executable edges. bexec/eexec track which
+//     blocks/edges can execute at all; a Cbr whose cond is CONST
+//     makes ONLY its taken out-edge executable, and a Phi merges
+//     its args over EXECUTABLE in-edges only (arg_edge_exec also
+//     handles the duplicated-pred case: either edge may carry
+//     the arg). Code in never-executable blocks stays TOP and is
+//     never claimed -- the dead arm is pruned as a Br here and
+//     its block is left to the unreach pass.
+//   * SOUNDNESS DETAILS. Trapping Div/Mod go OVERDEF (a runtime
+//     trap is observable); params/Load/Input/Call/Len/Alloc are
+//     OVERDEF by definition; K::Depth in main is CONST 1. The
+//     step guard refuses to rewrite on suspected non-termination
+//     (no rewrite, not a wrong rewrite). The rewrite phase
+//     (CONST defs -> Const instrs, pruned Cbrs -> Br) touches
+//     only executable blocks.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

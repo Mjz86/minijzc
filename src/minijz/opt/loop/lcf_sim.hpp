@@ -11,6 +11,36 @@
 // at all, just constants and purity. Extracted from lcf.hpp
 // (checkpoint 18's code-quality split); the counter is
 // OptStats::lcf_gensims.
+// ---- ALGORITHM --------------------------------------------------------
+// lcf_sim_fold(In), all gates before any edit: (1) every hphi's
+// pre_arg is a known constant (kc); (2) purity -- header = phis +
+// Const/Copy/Bin + Cbr, other in-loop blocks + Br only; (3) outside
+// uses reference ONLY header phi dsts; (4) pre does not already
+// reach X (the rekey would dup preds); (5) the body chain from
+// In.body to h via succ0 is straight-line; (6) every outside-defined
+// operand used inside is a constant. Then the loop: per iteration,
+// bounded by LCF_TRIP_BUDGET (2^21 trips), eval the header's
+// non-phi instrs, test the header condition with In's polarity
+// (exit_on_true: break-style headers exit on TRUE), eval the chain,
+// count steps against LCF_SIM_BUDGET (40M), then swap the phis from
+// the nxt snapshot. done && !trap -> commit: the finalv consts
+// splice into the preheader; pre's br retargets h -> X (the loop
+// dies); outside uses rewire to finalv; X's phis rekey h -> pre;
+// ---- DATA STRUCTURES --------------------------------------------------
+// LcfSimIn (h/pre/latch/X/body/hterm/exit_on_true + the shared
+// tables), val/nxt, eval, chain, finalv, batch, and the budgets.
+// ---- THEORY: exact N-iteration simulation -----------------------------
+// Every loop input is a known constant and the body is straight-
+// line pure math, so the whole execution is determined; the
+// simulator evaluates it with w_bin, the program's own wrapping /
+// trapping arithmetic, so the result is bit-exact by construction.
+// A trap (w_bin sets r.trap) or a budget overflow aborts and the
+// loop stays, untouched. The nxt snapshot gives one iteration the
+// loop-carried semantics: every hphi's new value is the OLD
+// latch_arg of the same iteration, exactly as the phi node defines.
+// ---- WHAT IT ENABLES --------------------------------------------------
+// Folds loops with no counted induction at all (the GCD demo folds
+// to the constant 21); the counter is os.lcf_gensims.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

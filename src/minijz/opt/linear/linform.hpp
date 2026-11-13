@@ -1,6 +1,36 @@
 #pragma once
 // === linform.hpp ========================================
 // linear forms: shared by reassociation & loop closed forms.
+//
+// ALGORITHM: lin_term/lin_const keep the form sum(coeff_i * v_i) + K
+// (same-vreg terms merge, a zero coefficient deletes one, constants
+// fold into LinForm::c); lin_expand absorbs a def chain recursively
+// -- constants (kc/kv), Add, Sub (negated k), Mul-by-constant and
+// Copy -- leaving everything else a leaf term; lin_cost prices the
+// minimal sequence and lin_emit materializes it, landing dst by
+// rewriting the last instruction IT emitted, never an earlier def.
+//
+// DATA STRUCTURES: LinForm::t is the (vreg, coeff) list, sorted by
+// vreg id -- the canonical order that lets equal chains compare
+// equal; the scan tables defi/defb/kc/kv/uses/ndefs/scope are
+// caller-owned; `absorbed` records folded instrs; use_idx enforces
+// def-before-use in a block-local scope.
+//
+// THEORY: two's-complement +,-,* are exact mod 2^64 and never trap,
+// so collecting a chain and re-emitting it is value-preserving. In
+// analysis mode the same expansion reads the affine loop recurrence
+// x -> a*x + b*i + g: a is the coefficient on the feedback value, b
+// the one on the induction variable, g = L.c -- exactly what
+// absorbing the (always multi-use) induction update produces, and
+// what lcf's series algebra (a^n, S(n), T(n)) and runtime Tv
+// consume. One engine serves both modes; only the use gate differs:
+// reassociation RE-emits what it expands, so a def with other users
+// must stay put (uses[v] == 1); the lcf scan only READS the form
+// (the loop is deleted on commit) and a def's value is independent
+// of its user count, so `analysis` admits multi-use defs.
+//
+// DOWNSTREAM: the callers are opt_reassoc (rewrite mode) and lcf
+// (analysis mode, the recurrence scan).
 
 #include "../../ir/instr.hpp"
 

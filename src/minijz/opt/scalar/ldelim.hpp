@@ -2,6 +2,36 @@
 // === ldelim.hpp ========================================
 // load elimination: store->load forwarding + redundant-load CSE for
 // provably-single allocations.
+//
+// ALGORITHM: opt_ldelim walks the dominator tree (A.dom_tree.range())
+//   in preorder. Entering a block with >1 preds clears the table (the
+//   join drop); then per instr: a Store through a single-allocation
+//   handle runs kill_for_store, then push_ents slot = the stored
+//   vreg; an obscure-handle Store clears the table. A single-handle
+//   Load find_exacts; a hit rewrites it to K::Copy of the remembered
+//   value (its nt guard dropped), then the slot is re-recorded as
+//   holding THIS dst. A Call with args clears everything; leaving
+//   a block erases the entries created inside its subtree.
+// DATA STRUCTURES:
+//   * AI.single[h] (alias_analyze): the ONE allocation h provably
+//     touches -- only such handles take part.
+//   * kc/kv: const temps; a const index keys by VALUE, not by vreg.
+//   * table of Ent {alloc,ckey,v,c,val,from_store,seq}: the scoped
+//     memory table; from_store only splits ld_fwds vs ld_cses.
+//   * seq_ctr + Fr {b,ci,w}: the preorder stack; w = the seq watermark.
+// THEORY: a Load reads what the last dominating Store (or Load) of the
+//   SAME slot wrote (or read): the dominating store ran on every path
+//   reaching the load -- and if it was out of bounds it trapped first,
+//   so dropping the load's own guard loses nothing. Joins drop the
+//   whole table (the other pred's state may differ: forwarding past
+//   the join would miscompile `if (c) a[0]=1; ... print a[0]`), and
+//   scope exit goes by seq watermark, not vector position -- a deep
+//   join drop empties slots ancestor frames still reference, so
+//   entries die by "created inside this subtree" (seq > w), never by
+//   resize(mark).
+// ENABLES: every forwarded load becomes a plain K::Copy -- copyprop's
+//   food, and no longer a trapping Load root for dce's mark-sweep; the
+//   remaining loads are the ones no dominating def could explain.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

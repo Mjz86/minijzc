@@ -2,6 +2,36 @@
 // === tailrec.hpp ========================================
 // tailrec: tce_self (multi-site self tail-recursion -> one loop) and
 // tce_merge (mutual-recursion rings -> sel-dispatched function).
+//
+// ALGORITHM: opt_tailrec builds the call graph and walks its SCCs
+// (main is never a member; an intra-SCC edge is required). Every
+// site passes is_tail_call: the Call's dst is used exactly once,
+// by the block's terminating Ret, after the call. One member runs
+// tce_self (self tail-rec -> one loop); 2..MJZ_TCE_MAX_MEMBERS
+// members, all internal edges tail, run tce_merge (mixed bails).
+//
+// DATA STRUCTURES: tce_self -- Site{b,ci,args}, pHv (header phis,
+// one per param), bHv (budget phi), siteBL/siteEQ (bH-1 / bH==0),
+// Mb/Mp/Mbv (the 2-pred latch chain), T (trap). tce_merge --
+// TceSite{m,b,ci,callee,args}, vmap, bmap_base, Fn::tce_sel (the
+// sel-in-[0,k) invariant at the rewritten external callers).
+//
+// THEORY: a tail call needs no accumulator -- its dst flows straight
+// to the caller's return slot, so [Call;Ret] is exactly [args;
+// jump]. The callee being the function itself, the jump targets the
+// entry block, now the loop header: each param becomes a phi (pHv)
+// fed by the original args on the entry edge and the site args on
+// the latch -- recursion becomes a loop in place. The 512-frame cap
+// is reproduced bit-for-bit: the preheader sets budget = CAP + 1 -
+// Depth(), each site traps at bH==0 (the t = 1/0 idiom) else jumps
+// carrying bH-1, exactly where the original chain would have. A
+// pure-tail SCC is already a goto graph -- every internal edge is
+// `return sibling(args)` -- so tce_merge folds it into ONE leaf
+// Fm(sel, a0..a{M-1}): the header dispatches on sel, each sibling
+// call becomes [sel'=callee; args; budget check; jump], Ret stays.
+//
+// DOWNSTREAM: the calls gone, unroll and cdfold see the recursion
+// as the loop it always was; cdfold rewrites it into closed forms.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

@@ -1,6 +1,37 @@
 #pragma once
 // === builder.hpp ========================================
 // AST -> IR builder (loops with break/continue merge chains).
+//
+// THEORY (the pre-SSA emission model, and why it is shaped so):
+//   * NO PHIS ARE EVER EMITTED HERE. The builder emits PRE-SSA
+//     code: each source variable is ONE vreg with possibly many
+//     defs; phi placement is entirely ssa_construct's job (the
+//     Cytron IDF placement in an.hpp). The one place a "merge"
+//     shows up is short-circuiting: `a && b` lowers to the
+//     diamond  cbr(a, rb, ff); rb: cbr(b, tt, ff); tt: res=1;
+//     ff: res=0; both -> mm  -- res is a temp with TWO Const defs
+//     on converging paths, which is exactly the multi-def shape
+//     IDF placement turns into a phi at mm. Same for `a || b`
+//     with the arms swapped.
+//   * EVALUATION ORDER IS THE ORACLE'S. runtime/astrun.hpp (the
+//     AST interpreter) is the reference semantics; the builder
+//     mirrors it exactly: call args left to right, StoreA's
+//     indices left to right with the VALUE last, `let x = e` sees
+//     the NEW binding in e (C-style), unmapped reads are
+//     zero-initialized (Const 0, like the oracle's env).
+//   * LOOPS. while: preheader -> h; h evaluates the test; body;
+//     back edge to h. `continue` jumps to h (re-test), `break`
+//     jumps to `after`. Several continues = several back edges --
+//     which is why pred_norm later rebuilds >2-pred merges and
+//     why the loop passes take "several back edges, the LAST is
+//     the latch" (loop_stack discipline below).
+//   * BLOCK LIFECYCLE. new_block() reserves succ slots; a block's
+//     [begin,end) range is fixed by finish() when its terminator
+//     closes it; close_* also record the CFG edges in succ, and
+//     recompute_preds + normalize_multi_preds run once at the end
+//     (break/continue can create 3+ pred blocks; the merge-chain
+//     rewrite in pred_norm.hpp binary-izes them for the 2-arg
+//     phis of SSA).
 
 #include "../front/ast.hpp"
 #include "instr.hpp"
