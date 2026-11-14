@@ -26,7 +26,8 @@
 //   but a body branch on an invariant condition versions the loop —
 //   the classic LLVM "trivial unswitch"; BOTH versions keep running
 //   the loop and every exit (the header's arm included) gets a
-//   version-merge block. The scan + commit live in unswitch_bif.hpp;
+//   version-merge block. The scan + commit live in unswitch_bif.hpp
+//   (the slim driver) + unswitch_bif_impl.hpp (the support layer);
 //   the shape matchers and the clone machinery all three paths share
 //   live in unswitch_shape.hpp.
 // Outside uses for the trivial/compound paths are classified by
@@ -41,7 +42,7 @@
 // instructions, exactly like the original with the condition false).
 // ---- ALGORITHM --------------------------------------------------------
 // Per header h of S.headers: in_loop_flags; path selection via
-// loop_shape_of (header test NOT invariant -> unswitch_bif.hpp's
+// loop_shape_of (header test NOT invariant -> unswitch_bif's
 // body-if path); trivial (primary = h, bypass = sh.body) or
 // compound (compound_shape_of: primary = mm). Gates: cond_invariant
 // per guard; dedicated `br h' preheader; growth cap 1..120;

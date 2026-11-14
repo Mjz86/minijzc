@@ -1390,3 +1390,56 @@ committed script (scripts/parity_diff.sh) instead of ad-hoc bash.
   selftest 207/207, ctest 44/44, units 6328/6328, check-format
   clean, header order 100/100 + umbrella (fold_impl.hpp is the
   100th), includes 422/422.
+
+## 13. checkpoint 27: unswitch_bif decomposed + the LLVM-gap backlog — DONE
+
+The queue's #1 target, consumed: `opt/loop/unswitch_bif.hpp`'s
+unswitch_body_if — at 432 lines the biggest function left in the
+opt/ tree (the body-if unswitch: the versioned rewrite whose
+delivered walk restores SSA dominance after the guard splits the
+loop). The cdfold/lcf/unroll/fold treatment, round five. Pure
+refactor, zero behavior change.
+
+* **the split**: `unswitch_bif.hpp` 517 -> 87 lines; the driver is
+  a 21-line unswitch_body_if (the phase sequence reads top to
+  bottom: gates, inventory, classification, scan, validation,
+  commit). The new `unswitch_bif_impl.hpp` (767 lines) holds BifCtx
+  (the scan tables + the commit state the monolith held in locals)
+  and 57 small constexpr functions: the gates (preheader, growth
+  cap), the classification (loopdef, pure arms), the
+  reverse-reachability flood (bif_rr + its step), the outside-use
+  scan (phi-arg vs plain-operand collection into vm_vals/reads),
+  the routes validator (arm/chain/merge, cycle-guarded, BEFORE the
+  commit's first edit), and the commit tail (the clone, both
+  version branch rewrites, the VM blocks, the exit retargets, the
+  guard, the delivered walk with its merge-phi emission and the
+  range-shift bookkeeping, the rewire sweep). 40 of the 57 are
+  at most 10 lines; the rest are integral steps (the flood step,
+  the designated-initializer phi emitters, the merge walkers).
+* **the one retirement**: the monolith's `pi = 3' failure sentinel
+  (a marker that defeated the final `pi == 2' gate after a failed
+  merge-arg walk) became a direct `return NONE' — provably the same
+  observable result (no phi, no dcache entry), one less piece of
+  hidden state; documented in the impl header's THEORY block.
+* **the delivered-walk theory** (why validation precedes the edit,
+  why the closure is collected before any read is rewritten, why
+  phis are BORN at outside merges) now lives in
+  unswitch_bif_impl.hpp's banner — the validate-then-edit
+  discipline is the pass's load-bearing design.
+* **the plan grew**: the LLVM optimization-list coverage analysis
+  (127 items mapped to passes, 62% of the applicable items — now
+  committed as LLVM_OPT_COVERAGE.md at the repo root) is
+  OPT_CHECKLIST.md's LLVM-gap backlog — 4 high-value (PRE/LCM, DSE
+  chains, dependence analysis, SCEV-as-shared-analysis), 9 medium,
+  4 machine-layer, and the deliberately-not-planned list with
+  reasons (vectorization, cache, instruction selection excluded by
+  request; scheduling delegated to the OoO core; LCSSA deferred
+  until PRE exists).
+* **the verification**: 146 parity runs (stdin-aware, three flag
+  variants, debugger tours, --demo, the -O3 stats report)
+  byte-identical vs the pre-refactor binary; audit table
+  regenerated identically; differential fuzz 16131-16280 +
+  14231-14430 identical modulo timing; selftest 207/207, ctest
+  44/44, units 6328/6328, check-format clean, header order 101/101
+  + umbrella (unswitch_bif_impl.hpp is the 101st), includes
+  427/427.
