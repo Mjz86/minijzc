@@ -60,8 +60,8 @@
 #include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
 #include "loop_shape.hpp"
-#include "unswitch_shape.hpp"
 #include "unswitch_bif_impl.hpp" // BifCtx + the per-phase support layer
+#include "unswitch_shape.hpp"
 
 constexpr bool unswitch_body_if(Fn &fn, const An &A, OptStats &os,
                                 const LoopScan &S, const std::vector<char> &inL,
