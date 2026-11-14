@@ -22,6 +22,17 @@
 //   phis_at[b]     slot phis per block (placeholders first at block
 //                  starts, .c = slot id until renaming assigns dst)
 //
+// THE SSA CORE IS THE GENERIC KERNEL (ir/ssa_generic.hpp): placement
+// (calculate_phi_placements over sdefs), renaming (rename_ssa over a
+// Load/Store/init event stream) and the rebuild's layout math
+// (calculate_reflow_plan: dead stores dropped, slot phis prepended,
+// inits anchored after their Allocs) all live there, index-space;
+// this file keeps only the IR knowledge -- which instrs are slot
+// defs/uses, the Alloc/Load/Store/Len rewrites, the classification
+// gates. The walk became a table replay: fresh vregs are minted in
+// visit_order x program order, the exact sequence the interleaved
+// walk produced (byte-identical parity).
+//
 // PIPELINE POSITION. Runs early (the scalar/loop passes then see
 // plain registers, not arena traffic); gated by the toggles
 // (lift_ok = the mem2reg toggle, delalloc_ok) and the program-wide
@@ -37,6 +48,7 @@
 
 #include "../base/pass_cfg.hpp"
 #include "../ir/instr.hpp"
+#include "../ir/ssa_generic.hpp"
 #include "analysis/alias.hpp"
 #include "analysis/an.hpp"
 
@@ -104,24 +116,36 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
       any |= used[id] == 0;
     if (!any)
       return false;
-    std::vector<Instr> nc{};
-    nc.reserve(fn.code.size());
-    for (uint32_t b = 0; b < fn.nblocks(); ++b) {
-      uint32_t old_begin = fn.blocks[b].begin;
-      fn.blocks[b].begin = (uint32_t)nc.size();
-      for (uint32_t i = old_begin; i < fn.blocks[b].end; ++i) {
+    // the rebuild as a keep-only reflow plan (instruction removal is
+    // pure index math in the kernel; the scan predicates stay here)
+    const uint32_t nb2 = fn.nblocks();
+    const uint32_t n0 = (uint32_t)fn.code.size();
+    std::vector<ulen> ob(nb2), oe(nb2), keep(n0, 1), head(nb2, 0), after(n0, 0);
+    for (uint32_t b = 0; b < nb2; ++b) {
+      ob[b] = fn.blocks[b].begin;
+      oe[b] = fn.blocks[b].end;
+    }
+    for (uint32_t b = 0; b < nb2; ++b)
+      for (uint32_t i = ob[b]; i < oe[b]; ++i) {
         const Instr &I = fn.code[i];
         if (I.k == K::Alloc && I.dst != NONE && I.dst < nv) {
           uint32_t id = AI.single[I.dst];
           if (id != NONE && !used[id]) {
+            keep[i] = 0;
             os.deadallocs++;
-            continue;
           }
         }
-        nc.push_back(I);
       }
-      fn.blocks[b].end = (uint32_t)nc.size();
-    }
+    const ssa_ns::reflow_plan_t<V> plan =
+        ssa_ns::calculate_reflow_plan<V>(ob, oe, keep, head, after);
+    std::vector<Instr> nc{};
+    nc.reserve(plan.total);
+    for (uint32_t b = 0; b < nb2; ++b)
+      for (uint32_t i = ob[b]; i < oe[b]; ++i)
+        if (keep[i])
+          nc.push_back(fn.code[i]);
+    for (uint32_t b = 0; b < nb2; ++b)
+      fn.blocks[b] = {(uint32_t)plan.new_begin[b], (uint32_t)plan.new_end[b]};
     fn.code = std::move(nc);
     return true;
   };
@@ -293,50 +317,64 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
           sdefs[slot_base[AI.single[I.a]] + (uint32_t)kv[I.b2]].push_back(b);
       }
   }
-  // ---- phi placement at each slot's IDF -------------------------------------
-  std::vector<std::vector<uint32_t>> phis_at(nb);
-  for (uint32_t s = 0; s < total_slots; ++s) {
-    if (sdefs[s].size() < 2)
-      continue;
-    std::vector<ulen> idf =
-        gns::calculate_iterated_dominance_frontiers_given_dominance_frontiers<
-            V>(A.df, sdefs[s]);
-    for (ulen blk : idf) {
-      uint32_t b = (uint32_t)blk;
-      if (b >= nb || fn.preds[b].size() < 2)
-        continue;
-      bool dup = false;
-      for (uint32_t x : phis_at[b])
-        dup |= (x == s);
-      if (!dup)
-        phis_at[b].push_back(s);
-    }
+  // ---- phi placement at each slot's IDF (the generic kernel; the
+  // pred rows are POSITIONAL with fn.preds' order -- the phi entries'
+  // edge identity -- and the succ rows keep SLOT order for seeding)
+  std::vector<std::vector<ulen>> prs(nb), scs(nb);
+  for (uint32_t b = 0; b < nb; ++b) {
+    for (uint32_t p : fn.preds[b])
+      prs[b].push_back(p);
+    if (fn.succ0(b) != NONE)
+      scs[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      scs[b].push_back(fn.succ1(b));
   }
+  const auto pred_rows = gns::make_basic_forest<V>(prs);
+  const auto succ_rows = gns::make_basic_forest<V>(scs);
+  const gns::treversal_result_t<V> placement =
+      ssa_ns::calculate_phi_placements<V>(A.df, pred_rows, sdefs);
+  auto phis_at = placement.range();
+  std::vector<uint32_t> phi_ord_base(nb + 1, 0);
+  for (uint32_t b = 0; b < nb; ++b)
+    phi_ord_base[b + 1] = phi_ord_base[b] + (uint32_t)phis_at[b].size();
+  const uint32_t total_phis = phi_ord_base[nb];
   // ---- rebuild: slot phis at block starts, init consts after Allocs,
-  //      drop dead-array stores -----------------------------------------------
+  //      drop dead-array stores -- ONE reflow plan (heads = the slot
+  //      phis, keeps = the dead-store mask, afters = the init counts)
   std::vector<uint32_t> init_vreg(total_slots, NONE);
-  std::vector<char> drop(fn.code.size(), 0);
   {
-    std::vector<Instr> nc{};
-    nc.reserve(fn.code.size() + total_slots + 16);
+    const uint32_t n0 = (uint32_t)fn.code.size();
+    std::vector<ulen> ob(nb), oe(nb), keep(n0, 1), head(nb, 0), after(n0, 0);
     for (uint32_t b = 0; b < nb; ++b) {
-      uint32_t old_begin = fn.blocks[b].begin;
-      fn.blocks[b].begin = (uint32_t)nc.size();
-      for (uint32_t s : phis_at[b]) // slot phis go FIRST (before var phis)
-        nc.push_back({.k = K::Phi, .c = (int64_t)s});
-      for (uint32_t i = old_begin; i < fn.blocks[b].end; ++i) {
+      ob[b] = fn.blocks[b].begin;
+      oe[b] = fn.blocks[b].end;
+      head[b] = (uint32_t)phis_at[b].size();
+    }
+    for (uint32_t b = 0; b < nb; ++b)
+      for (uint32_t i = ob[b]; i < oe[b]; ++i) {
         const Instr &I = fn.code[i];
         if (I.k == K::Store && I.a < nv && AI.single[I.a] != NONE &&
             cls[AI.single[I.a]].dead) {
-          drop[i] = 1;
+          keep[i] = 0; // never read: the store is pure dead weight
           os.mem2reg_dses++;
+        } else if (I.k == K::Alloc && I.dst < nv && AI.single[I.dst] != NONE &&
+                   cls[AI.single[I.dst]].lift)
+          after[i] = (uint32_t)cls[AI.single[I.dst]].len;
+      }
+    const ssa_ns::reflow_plan_t<V> plan =
+        ssa_ns::calculate_reflow_plan<V>(ob, oe, keep, head, after);
+    std::vector<Instr> nc{};
+    nc.reserve(plan.total + 16);
+    for (uint32_t b = 0; b < nb; ++b) {
+      for (ulen s : phis_at[b]) // slot phis go FIRST (before var phis)
+        nc.push_back({.k = K::Phi, .c = (int64_t)s});
+      for (uint32_t i = ob[b]; i < oe[b]; ++i) {
+        if (!keep[i])
           continue;
-        }
-        nc.push_back(I);
-        if (I.k == K::Alloc && I.dst < nv && AI.single[I.dst] != NONE &&
-            cls[AI.single[I.dst]].lift) {
-          uint32_t base = slot_base[AI.single[I.dst]];
-          for (val_t j = 0; j < cls[AI.single[I.dst]].len; ++j) {
+        nc.push_back(fn.code[i]);
+        if (after[i]) { // the promotion's zero-init, right after the Alloc
+          uint32_t base = slot_base[AI.single[fn.code[i].dst]];
+          for (val_t j = 0; j < (val_t)after[i]; ++j) {
             uint32_t v = new_anon_vreg(fn, 0);
             init_vreg[base + (uint32_t)j] = v;
             nc.push_back({.k = K::Const, .dst = v, .c = 0});
@@ -344,128 +382,179 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
           os.mem2reg_lifts++;
         }
       }
-      fn.blocks[b].end = (uint32_t)nc.size();
     }
+    for (uint32_t b = 0; b < nb; ++b)
+      fn.blocks[b] = {(uint32_t)plan.new_begin[b], (uint32_t)plan.new_end[b]};
     fn.code = std::move(nc);
   }
-  // ---- renaming: dominator-tree walk with per-slot version stacks ----------
+  // ---- renaming: the generic kernel over a Load/Store/init event
+  // stream, then the table replay ------------------------------------------
   // (SSA guarantees every access of a lifted array is dominated by the
   // allocation's block -- the handle's def dominates its uses -- so the
   // init version is always on the stack when an access is rewritten.)
   // init_vreg -> slot lookup. NOTE: the init vregs were created by the
   // rebuild (new_anon_vreg), so their ids are >= nv; the map is sized to
-  // cover them. The init is pushed onto the version stack WHEN THE WALK
-  // REACHES IT (at the allocation site), NOT at function entry -- an array
-  // allocated inside a loop is re-zeroed every iteration, and reads before
-  // the allocation never happen (the dominance pre-check guarantees it).
+  // cover them. The init is a def event AT THE ALLOCATION SITE in the
+  // stream, NOT at function entry -- an array allocated inside a loop is
+  // re-zeroed every iteration, and reads before the allocation never
+  // happen (the dominance pre-check guarantees it).
   // (Entry-pushing instead lets a loop-carried slot phi SHADOW the init and
   // leak the previous iteration's values -- the stale-loop-array bug.)
   std::vector<uint32_t> init_slot_of(nv + total_slots, NONE);
   for (uint32_t s = 0; s < total_slots; ++s)
     if (init_vreg[s] != NONE && init_vreg[s] < nv + total_slots)
       init_slot_of[init_vreg[s]] = s;
+  // the event stream (program order): a zero-init is a DEF whose vreg
+  // the rebuild already minted (pre-materialized); a lifted Load is a
+  // USE of its slot; a lifted Store is a DEF (its fresh vreg is minted
+  // at the replay). Site ids are dense in this enumeration; the gather
+  // and the apply re-derive them by the same rule.
+  std::vector<std::vector<ssa_ns::ssa_event_t>> evs(nb);
+  std::vector<uint32_t> site_begin(nb, 0), site_init_vreg{};
+  site_init_vreg.reserve(64);
   {
-    std::vector<std::vector<uint32_t>> stacks(total_slots);
-    struct Frame {
-      uint32_t block, child_idx;
-      std::vector<uint32_t> pushed; // slots this block pushed (pop on exit)
-    };
-    std::vector<Frame> wstack;
-    // visit: rewrite this block's accesses; seed slot-phi args in successors
-    auto visit = [&](uint32_t b, std::vector<uint32_t> &pushed) {
+    uint32_t site = 0;
+    for (uint32_t b = 0; b < nb; ++b) {
+      site_begin[b] = site;
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-        Instr &I = fn.code[i];
-        if (I.k == K::Phi) {
-          if (I.dst == NONE) { // slot-phi placeholder: assign its result
-            uint32_t s = (uint32_t)I.c;
-            I.dst = new_anon_vreg(fn, 0);
-            stacks[s].push_back(I.dst);
-            pushed.push_back(s);
-          }
-          continue; // variable phis: args are plain vreg references
-        }
+        const Instr &I = fn.code[i];
+        if (I.k == K::Phi)
+          continue; // slot-phi placeholders: kernel-synthesized defs
         if (I.k == K::Const && I.dst != NONE && I.dst < init_slot_of.size() &&
             init_slot_of[I.dst] != NONE) {
-          // the promotion's zero-init
-          uint32_t s2 = init_slot_of[I.dst];
-          stacks[s2].push_back(I.dst);
-          pushed.push_back(s2);
-          continue;
-        }
-        uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
-        if (I.k == K::Load && h != NONE && cls[h].lift) {
-          uint32_t s = slot_base[h] + (uint32_t)kv[I.b2];
-          if (stacks[s].empty())
-            return false; // cannot happen (dominance)
-          I.k = K::Copy;
-          I.a = stacks[s].back();
-          I.b2 = NONE;
-        } else if (I.k == K::Store && h != NONE && cls[h].lift) {
-          uint32_t s = slot_base[h] + (uint32_t)kv[I.b2];
-          uint32_t v = new_anon_vreg(fn, 0);
-          I.k = K::Copy;
-          I.dst = v;
-          I.a = I.c2; // the stored value
-          I.b2 = NONE;
-          I.c2 = NONE;
-          stacks[s].push_back(v);
-          pushed.push_back(s);
-        } else if (I.k == K::Len && h != NONE && (cls[h].lift || cls[h].dead)) {
-          I.k = K::Const;
-          I.c = cls[h].len;
-          I.a = NONE;
+          evs[b].push_back({.kind = ssa_ns::ssa_def_v,
+                            .var = init_slot_of[I.dst],
+                            .site = site});
+          site_init_vreg.push_back(init_vreg[init_slot_of[I.dst]]);
+          ++site;
+        } else if (I.k == K::Load) {
+          uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
+          if (h != NONE && cls[h].lift) {
+            evs[b].push_back({.kind = ssa_ns::ssa_use_v,
+                              .var = slot_base[h] + (uint32_t)kv[I.b2],
+                              .site = site});
+            site_init_vreg.push_back(NONE);
+            ++site;
+          }
+        } else if (I.k == K::Store) {
+          uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
+          if (h != NONE && cls[h].lift) {
+            evs[b].push_back({.kind = ssa_ns::ssa_def_v,
+                              .var = slot_base[h] + (uint32_t)kv[I.b2],
+                              .site = site});
+            site_init_vreg.push_back(NONE);
+            ++site;
+          }
         }
       }
-      // seed slot-phi args in successors: the value at the END of this
-      // block reaches the successor along this edge. Slot phis are exactly
-      // the first phis_at[s].size() phi instrs of s (insertion order).
-      for (uint32_t s2 : {fn.succ0(b), fn.succ1(b)}) {
-        if (s2 == NONE || s2 >= nb)
-          continue;
-        uint32_t k = 0;
-        for (uint32_t i = fn.blocks[s2].begin; i < fn.blocks[s2].end; ++i) {
-          Instr &I = fn.code[i];
-          if (I.k != K::Phi)
-            break;
-          if (k < phis_at[s2].size()) {
-            uint32_t s = phis_at[s2][k];
-            uint32_t slot = NONE; // b's position among s2's preds
-            for (uint32_t j = 0; j < fn.preds[s2].size(); ++j)
-              if (fn.preds[s2][j] == b)
-                slot = j;
-            if (slot == NONE)
-              return false;
-            uint32_t arg = stacks[s].empty() ? NONE : stacks[s].back();
-            if (slot == 0) {
+    }
+  }
+  const uint32_t n_sites = (uint32_t)site_init_vreg.size();
+  const ssa_ns::ssa_renaming_t<V> R = ssa_ns::rename_ssa<V>(
+      total_slots, n_sites, A.dom_tree, succ_rows, pred_rows, placement, evs);
+  // defensive: a lifted Load with no reaching def (cannot happen -- the
+  // dominance pre-check above guarantees non-empty stacks)
+  {
+    std::vector<char> visited(nb, 0);
+    for (ulen b : R.visit_order)
+      visited[(uint32_t)b] = 1;
+    for (uint32_t b = 0; b < nb; ++b) {
+      if (!visited[b])
+        continue;
+      for (const ssa_ns::ssa_event_t &ev : evs[b])
+        if (ev.kind == ssa_ns::ssa_use_v &&
+            R.reaching_def[ev.site] == ssa_ns::ssa_none_v)
+          return false; // same state as before: the rebuild stands,
+                        // nothing else mutated
+    }
+  }
+  // replay: mint the fresh vregs in the walk's order (slot-phi dsts at
+  // block heads, then the Store defs in program order; inits are
+  // pre-materialized) -- the exact new_anon_vreg sequence of the old
+  // interleaved walk, so vreg ids stay byte-identical.
+  {
+    std::vector<uint32_t> site_vreg(n_sites + total_phis, NONE);
+    for (uint32_t s = 0; s < n_sites; ++s)
+      if (site_init_vreg[s] != NONE)
+        site_vreg[s] = site_init_vreg[s];
+    for (ulen bb : R.visit_order) {
+      const uint32_t b = (uint32_t)bb;
+      for (uint32_t pi = 0; pi < (uint32_t)phis_at[b].size(); ++pi) {
+        uint32_t v = new_anon_vreg(fn, 0);
+        site_vreg[n_sites + phi_ord_base[b] + pi] = v;
+      }
+      for (const ssa_ns::ssa_event_t &ev : evs[b])
+        if (ev.kind == ssa_ns::ssa_def_v && site_vreg[ev.site] == NONE) {
+          uint32_t v = new_anon_vreg(fn, 0);
+          site_vreg[ev.site] = v;
+        }
+    }
+    // apply: the rewrites, only in walked (reachable) blocks -- the
+    // unreachable ones keep their raw arena traffic for unreach to
+    // delete, exactly as the old walk left them
+    for (ulen bb : R.visit_order) {
+      const uint32_t b = (uint32_t)bb;
+      uint32_t pi = 0;
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        Instr &I = fn.code[i];
+        if (I.k != K::Phi)
+          break;
+        if (pi < (uint32_t)phis_at[b].size()) { // slot phis precede var phis
+          const uint32_t phi = phi_ord_base[b] + pi;
+          const uint32_t e0 = R.phi_entry_begin[phi];
+          I.dst = site_vreg[R.phi_def_site[phi]];
+          for (uint32_t e = e0; e < R.phi_entry_begin[phi + 1]; ++e) {
+            if (R.phi_entry_pred[e] == ssa_ns::ssa_none_v)
+              continue; // never seeded (unreachable pred / dup slot)
+            const uint32_t arg = R.phi_entry_def[e] == ssa_ns::ssa_none_v
+                                     ? NONE
+                                     : site_vreg[R.phi_entry_def[e]];
+            if (e == e0) {
               I.a = arg;
-              I.t = b;
+              I.t = (uint32_t)R.phi_entry_pred[e];
             } else {
               I.b2 = arg;
-              I.f = b;
+              I.f = (uint32_t)R.phi_entry_pred[e];
             }
           }
-          ++k;
         }
+        ++pi;
       }
-      return true;
-    };
-    std::vector<uint32_t> pu{};
-    if (!visit(0, pu))
-      return false; // defensive: refuse (nothing mutated
-                    // by visit at that point on failure)
-    wstack.push_back({0, 0, std::move(pu)});
-    while (!wstack.empty()) {
-      Frame &fr = wstack.back();
-      auto ch = A.dom_tree.range()[fr.block];
-      if (fr.child_idx < (uint32_t)ch.size()) {
-        uint32_t next = (uint32_t)ch[fr.child_idx++];
-        std::vector<uint32_t> pu2{};
-        visit(next, pu2);
-        wstack.push_back({next, 0, std::move(pu2)});
-      } else {
-        for (auto it = fr.pushed.rbegin(); it != fr.pushed.rend(); ++it)
-          stacks[*it].pop_back();
-        wstack.pop_back();
+      uint32_t site = site_begin[b];
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        Instr &I = fn.code[i];
+        if (I.k == K::Phi)
+          continue;
+        if (I.k == K::Const && I.dst != NONE && I.dst < init_slot_of.size() &&
+            init_slot_of[I.dst] != NONE) {
+          ++site; // the promotion's zero-init: already materialized
+        } else if (I.k == K::Load) {
+          uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
+          if (h != NONE && cls[h].lift) {
+            const uint32_t rd = (uint32_t)R.reaching_def[site];
+            I.k = K::Copy;
+            I.a = rd == ssa_ns::ssa_none_v ? NONE : site_vreg[rd];
+            I.b2 = NONE;
+            ++site;
+          }
+        } else if (I.k == K::Store) {
+          uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
+          if (h != NONE && cls[h].lift) {
+            I.k = K::Copy;
+            I.dst = site_vreg[site];
+            I.a = I.c2; // the stored value
+            I.b2 = NONE;
+            I.c2 = NONE;
+            ++site;
+          }
+        } else if (I.k == K::Len) {
+          uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
+          if (h != NONE && (cls[h].lift || cls[h].dead)) {
+            I.k = K::Const;
+            I.c = cls[h].len;
+            I.a = NONE;
+          }
+        }
       }
     }
   }

@@ -67,6 +67,7 @@
 
 #include "../../graph_lib.hpp"
 #include "../../ir/instr.hpp"
+#include "../../ir/ssa_generic.hpp"
 #include "../../ir/stats.hpp"
 
 // ============================================================================
@@ -127,15 +128,24 @@ constexpr An analyze(const Fn &fn) {
 }
 
 // ============================================================================
-// 8. SSA construction
-//    - phi placement at the iterated dominance frontier of each def set
-//      (mjz::graph_ns::calculate_iterated_dominance_frontiers_...)
-//    - renaming by dominator-tree walk (dom tree from the lib)
+// 8. SSA construction -- a thin adapter over the generic kernel
+//    (ir/ssa_generic.hpp, mjz::ssa_ns): the parts that KNOW the IR stay
+//    here (which Instr fields are uses/defs, how a phi record becomes a
+//    2-slot Phi instr), the graph math lives in the kernel:
+//    - 8b placement: ssa_ns::calculate_phi_placements (Cytron IDF,
+//      ascending-var rows -- the loop order the old code hand-rolled)
+//    - 8c rebuild: ssa_ns::calculate_reflow_plan (head inserts only)
+//    - 8d renaming: ssa_ns::rename_ssa (the dominator-tree walk as a
+//      pure table: reaching_def / def_ordinal / N-ary phi records),
+//      then a REPLAY in visit_order that mints fresh vreg ids in exactly
+//      the order the old interleaved walk did -- the rewiring is
+//      byte-identical by construction (146-run parity, fuzz windows)
 // ============================================================================
 constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
   st = {};
   const uint32_t nb = fn.nblocks();
-  // ---- 8a. def blocks per original vreg
+  // ---- 8a. def blocks per original vreg (the IR-side half of the
+  // event model: this loop is the only place that knows dst = def)
   std::vector<std::vector<ulen>> defs(fn.nvars);
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
@@ -145,173 +155,191 @@ constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
   // see the incoming argument; re-assignments get ordinary phi placement
   for (uint32_t v = 0; v < fn.nparams; ++v)
     defs[v].push_back(0);
-  // ---- 8b. phi insertion at the IDF of each multi-def vreg's def set
-  std::vector<std::vector<uint32_t>> phis_at(nb);
-  for (uint32_t v = 0; v < fn.nvars; ++v) {
-    if (defs[v].size() < 2)
-      continue;
-    std::vector<ulen> idf =
-        gns::calculate_iterated_dominance_frontiers_given_dominance_frontiers<
-            V>(A.df, defs[v]);
-    for (ulen blk : idf) {
-      uint32_t b = (uint32_t)blk;
-      if (b >= nb || fn.preds[b].size() < 2)
-        continue;
-      bool dup = false;
-      for (uint32_t x : phis_at[b])
-        dup |= (x == v);
-      if (!dup)
-        phis_at[b].push_back(v);
-    }
-  }
+  // ---- 8b. phi placement at the IDF of each multi-def vreg's def set.
+  // The pred rows must be POSITIONAL (fn.preds' ascending order): a phi
+  // record's entry index is its edge identity, so the rows the kernel
+  // sees have to be the same rows the lowering indexes into.
+  const auto pred_rows = gns::make_basic_forest<V>(A.prs);
+  const gns::treversal_result_t<V> placement =
+      ssa_ns::calculate_phi_placements<V>(A.df, pred_rows, defs);
+  auto placement_rows = placement.range();
   // ---- 8c. rebuild the code vector with phis at block starts
+  //      (the generic reflow plan: head counts = the placement rows)
+  std::vector<uint32_t> phi_ord_base(nb + 1, 0); // row-start ordinals
+  for (uint32_t b = 0; b < nb; ++b)
+    phi_ord_base[b + 1] = phi_ord_base[b] + (uint32_t)placement_rows[b].size();
+  const uint32_t total_phis = phi_ord_base[nb];
+  st.phis = total_phis;
   {
-    std::vector<Instr> nc{};
-    nc.reserve(fn.code.size() + 32);
+    const uint32_t n0 = (uint32_t)fn.code.size();
+    std::vector<ulen> ob(nb), oe(nb), keep(n0, 1), head(nb, 0), after(n0, 0);
     for (uint32_t b = 0; b < nb; ++b) {
-      uint32_t old_begin = fn.blocks[b].begin;
-      fn.blocks[b].begin = (uint32_t)nc.size();
-      for (uint32_t v : phis_at[b]) {
-        nc.push_back({.k = K::Phi, .a = NONE, .b2 = NONE, .c = (int64_t)v});
-        st.phis++;
-      }
-      for (uint32_t i = old_begin; i < fn.blocks[b].end; ++i)
-        nc.push_back(fn.code[i]);
-      fn.blocks[b].end = (uint32_t)nc.size();
+      ob[b] = fn.blocks[b].begin;
+      oe[b] = fn.blocks[b].end;
+      head[b] = (uint32_t)placement_rows[b].size();
     }
+    const ssa_ns::reflow_plan_t<V> plan =
+        ssa_ns::calculate_reflow_plan<V>(ob, oe, keep, head, after);
+    std::vector<Instr> nc{};
+    nc.reserve(plan.total + 16);
+    for (uint32_t b = 0; b < nb; ++b) {
+      for (ulen v : placement_rows[b])
+        nc.push_back({.k = K::Phi, .a = NONE, .b2 = NONE, .c = (int64_t)v});
+      for (uint32_t i = ob[b]; i < oe[b]; ++i)
+        nc.push_back(fn.code[i]);
+    }
+    for (uint32_t b = 0; b < nb; ++b)
+      fn.blocks[b] = {(uint32_t)plan.new_begin[b], (uint32_t)plan.new_end[b]};
     fn.code = std::move(nc);
   }
-  // ---- 8d. renaming: dominator-tree DFS with per-base version stacks
+  // ---- 8d. renaming: gather events, run the generic walk, replay
+  // The event stream per block, in program order: params first (block 0
+  // head, pre-materialized sites [0, nparams) -- version 0 of a param is
+  // the param itself, no fresh mint), then per instruction the uses
+  // (a, b2, c2, args...) followed by the dst def; phi placeholders emit
+  // nothing (the kernel synthesizes their defs from the placement).
+  // Site ids are DENSE in this enumeration order; the gather, the
+  // replay and the apply re-derive them from the same code by the same
+  // rule (use/def events only advance the counter when emitted).
+  const uint32_t nparams = fn.nparams;
+  std::vector<std::vector<ssa_ns::ssa_event_t>> evs(nb);
+  std::vector<uint32_t> site_begin(nb, 0); // first site of block b's events
+  uint32_t n_sites = nparams;
+  {
+    uint32_t site = nparams;
+    for (uint32_t b = 0; b < nb; ++b) {
+      if (b == 0) // the entry defs: params, sites [0, nparams)
+        for (uint32_t v = 0; v < nparams; ++v)
+          evs[0].push_back({.kind = ssa_ns::ssa_def_v, .var = v, .site = v});
+      site_begin[b] = site;
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        const Instr &I = fn.code[i];
+        if (I.k == K::Phi)
+          continue;
+        auto use = [&](uint32_t v) {
+          if (v != NONE && v < fn.nvars) {
+            evs[b].push_back(
+                {.kind = ssa_ns::ssa_use_v, .var = v, .site = site});
+            ++site;
+          }
+        };
+        use(I.a);
+        use(I.b2);
+        use(I.c2);
+        for (uint32_t av : I.args)
+          use(av);
+        if (I.dst != NONE) {
+          evs[b].push_back(
+              {.kind = ssa_ns::ssa_def_v, .var = I.dst, .site = site});
+          ++site;
+        }
+      }
+    }
+    n_sites = site;
+  }
+  const ssa_ns::ssa_renaming_t<V> R = ssa_ns::rename_ssa<V>(
+      fn.nvars, n_sites, A.dom_tree, A.fs, pred_rows, placement, evs);
+  // use before def: the old walk bailed at an empty version stack in a
+  // VISITED block; the same condition, scanned as a table (unreachable
+  // blocks were never walked and keep their raw pre-SSA ids -- unreach
+  // deletes them later, exactly as before)
+  {
+    std::vector<char> visited(nb, 0);
+    for (ulen b : R.visit_order)
+      visited[(uint32_t)b] = 1;
+    for (uint32_t b = 0; b < nb; ++b) {
+      if (!visited[b])
+        continue;
+      for (const ssa_ns::ssa_event_t &ev : evs[b])
+        if (ev.kind == ssa_ns::ssa_use_v &&
+            R.reaching_def[ev.site] == ssa_ns::ssa_none_v)
+          return false;
+    }
+  }
+  // replay: mint fresh versions in the walk's order (phi dsts at block
+  // heads first, then the instruction defs in program order) -- the same
+  // sequence of fresh() calls the interleaved walk made, which is what
+  // keeps vreg ids (and everything keyed on them) byte-identical.
   fn.version_base.clear();
   fn.version_no.clear();
-  std::vector<std::vector<uint32_t>> stacks(fn.nvars);
-  for (uint32_t v = 0; v < fn.nparams; ++v)
-    stacks[v].push_back(v); // version 0 of a param is the param itself
-  auto fresh = [&](uint32_t base) -> uint32_t {
+  std::vector<uint32_t> site_vreg(n_sites + total_phis, NONE);
+  for (uint32_t v = 0; v < nparams; ++v)
+    site_vreg[v] = v; // params pre-materialized
+  auto alloc_def = [&](uint32_t base, uint32_t site) {
     uint32_t v = fn.nvars + (uint32_t)fn.version_base.size();
     fn.version_base.push_back(base);
-    fn.version_no.push_back((uint32_t)stacks[base].size());
+    fn.version_no.push_back((uint32_t)R.def_ordinal[site]);
     st.versions++;
-    return v;
+    site_vreg[site] = v;
   };
-  // phi dsts are fresh versions, pushed when visiting their block
-  // explicit-stack DFS over the dominator tree (children rows from the lib)
-  struct Frame {
-    uint32_t block, child_idx, pushed;
-  };
-  std::vector<Frame> stack;
-  // visit block 0
-  auto visit_prologue = [&](uint32_t b, uint32_t &pushed) -> bool {
-    pushed = 0;
+  for (ulen bb : R.visit_order) {
+    const uint32_t b = (uint32_t)bb;
+    for (uint32_t pi = 0; pi < (uint32_t)placement_rows[b].size(); ++pi)
+      alloc_def((uint32_t)placement_rows[b][pi],
+                n_sites + phi_ord_base[b] + pi);
+    for (const ssa_ns::ssa_event_t &ev : evs[b])
+      if (ev.kind == ssa_ns::ssa_def_v && site_vreg[ev.site] == NONE)
+        alloc_def((uint32_t)ev.var, ev.site);
+  }
+  // apply: rewrite uses against the table (sites re-derived by the same
+  // enumeration), lower phi records into the 2-slot Phi instrs. The IR's
+  // phis carry TWO (arg, pred) slots; a record entry at position i lands
+  // in slot 0 (a/t) when i == 0, else slot 1 (b2/f) -- for the <= 2 pred
+  // blocks pred_norm guarantees this is a bijection, and the rule also
+  // reproduces the old last-match seeding verbatim on any arity.
+  for (ulen bb : R.visit_order) {
+    const uint32_t b = (uint32_t)bb;
+    uint32_t pi = 0;
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       Instr &I = fn.code[i];
-      if (I.k == K::Phi) {
-        uint32_t base = (uint32_t)I.c;
-        I.dst = fresh(base);
-        stacks[base].push_back(I.dst);
-        ++pushed;
-        continue;
-      }
-      // rewrite uses
-      if (I.a != NONE && I.a < fn.nvars) {
-        auto &s = stacks[I.a];
-        if (s.empty())
-          return false; // use before def (should not happen)
-        I.a = s.back();
-      }
-      if (I.b2 != NONE && I.b2 < fn.nvars) {
-        auto &s = stacks[I.b2];
-        if (s.empty())
-          return false;
-        I.b2 = s.back();
-      }
-      if (I.c2 != NONE && I.c2 < fn.nvars) { // Store: the stored value
-        auto &s = stacks[I.c2];
-        if (s.empty())
-          return false;
-        I.c2 = s.back();
-      }
-      for (uint32_t &av : I.args) { // Call arguments
-        if (av != NONE && av < fn.nvars) {
-          auto &s = stacks[av];
-          if (s.empty())
-            return false;
-          av = s.back();
+      if (I.k != K::Phi)
+        break;
+      if (pi < (uint32_t)placement_rows[b].size()) {
+        const uint32_t phi = phi_ord_base[b] + pi;
+        const uint32_t e0 = R.phi_entry_begin[phi];
+        I.dst = site_vreg[R.phi_def_site[phi]];
+        for (uint32_t e = e0; e < R.phi_entry_begin[phi + 1]; ++e) {
+          if (R.phi_entry_pred[e] == ssa_ns::ssa_none_v)
+            continue; // never seeded (unreachable pred / dup slot)
+          const uint32_t arg = R.phi_entry_def[e] == ssa_ns::ssa_none_v
+                                   ? NONE
+                                   : site_vreg[R.phi_entry_def[e]];
+          // Minimal (non-pruned) SSA: an arg may be UNDEF on an edge
+          // (variable not live-in there; scoping guarantees it is never
+          // read on that path -- DCE drops the dead phi). The pred id is
+          // recorded with the arg so later CFG edits can prune/rekey
+          // args by pred identity, never by position.
+          if (e == e0) {
+            I.a = arg;
+            I.t = (uint32_t)R.phi_entry_pred[e];
+          } else {
+            I.b2 = arg;
+            I.f = (uint32_t)R.phi_entry_pred[e];
+          }
         }
       }
+      ++pi;
+    }
+    uint32_t site = site_begin[b];
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+      Instr &I = fn.code[i];
+      if (I.k == K::Phi)
+        continue;
+      auto use = [&](uint32_t &fld) {
+        if (fld != NONE && fld < fn.nvars) {
+          const uint32_t rd = (uint32_t)R.reaching_def[site];
+          fld = rd == ssa_ns::ssa_none_v ? NONE : site_vreg[rd];
+          ++site;
+        }
+      };
+      use(I.a);
+      use(I.b2);
+      use(I.c2);
+      for (uint32_t &av : I.args)
+        use(av);
       if (I.dst != NONE) {
-        uint32_t base = I.dst;
-        I.dst = fresh(base);
-        stacks[base].push_back(I.dst);
-        ++pushed;
-      }
-    }
-    // seed phi args in successors
-    for (uint32_t s : {fn.succ0(b), fn.succ1(b)}) {
-      if (s == NONE)
-        continue;
-      for (uint32_t i = fn.blocks[s].begin; i < fn.blocks[s].end; ++i) {
-        Instr &I = fn.code[i];
-        if (I.k != K::Phi)
-          break;
-        uint32_t base = (uint32_t)I.c;
-        const auto &st_ = stacks[base];
-        // find slot of b in preds[s]
-        uint32_t slot = NONE;
-        for (uint32_t j = 0; j < fn.preds[s].size(); ++j)
-          if (fn.preds[s][j] == b)
-            slot = j;
-        if (slot == NONE)
-          return false;
-        // Minimal (non-pruned) SSA: a phi arg may be UNDEFINED on an edge
-        // (variable not live-in there). Scoping guarantees it is never read
-        // on that path, so record the pred with arg NONE; DCE drops the phi.
-        uint32_t arg = st_.empty() ? NONE : st_.back();
-        // record the pred block id with the arg (t/f unused by Phi) so that
-        // later CFG edits can prune phi args by pred identity
-        if (slot == 0) {
-          I.a = arg;
-          I.t = b;
-        } else {
-          I.b2 = arg;
-          I.f = b;
-        }
-      }
-    }
-    return true;
-  };
-  auto visit_epilogue = [&](uint32_t b, uint32_t pushed) {
-    // pop exactly `pushed` entries (one per def the prologue pushed; the
-    // count equals the block's defining instrs — decrement ONLY on pops)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && pushed; ++i) {
-      const Instr &I = fn.code[i];
-      if (I.k == K::Phi) {
-        stacks[(uint32_t)I.c].pop_back();
-        --pushed;
-      } else if (I.dst != NONE) {
-        stacks[fn.base_of(I.dst)].pop_back();
-        --pushed;
-      }
-    }
-  };
-  {
-    uint32_t pushed0 = 0;
-    if (!visit_prologue(0, pushed0))
-      return false;
-    stack.push_back({0, 0, pushed0});
-    auto children_of = [&](uint32_t b) { return A.dom_tree.range()[b]; };
-    while (!stack.empty()) {
-      Frame &fr = stack.back();
-      auto ch = children_of(fr.block);
-      if (fr.child_idx < (uint32_t)ch.size()) {
-        uint32_t next = (uint32_t)ch[fr.child_idx++];
-        uint32_t pushed = 0;
-        if (!visit_prologue(next, pushed))
-          return false;
-        stack.push_back({next, 0, pushed});
-      } else {
-        visit_epilogue(fr.block, fr.pushed);
-        stack.pop_back();
+        I.dst = site_vreg[site];
+        ++site;
       }
     }
   }

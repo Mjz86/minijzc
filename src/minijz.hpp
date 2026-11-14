@@ -25,6 +25,7 @@
 #include "minijz/ir/destruct.hpp"
 #include "minijz/ir/instr.hpp"
 #include "minijz/ir/pred_norm.hpp"
+#include "minijz/ir/ssa_generic.hpp"
 #include "minijz/opt/analysis/alias.hpp"
 #include "minijz/opt/analysis/an.hpp"
 #include "minijz/opt/analysis/intervals.hpp"

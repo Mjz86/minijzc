@@ -8,6 +8,38 @@ byte-identical), and the protocol's differential-fuzz half is now
 the committed scripts/fuzz_parity.sh. This file is the resume
 manual.
 
+## The generic-ssa branch (the uintlen_t SSA kernel)
+
+Branch `generic-ssa` (off the ckpt-28 main, one commit) holds the
+generic SSA-construction redesign: `src/minijz/ir/ssa_generic.hpp`
+(`mjz::ssa_ns`, the graph_ns treatment — uintlen_t blocks/vars/sites,
+version_t templates, CSR forests, MJZ_CX_FN noexcept) with
+
+  * `calculate_phi_placements` — Cytron IDF placement, ascending-var
+    rows (both clients' old loop order),
+  * `rename_ssa` — the dominator-tree walk as a PURE TABLE:
+    reaching_def[site], def_ordinal[site] (stack-depth-at-push),
+    visit_order, and phi records with N-ARY (pred, incoming) entries
+    (arity = pred count — a 3-pred join is a 3-entry record; units
+    16d/16e pin it, incl. the duplicate-pred last-match rule),
+  * `calculate_reflow_plan` — the rebuild-with-removal index math
+    (keep mask + per-block head inserts + anchored afters -> new
+    ranges + old->new map), consumed by ssa_construct's phi rebuild,
+    mem2reg's drop/prepend/init rebuild AND its dead-alloc sweep,
+  * `calculate_merge_chain_plan` — the N-preds -> binary-chain
+    lowering pred_norm used to hand-roll, now data.
+
+an.hpp's ssa_construct and mem2reg's promotion walk became
+gather-events / rename / replay adapters (fresh vregs minted in
+visit_order x program order = the old interleaved sequence, so
+byte-identical), pred_norm consumes the chain plan. Verified: 146-run
+stdin-aware parity vs the pre-change binary, both committed fuzz
+windows + a fresh 20000-20149 window differentially clean, full
+battery green (selftest 207, ctest 44, units 6369 — 41 new kernel
+checks —, header order 103/103, includes 437/437, check-format clean
+on clang-format 16). The kernel is liftable into mjz_lib's graph_ns
+unchanged (it depends only on graph_lib.hpp).
+
 ## Setup (2 min)
 
 ```sh

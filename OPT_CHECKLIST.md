@@ -48,8 +48,21 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
 
 ## Queue (priority = biggest first; sizes re-measured 2026-11-14)
 
-- [ ] opt/mem2reg.hpp — ~415 lines (474-line file; the SSA-promotion
-      core, theory header already landed at 25) NEXT UP.
+NOTE (branch generic-ssa, 2026-11-14): the SSA-construction core that
+mem2reg shares with ssa_construct was extracted into the generic
+index-space kernel `src/minijz/ir/ssa_generic.hpp` (mjz::ssa_ns, the
+graph_ns treatment: uintlen_t ids, version_t templates, CSR forests,
+N-ary phi records, event-stream renaming, reflow plans, merge-chain
+plans). On that branch an.hpp/pred_norm/mem2reg are thin adapters over
+it, byte-identical (146-run parity + both fuzz windows + full battery,
+units 6369 with 41 new kernel checks including a 3-pred N-ary phi a
+2-arg IR cannot spell). The queue item below is what remains THERE:
+the classification gates, not the SSA walk (which is now kernel code).
+
+- [ ] opt/mem2reg.hpp — the classification gates (liftable / dead /
+      bkpt-observed / budget) + the alias-driven pre-checks, on top of
+      the generic SSA kernel (the SSA-promotion core itself moved to
+      ir/ssa_generic.hpp on branch generic-ssa) NEXT UP.
 - [ ] opt/loop/rotate.hpp — ~405 lines (477-line file)
 - [ ] opt/interprocedural/scctco.hpp — scctco_member ~392 lines
       (735-line file, also on the >700-line file list)

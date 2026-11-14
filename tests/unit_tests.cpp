@@ -1014,195 +1014,440 @@ UT(A.worst_traffic == 0, "reg-audit: no worst row when nothing spills");
 }
 
 // ---- checkpoint 22: loop rotation proper --------------------------------
+{// (a) the basic rotation: an impure body (a per-iteration print) that
+ // defeats lcf/unroll/unswitch — the test moves to the latch edge, the
+ // after-loop reads arrive through the exit phis, and the five runners
+ // must all agree
+ {const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                  "while (i <= n) {\n  print i;\n  s = s + i;\n"
+                  "  i = i + 1;\n}\nprint s;\nprint i;\n";
+Program P = compile(s);
+UT(P.ok, "rotate: impure-body program compiles");
+OptStats os = sum_ostats(P);
+UT(os.rotations == 1, "rotate: the while loop was rotated");
+RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {4});
+RunOut plain = run_prog(fns_of(P, 0), 100000, {4});
+RunOut opt = run_prog(fns_of(P, 1), 100000, {4});
+RunOut lowered = run_prog(fns_of(P, 2), 100000, {4});
+RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {4});
+UT(same_run(oracle, plain) && same_run(oracle, opt) &&
+       same_run(oracle, lowered) && same_run(oracle, vm),
+   "rotate: all five runners agree");
+UT(opt.out.size() == 6 && opt.out[0] == 1 && opt.out[3] == 4 &&
+       opt.out[4] == 10 && opt.out[5] == 5,
+   "rotate: 4 trips print 1..4 then s=10, i=5");
+// the shape: a 2-pred phi-headed block ending in Br — the rotated
+// header (the ORIGINAL header ended in the loop test's Cbr)
+bool saw_rot_header = false;
+for (const Fn &F : fns_of(P, 1)) {
+  for (uint32_t b = 0; b < F.nblocks(); ++b) {
+    const uint32_t bg = F.blocks[b].begin, be = F.blocks[b].end;
+    if (bg == be || F.code[be - 1].k != K::Br || F.preds[b].size() != 2 ||
+        F.code[bg].k != K::Phi)
+      saw_rot_header = true; // (b == the rotated header)
+  }
+}
+UT(saw_rot_header, "rotate: the header ends in Br, not the test");
+}
+// (b) zero-trip: the guard skips the loop, the exit phis carry the
+// entry values exactly
 {
-  // (a) the basic rotation: an impure body (a per-iteration print) that
-  // defeats lcf/unroll/unswitch — the test moves to the latch edge, the
-  // after-loop reads arrive through the exit phis, and the five runners
-  // must all agree
+  const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                  "while (i <= n) {\n  print i;\n  s = s + i;\n"
+                  "  i = i + 1;\n}\nprint s;\nprint i;\n";
+  Program P = compile(s);
+  RunOut z = run_prog(fns_of(P, 1), 100000, {0});
+  UT(z.out.size() == 2 && z.out[0] == 0 && z.out[1] == 1,
+     "rotate: zero trips print s=0, i=1 (the entry values)");
+}
+// (c) the header-increment regression (the selftest break_continue
+// shape: while(1)+break folds so the increment lives IN the header —
+// the moved def feeds the header phi's latch arg and must route
+// through its fresh header phi)
+{
+  const char *s = "let s = 0;\nlet i = 0;\nwhile (1) {\n  i = i + 1;\n"
+                  "  if (i > 10) { break; }\n"
+                  "  if (i % 2 == 1) { continue; }\n  s = s + i;\n"
+                  "}\nprint s;\nprint i;\n";
+  Program P = compile(s);
+  UT(P.ok, "rotate: header-increment program compiles");
+  UT(sum_ostats(P).rotations >= 1,
+     "rotate: the folded while(1) loop was rotated");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {});
+  UT(o.out.size() == 2 && o.out[0] == 30 && o.out[1] == 11,
+     "rotate: evens sum to 30, i exits at 11");
+}
+// (d) side effects in the moved header keep their exact count: a fn
+// call in the loop condition fires k+1 times (the guard copy IS the
+// 1st header run, the latch copy of iteration i is the (i+1)-th)
+{
+  const char *s = "fn probe(x) { print x; return x * 2; }\n"
+                  "let n = input();\nlet i = 0;\nlet s = 0;\n"
+                  "while (probe(i) < n) {\n  s = s + i;\n  i = i + 1;\n"
+                  "}\nprint s;\n";
+  Program P = compile(s);
+  UT(P.ok, "rotate: call-in-condition compiles");
+  UT(sum_ostats(P).rotations >= 1, "rotate: the call-header loop rotated");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {10});
+  UT(o.out.size() == 7, "rotate: 6 probe prints (k+1) then s");
+  bool seq_ok = o.out.size() == 7 && o.out[6] == 10;
+  for (int k = 0; k < 6 && o.out.size() == 7; ++k)
+    seq_ok = seq_ok && o.out[k] == k;
+  UT(seq_ok, "rotate: probe printed 0..5 in order, then s=10");
+}
+// (e) nested loops rotate independently (innermost first)
+{
+  const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                  "while (i <= n) {\n  let j = 1;\n"
+                  "  while (j <= i) {\n    print j;\n    s = s + 1;\n"
+                  "    j = j + 1;\n  }\n  i = i + 1;\n}\nprint s;\n";
+  Program P = compile(s);
+  UT(P.ok, "rotate: nested loops compile");
+  UT(sum_ostats(P).rotations == 2, "rotate: both loops rotated");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {3});
+  UT(o.out.size() == 7 && o.out[0] == 1 && o.out[1] == 1 && o.out[2] == 2 &&
+         o.out[3] == 1 && o.out[4] == 2 && o.out[5] == 3 && o.out[6] == 6,
+     "rotate: triangular prints 1|1 2|1 2 3 then 6");
+}
+// (f) the polarity flip: the body on the cbr's FALSE arm (i >= n)
+{
+  const char *s = "let n = input();\nlet i = input();\n"
+                  "while (i >= n) {\n  print i;\n  i = i - 1;\n"
+                  "}\nprint i;\n";
+  Program P = compile(s);
+  UT(P.ok, "rotate: polarity-flip program compiles");
+  UT(sum_ostats(P).rotations == 1, "rotate: the false-arm loop rotated");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {5, 8});
+  UT(o.out.size() == 5 && o.out[0] == 8 && o.out[1] == 7 && o.out[2] == 6 &&
+         o.out[3] == 5 && o.out[4] == 4,
+     "rotate: 8 7 6 5 then the exit value 4");
+}
+// (g) a SURVIVING break edge: not this pass's shape (the strict
+// unroll/lcf family — no break edges allowed)
+{
+  const char *s = "let n = input();\nlet s = 0;\nlet i = 0;\n"
+                  "while (i < n) {\n  if (s > 20) { break; }\n"
+                  "  s = s + i;\n  i = i + 1;\n}\nprint s;\n";
+  Program P = compile(s);
+  UT(P.ok, "rotate: break program compiles");
+  UT(sum_ostats(P).rotations == 0,
+     "rotate: a live break edge keeps the test-first shape");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {30});
+  UT(o.out.size() == 1 && o.out[0] == 21,
+     "rotate: the break loop still sums to 21");
+}
+// (h) the precedence: lcf's runtime closed form wins, rotation is
+// the LAST loop consumer (the pure recurrence body never reaches it)
+{
+  const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                  "while (i <= n) {\n  s = s + i;\n  i = i + 1;\n"
+                  "}\nprint s;\nprint i;\n";
+  Program P = compile(s);
+  OptStats os = sum_ostats(P);
+  UT(os.rotations == 0, "rotate: lcf consumed the pure loop first");
+  UT(os.lcf_rt == 1, "rotate: the runtime closed form fired");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {60});
+  UT(o.out.size() == 2 && o.out[0] == 1830 && o.out[1] == 61,
+     "rotate: 1..60 sums to 1830, i exits at 61");
+}
+// (i) the toggle: p_rotate off keeps the test-first shape, outputs
+// identical
+{
+  const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                  "while (i <= n) {\n  print i;\n  s = s + i;\n"
+                  "  i = i + 1;\n}\nprint s;\nprint i;\n";
+  PassCfg cfg{};
+  cfg.set_level(3);
+  cfg.p_rotate = false;
+  Program P = compile(s, cfg);
+  UT(P.ok, "rotate: the toggle compiles");
+  UT(sum_ostats(P).rotations == 0, "rotate: the toggle keeps it off");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {4});
+  UT(o.out.size() == 6 && o.out[4] == 10 && o.out[5] == 5,
+     "rotate: the un-rotated loop prints the same values");
+}
+// (j) breakpoint observations through a rotated loop: the bkpt is a
+// DCE root keeping the values alive, the observation fires per
+// iteration, the output stays in parity
+{
+  const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
+                  "while (i <= n) {\n  breakpoint s, i;\n"
+                  "  s = s + i;\n  i = i + 1;\n}\nprint s;\n";
+  Program P = compile(s);
+  UT(P.ok, "rotate: breakpoint loop compiles");
+  UT(sum_ostats(P).rotations >= 1, "rotate: the bkpt loop rotated");
+  RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {5});
+  RunOut opt = run_prog(fns_of(P, 1), 100000, {5});
+  UT(same_run(oracle, opt) && opt.out.size() == 1 && opt.out[0] == 15,
+     "rotate: breakpoint parity, s=15");
+}
+// (k) a callee's loop: two callers keep the callee out of the inliner
+// (single-use loop bodies inline regardless of size), so its own
+// rotation statistic survives; the loop inside the callee rotates
+// exactly like main's (an if in the body keeps it multi-block — a
+// single-block self-loop is the documented bail)
+{
+  const char *s = "fn work(n) {\n  let s = 0;\n  let i = 1;\n"
+                  "  while (i <= n) {\n"
+                  "    if (i % 2 == 0) { print i; } else { print 0 - i; }\n"
+                  "    s = s + i;\n    i = i + 1;\n  }\n  return s;\n}\n"
+                  "fn spin(n) { if (n <= 0) { return 0; } "
+                  "return work(n) + spin(n - 1);\n}\n"
+                  "print work(input()) + spin(input());\n";
+  Program P = compile(s);
+  UT(P.ok, "rotate: recursive-callee program compiles");
+  UT(sum_ostats(P).rotations >= 1, "rotate: a callee loop rotated");
+  RunOut o = run_prog(fns_of(P, 1), 100000, {2, 2});
+  UT(o.out.size() == 6 && o.out[0] == -1 && o.out[1] == 2 && o.out[2] == -1 &&
+         o.out[3] == 2 && o.out[4] == -1 && o.out[5] == 7,
+     "rotate: work(2), then spin: -1 2 -1, then 3+4=7");
+}
+}
+
+// ---- 16. the generic SSA kernel (mjz::ssa_ns, ir/ssa_generic.hpp) -------
+// Pure index-space contracts, no Fn/Instr involved: placement, the
+// N-ary phi records (including a 3-pred join this IR cannot even
+// spell -- the multi-branch answer), renaming as tables, the reflow
+// plan, the merge-chain lowering.
+{
+  using ssa_ns::ssa_def_v;
+  using ssa_ns::ssa_event_t;
+  using ssa_ns::ssa_none_v;
+  using ssa_ns::ssa_use_v;
+  // dominator bundle from succ adjacency (what An::analyze does)
+  auto an_of = [](const std::vector<std::vector<ulen>> &adjs) {
+    struct A_ {
+      gns::treversal_result_t<V> fs, fp, dom_tree, df;
+      std::vector<ulen> idom;
+    } a;
+    a.fs = gns::make_basic_forest<V>(adjs);
+    a.fp = gns::make_basic_inv_forest<V>(adjs);
+    a.idom = gns::calculate_dominators_from_entry<V>(0, a.fs, a.fp);
+    a.dom_tree = gns::make_dominator_forest_given_dominators<V>(a.idom);
+    a.df = gns::calculate_dominance_frontiers_given_dominators<V>(a.idom, a.fp);
+    return a;
+  };
+  // ascending positional pred rows (the fn.preds order the adapters use)
+  auto preds_of = [](const std::vector<std::vector<ulen>> &adjs) {
+    std::vector<std::vector<ulen>> prs(adjs.size());
+    for (ulen b = 0; b < adjs.size(); ++b)
+      for (ulen s : adjs[b])
+        prs[s].push_back(b);
+    return prs;
+  };
+  auto row_is = [](const auto &forest, ulen b, std::vector<ulen> want) -> bool {
+    auto r = forest.range()[b];
+    if (std::ranges::size(r) != want.size())
+      return false;
+    for (ulen i = 0; i < want.size(); ++i)
+      if (r[i] != want[i])
+        return false;
+    return true;
+  };
+
+  // 16a. placement: diamond -> phi at the join; loop -> phi at the
+  // header; single-def vars are skipped (the classic construction)
   {
-    const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
-                    "while (i <= n) {\n  print i;\n  s = s + i;\n"
-                    "  i = i + 1;\n}\nprint s;\nprint i;\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: impure-body program compiles");
-    OptStats os = sum_ostats(P);
-    UT(os.rotations == 1, "rotate: the while loop was rotated");
-    RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {4});
-    RunOut plain = run_prog(fns_of(P, 0), 100000, {4});
-    RunOut opt = run_prog(fns_of(P, 1), 100000, {4});
-    RunOut lowered = run_prog(fns_of(P, 2), 100000, {4});
-    RunOut vm = vm_run(emit_bytecode(fns_of(P, 2)), 1000000, {4});
-    UT(same_run(oracle, plain) && same_run(oracle, opt) &&
-           same_run(oracle, lowered) && same_run(oracle, vm),
-       "rotate: all five runners agree");
-    UT(opt.out.size() == 6 && opt.out[0] == 1 && opt.out[3] == 4 &&
-           opt.out[4] == 10 && opt.out[5] == 5,
-       "rotate: 4 trips print 1..4 then s=10, i=5");
-    // the shape: a 2-pred phi-headed block ending in Br — the rotated
-    // header (the ORIGINAL header ended in the loop test's Cbr)
-    bool saw_rot_header = false;
-    for (const Fn &F : fns_of(P, 1)) {
-      for (uint32_t b = 0; b < F.nblocks(); ++b) {
-        const uint32_t bg = F.blocks[b].begin, be = F.blocks[b].end;
-        if (bg == be || F.code[be - 1].k != K::Br || F.preds[b].size() != 2 ||
-            F.code[bg].k != K::Phi)
-          saw_rot_header = true; // (b == the rotated header)
-      }
-    }
-    UT(saw_rot_header, "rotate: the header ends in Br, not the test");
+    const std::vector<std::vector<ulen>> diamond = {{1, 2}, {3}, {3}, {}};
+    auto A = an_of(diamond);
+    auto prs = preds_of(diamond);
+    auto pf = gns::make_basic_forest<V>(prs);
+    std::vector<std::vector<ulen>> defs = {{1, 2}, {0}};
+    auto pl = ssa_ns::calculate_phi_placements<V>(A.df, pf, defs);
+    UT(row_is(pl, 3, {0}), "placement: diamond's join gets var 0");
+    UT(row_is(pl, 0, {}) && row_is(pl, 1, {}) && row_is(pl, 2, {}),
+       "placement: no phis outside the join");
+    const std::vector<std::vector<ulen>> loop = {{1}, {2, 3}, {1}, {}};
+    auto A2 = an_of(loop);
+    auto prs2 = preds_of(loop);
+    auto pf2 = gns::make_basic_forest<V>(prs2);
+    std::vector<std::vector<ulen>> defs2 = {{0, 2}, {2}};
+    auto pl2 = ssa_ns::calculate_phi_placements<V>(A2.df, pf2, defs2);
+    UT(row_is(pl2, 1, {0}), "placement: loop header gets var 0");
+    UT(row_is(pl2, 0, {}) && row_is(pl2, 2, {}) && row_is(pl2, 3, {}),
+       "placement: single-def var 1 places nothing");
   }
-  // (b) zero-trip: the guard skips the loop, the exit phis carry the
-  // entry values exactly
+  // 16b. renaming on the diamond: reaching defs, the classic
+  // stack-depth-at-push ordinals, both phi entries seeded per edge
   {
-    const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
-                    "while (i <= n) {\n  print i;\n  s = s + i;\n"
-                    "  i = i + 1;\n}\nprint s;\nprint i;\n";
-    Program P = compile(s);
-    RunOut z = run_prog(fns_of(P, 1), 100000, {0});
-    UT(z.out.size() == 2 && z.out[0] == 0 && z.out[1] == 1,
-       "rotate: zero trips print s=0, i=1 (the entry values)");
+    const std::vector<std::vector<ulen>> diamond = {{1, 2}, {3}, {3}, {}};
+    auto A = an_of(diamond);
+    auto prs = preds_of(diamond);
+    auto pf = gns::make_basic_forest<V>(prs);
+    auto sf = gns::make_basic_forest<V>(diamond);
+    std::vector<std::vector<ulen>> defs = {{1, 2}};
+    auto pl = ssa_ns::calculate_phi_placements<V>(A.df, pf, defs);
+    std::vector<std::vector<ssa_event_t>> evs = {{{ssa_def_v, 0, 0}},
+                                                 {{ssa_def_v, 0, 1}},
+                                                 {{ssa_def_v, 0, 2}},
+                                                 {{ssa_use_v, 0, 3}}};
+    auto R = ssa_ns::rename_ssa<V>(1, 4, A.dom_tree, sf, pf, pl, evs);
+    UT(R.visit_order.size() == 4 && R.visit_order[0] == 0,
+       "rename: dom-tree pre-order from block 0, all blocks");
+    UT(R.reaching_def[3] == 4, "rename: the join's use reads the phi");
+    UT(R.def_ordinal[0] == 0, "rename: entry def is version 0");
+    UT(R.reaching_def[1] == ssa_none_v && R.reaching_def[2] == ssa_none_v,
+       "rename: def sites get no reaching-def row (defs are not uses)");
+    UT(R.phi_block.size() == 1 && R.phi_block[0] == 3 && R.phi_var[0] == 0,
+       "rename: one phi record, at the join, for var 0");
+    UT(R.phi_def_site[0] == 4, "rename: phi site ids start at site_count");
+    UT(R.phi_entry_begin[1] - R.phi_entry_begin[0] == 2,
+       "rename: the join's phi has 2 entries (arity = pred count)");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 0] == 1 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 0] == 1,
+       "rename: entry 0 = the edge from arm 1, carrying arm 1's def");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 1] == 2 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 1] == 2,
+       "rename: entry 1 = the edge from arm 2, carrying arm 2's def");
   }
-  // (c) the header-increment regression (the selftest break_continue
-  // shape: while(1)+break folds so the increment lives IN the header —
-  // the moved def feeds the header phi's latch arg and must route
-  // through its fresh header phi)
+  // 16c. minimal SSA: an edge with no reaching def keeps arg NONE
+  // (the loop header's entry edge, var not live-in from entry)
   {
-    const char *s = "let s = 0;\nlet i = 0;\nwhile (1) {\n  i = i + 1;\n"
-                    "  if (i > 10) { break; }\n"
-                    "  if (i % 2 == 1) { continue; }\n  s = s + i;\n"
-                    "}\nprint s;\nprint i;\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: header-increment program compiles");
-    UT(sum_ostats(P).rotations >= 1,
-       "rotate: the folded while(1) loop was rotated");
+    const std::vector<std::vector<ulen>> loop = {{1}, {2, 3}, {1}, {}};
+    auto A = an_of(loop);
+    auto prs = preds_of(loop);
+    auto pf = gns::make_basic_forest<V>(prs);
+    auto sf = gns::make_basic_forest<V>(loop);
+    std::vector<std::vector<ulen>> defs = {{2, 2}}; // 2 defs in the body
+    auto pl = ssa_ns::calculate_phi_placements<V>(A.df, pf, defs);
+    std::vector<std::vector<ssa_event_t>> evs = {
+        {}, {{ssa_use_v, 0, 0}}, {{ssa_def_v, 0, 1}, {ssa_def_v, 0, 2}}, {}};
+    auto R = ssa_ns::rename_ssa<V>(1, 3, A.dom_tree, sf, pf, pl, evs);
+    UT(R.reaching_def[0] == 3, "rename: header use reads the phi");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 0] == 0 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 0] == ssa_none_v,
+       "rename: undef arg on the entry edge (minimal SSA)");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 1] == 2 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 1] == 2,
+       "rename: the back edge carries the body's LAST def");
+  }
+  // 16d. THE MULTI-BRANCH CASE: a 3-pred join gets a 3-entry phi
+  // record -- arbitrary arity is native to the kernel (the IR's own
+  // Phi instr cannot spell this; pred_norm lowers such joins into
+  // binary chains BEFORE SSA, which is exactly why the kernel also
+  // exports the chain planner)
+  {
+    const std::vector<std::vector<ulen>> fork3 = {{1, 2, 3}, {4}, {4}, {4}, {}};
+    auto A = an_of(fork3);
+    auto prs = preds_of(fork3);
+    auto pf = gns::make_basic_forest<V>(prs);
+    auto sf = gns::make_basic_forest<V>(fork3);
+    std::vector<std::vector<ulen>> defs = {{1, 2}};
+    auto pl = ssa_ns::calculate_phi_placements<V>(A.df, pf, defs);
+    UT(row_is(pl, 4, {0}), "n-ary: the 3-pred join places the phi");
+    std::vector<std::vector<ssa_event_t>> evs = {
+        {}, {{ssa_def_v, 0, 0}}, {{ssa_def_v, 0, 1}}, {}, {{ssa_use_v, 0, 2}}};
+    auto R = ssa_ns::rename_ssa<V>(1, 3, A.dom_tree, sf, pf, pl, evs);
+    UT(R.phi_entry_begin[1] - R.phi_entry_begin[0] == 3,
+       "n-ary: the phi record has THREE entries");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 0] == 1 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 0] == 0,
+       "n-ary: entry 0 = edge from block 1");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 1] == 2 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 1] == 1,
+       "n-ary: entry 1 = edge from block 2");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 2] == 3 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 2] == ssa_none_v,
+       "n-ary: entry 2 = edge from block 3, undef (no def on it)");
+    UT(R.reaching_def[2] == 3, "n-ary: the join's use reads the phi");
+  }
+  // 16e. duplicate pred rows (cbr X X) mixed into an N-ary join: the
+  // row [0,0,2] has arity 3 with block 0 twice; only the LAST slot of
+  // the repeated pred is seeded -- the adapters' lowering rule pins
+  // to it. (A pure [0,0] block, by contrast, is its pred's dominated
+  // child: empty frontier, no phi at all -- the dup is one real edge.)
+  {
+    const std::vector<std::vector<ulen>> dup = {{1, 1, 2}, {}, {1}};
+    auto A = an_of(dup);
+    auto prs = preds_of(dup); // preds[1] = [0, 0, 2]
+    auto pf = gns::make_basic_forest<V>(prs);
+    auto sf = gns::make_basic_forest<V>(dup);
+    std::vector<std::vector<ulen>> defs = {{0, 2}};
+    auto pl = ssa_ns::calculate_phi_placements<V>(A.df, pf, defs);
+    UT(row_is(pl, 1, {0}), "dup-pred: the [0,0,2] join places the phi");
+    std::vector<std::vector<ssa_event_t>> evs = {
+        {{ssa_def_v, 0, 0}}, {{ssa_use_v, 0, 2}}, {{ssa_def_v, 0, 1}}};
+    auto R = ssa_ns::rename_ssa<V>(1, 3, A.dom_tree, sf, pf, pl, evs);
+    UT(R.phi_entry_begin[1] - R.phi_entry_begin[0] == 3,
+       "dup-pred: the phi record has 3 entries (dups count)");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 0] == ssa_none_v,
+       "dup-pred: the FIRST slot of the repeated pred stays unseeded");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 1] == 0 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 1] == 0,
+       "dup-pred: the LAST slot of the repeated pred carries its value");
+    UT(R.phi_entry_pred[R.phi_entry_begin[0] + 2] == 2 &&
+           R.phi_entry_def[R.phi_entry_begin[0] + 2] == 1,
+       "dup-pred: the third edge is block 2's, carrying its def");
+    UT(R.reaching_def[2] == 3, "dup-pred: the join's use reads the phi");
+    // and the degenerate case: cbr(c, X, X) alone places NOTHING at X
+    // (X is its pred's dominated child -- one real edge, empty DF)
+    const std::vector<std::vector<ulen>> dup1 = {{1, 1}, {}};
+    auto A1 = an_of(dup1);
+    auto prs1 = preds_of(dup1);
+    auto pf1 = gns::make_basic_forest<V>(prs1);
+    std::vector<std::vector<ulen>> defs1 = {{0, 0}};
+    auto pl1 = ssa_ns::calculate_phi_placements<V>(A1.df, pf1, defs1);
+    UT(row_is(pl1, 1, {}),
+       "dup-pred: a lone cbr X X needs no phi (empty frontier)");
+  }
+  // 16f. reflow: drop + head inserts + anchored afters, one plan
+  {
+    std::vector<ulen> ob = {0, 3}, oe = {3, 5};
+    std::vector<ulen> keep = {1, 1, 0, 1, 1}, head = {2, 0},
+                      after = {0, 0, 0, 5, 0};
+    auto plan = ssa_ns::calculate_reflow_plan<V>(ob, oe, keep, head, after);
+    UT(plan.total == 11, "reflow: total = heads + kept + afters");
+    UT(plan.new_begin[0] == 0 && plan.new_end[0] == 4,
+       "reflow: block 0 = 2 heads + 2 kept");
+    UT(plan.new_begin[1] == 4 && plan.new_end[1] == 11,
+       "reflow: block 1 = kept + 5 anchored afters + kept");
+    UT(plan.old_to_new[0] == 2 && plan.old_to_new[1] == 3,
+       "reflow: survivors shift past the heads");
+    UT(plan.old_to_new[2] == ssa_none_v,
+       "reflow: the dropped instr maps to NONE");
+    UT(plan.old_to_new[3] == 4 && plan.old_to_new[4] == 10,
+       "reflow: afters shift the following survivors");
+  }
+  // 16g. the merge-chain plan: N preds -> a right-leaning binary chain
+  {
+    auto plan = ssa_ns::calculate_merge_chain_plan<V>(
+        7, std::vector<ulen>{7, 9, 11, 13, 15});
+    UT(plan.block == 7 && plan.chain_count == 3,
+       "chain: 5 preds -> 3 fresh chain blocks");
+    UT(plan.redirect_pred.size() == 4 && plan.redirect_pred[0] == 9 &&
+           plan.redirect_chain[0] == 0 && plan.redirect_pred[1] == 11 &&
+           plan.redirect_chain[1] == 0 && plan.redirect_pred[2] == 13 &&
+           plan.redirect_chain[2] == 1 && plan.redirect_pred[3] == 15 &&
+           plan.redirect_chain[3] == 2,
+       "chain: p1,p2 -> C0; p3 -> C1; p4 -> C2 (the pred_norm shape)");
+    auto plan3 =
+        ssa_ns::calculate_merge_chain_plan<V>(2, std::vector<ulen>{0, 1, 5});
+    UT(plan3.chain_count == 1 && plan3.redirect_pred.size() == 2 &&
+           plan3.redirect_pred[0] == 1 && plan3.redirect_chain[0] == 0 &&
+           plan3.redirect_pred[1] == 5 && plan3.redirect_chain[1] == 0,
+       "chain: 3 preds -> 1 chain block, both extras retargeted to it");
+    auto plan2 =
+        ssa_ns::calculate_merge_chain_plan<V>(2, std::vector<ulen>{0, 1});
+    UT(plan2.chain_count == 0 && plan2.redirect_pred.empty(),
+       "chain: 2 preds need no chain");
+  }
+  // 16h. kernel-vs-adapter end to end: a break/continue-heavy program
+  // (multi-pred normalization + placement + renaming + destruction,
+  // all through the generic kernel) still matches the oracle
+  {
+    const char *src = "let s = 0; let i = 0;\n"
+                      "while (i < 9) {\n"
+                      "  i = i + 1;\n"
+                      "  if (i == 3) { continue; }\n"
+                      "  if (i == 5) { break; }\n"
+                      "  if (i > 7) { s = s + 100; } else { s = s + i; }\n"
+                      "}\n"
+                      "print s; print i;\n";
+    Program P = compile(src);
+    UT(P.ok, "kernel: break/continue program compiles");
     RunOut o = run_prog(fns_of(P, 1), 100000, {});
-    UT(o.out.size() == 2 && o.out[0] == 30 && o.out[1] == 11,
-       "rotate: evens sum to 30, i exits at 11");
-  }
-  // (d) side effects in the moved header keep their exact count: a fn
-  // call in the loop condition fires k+1 times (the guard copy IS the
-  // 1st header run, the latch copy of iteration i is the (i+1)-th)
-  {
-    const char *s = "fn probe(x) { print x; return x * 2; }\n"
-                    "let n = input();\nlet i = 0;\nlet s = 0;\n"
-                    "while (probe(i) < n) {\n  s = s + i;\n  i = i + 1;\n"
-                    "}\nprint s;\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: call-in-condition compiles");
-    UT(sum_ostats(P).rotations >= 1, "rotate: the call-header loop rotated");
-    RunOut o = run_prog(fns_of(P, 1), 100000, {10});
-    UT(o.out.size() == 7, "rotate: 6 probe prints (k+1) then s");
-    bool seq_ok = o.out.size() == 7 && o.out[6] == 10;
-    for (int k = 0; k < 6 && o.out.size() == 7; ++k)
-      seq_ok = seq_ok && o.out[k] == k;
-    UT(seq_ok, "rotate: probe printed 0..5 in order, then s=10");
-  }
-  // (e) nested loops rotate independently (innermost first)
-  {
-    const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
-                    "while (i <= n) {\n  let j = 1;\n"
-                    "  while (j <= i) {\n    print j;\n    s = s + 1;\n"
-                    "    j = j + 1;\n  }\n  i = i + 1;\n}\nprint s;\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: nested loops compile");
-    UT(sum_ostats(P).rotations == 2, "rotate: both loops rotated");
-    RunOut o = run_prog(fns_of(P, 1), 100000, {3});
-    UT(o.out.size() == 7 && o.out[0] == 1 && o.out[1] == 1 && o.out[2] == 2 &&
-           o.out[3] == 1 && o.out[4] == 2 && o.out[5] == 3 && o.out[6] == 6,
-       "rotate: triangular prints 1|1 2|1 2 3 then 6");
-  }
-  // (f) the polarity flip: the body on the cbr's FALSE arm (i >= n)
-  {
-    const char *s = "let n = input();\nlet i = input();\n"
-                    "while (i >= n) {\n  print i;\n  i = i - 1;\n"
-                    "}\nprint i;\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: polarity-flip program compiles");
-    UT(sum_ostats(P).rotations == 1, "rotate: the false-arm loop rotated");
-    RunOut o = run_prog(fns_of(P, 1), 100000, {5, 8});
-    UT(o.out.size() == 5 && o.out[0] == 8 && o.out[1] == 7 && o.out[2] == 6 &&
-           o.out[3] == 5 && o.out[4] == 4,
-       "rotate: 8 7 6 5 then the exit value 4");
-  }
-  // (g) a SURVIVING break edge: not this pass's shape (the strict
-  // unroll/lcf family — no break edges allowed)
-  {
-    const char *s = "let n = input();\nlet s = 0;\nlet i = 0;\n"
-                    "while (i < n) {\n  if (s > 20) { break; }\n"
-                    "  s = s + i;\n  i = i + 1;\n}\nprint s;\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: break program compiles");
-    UT(sum_ostats(P).rotations == 0,
-       "rotate: a live break edge keeps the test-first shape");
-    RunOut o = run_prog(fns_of(P, 1), 100000, {30});
-    UT(o.out.size() == 1 && o.out[0] == 21,
-       "rotate: the break loop still sums to 21");
-  }
-  // (h) the precedence: lcf's runtime closed form wins, rotation is
-  // the LAST loop consumer (the pure recurrence body never reaches it)
-  {
-    const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
-                    "while (i <= n) {\n  s = s + i;\n  i = i + 1;\n"
-                    "}\nprint s;\nprint i;\n";
-    Program P = compile(s);
-    OptStats os = sum_ostats(P);
-    UT(os.rotations == 0, "rotate: lcf consumed the pure loop first");
-    UT(os.lcf_rt == 1, "rotate: the runtime closed form fired");
-    RunOut o = run_prog(fns_of(P, 1), 100000, {60});
-    UT(o.out.size() == 2 && o.out[0] == 1830 && o.out[1] == 61,
-       "rotate: 1..60 sums to 1830, i exits at 61");
-  }
-  // (i) the toggle: p_rotate off keeps the test-first shape, outputs
-  // identical
-  {
-    const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
-                    "while (i <= n) {\n  print i;\n  s = s + i;\n"
-                    "  i = i + 1;\n}\nprint s;\nprint i;\n";
-    PassCfg cfg{};
-    cfg.set_level(3);
-    cfg.p_rotate = false;
-    Program P = compile(s, cfg);
-    UT(P.ok, "rotate: the toggle compiles");
-    UT(sum_ostats(P).rotations == 0, "rotate: the toggle keeps it off");
-    RunOut o = run_prog(fns_of(P, 1), 100000, {4});
-    UT(o.out.size() == 6 && o.out[4] == 10 && o.out[5] == 5,
-       "rotate: the un-rotated loop prints the same values");
-  }
-  // (j) breakpoint observations through a rotated loop: the bkpt is a
-  // DCE root keeping the values alive, the observation fires per
-  // iteration, the output stays in parity
-  {
-    const char *s = "let n = input();\nlet s = 0;\nlet i = 1;\n"
-                    "while (i <= n) {\n  breakpoint s, i;\n"
-                    "  s = s + i;\n  i = i + 1;\n}\nprint s;\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: breakpoint loop compiles");
-    UT(sum_ostats(P).rotations >= 1, "rotate: the bkpt loop rotated");
-    RunOut oracle = run_ast(P.P.ast, P.P.root, 100000, {5});
-    RunOut opt = run_prog(fns_of(P, 1), 100000, {5});
-    UT(same_run(oracle, opt) && opt.out.size() == 1 && opt.out[0] == 15,
-       "rotate: breakpoint parity, s=15");
-  }
-  // (k) a callee's loop: two callers keep the callee out of the inliner
-  // (single-use loop bodies inline regardless of size), so its own
-  // rotation statistic survives; the loop inside the callee rotates
-  // exactly like main's (an if in the body keeps it multi-block — a
-  // single-block self-loop is the documented bail)
-  {
-    const char *s = "fn work(n) {\n  let s = 0;\n  let i = 1;\n"
-                    "  while (i <= n) {\n"
-                    "    if (i % 2 == 0) { print i; } else { print 0 - i; }\n"
-                    "    s = s + i;\n    i = i + 1;\n  }\n  return s;\n}\n"
-                    "fn spin(n) { if (n <= 0) { return 0; } "
-                    "return work(n) + spin(n - 1);\n}\n"
-                    "print work(input()) + spin(input());\n";
-    Program P = compile(s);
-    UT(P.ok, "rotate: recursive-callee program compiles");
-    UT(sum_ostats(P).rotations >= 1, "rotate: a callee loop rotated");
-    RunOut o = run_prog(fns_of(P, 1), 100000, {2, 2});
-    UT(o.out.size() == 6 && o.out[0] == -1 && o.out[1] == 2 && o.out[2] == -1 &&
-           o.out[3] == 2 && o.out[4] == -1 && o.out[5] == 7,
-       "rotate: work(2), then spin: -1 2 -1, then 3+4=7");
+    UT(o.out.size() == 2 && o.out[0] == 1 + 2 + 4 && o.out[1] == 5,
+       "kernel: s = 1+2+4 (3 skipped, 5 breaks), i = 5");
   }
 }
 
