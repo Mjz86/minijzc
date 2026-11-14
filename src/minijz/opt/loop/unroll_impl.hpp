@@ -263,7 +263,7 @@ constexpr bool unr_arms(UnrLoop &L) {
   } else if (L.hterm.f == L.X && L.hterm.t != NONE && L.inL[L.hterm.t]) {
     body = L.hterm.t;
     exit_on_true = false; // continue-style: TRUE runs the body,
-  } // FALSE exits (the ordinary while shape)
+  }                       // FALSE exits (the ordinary while shape)
   else
     return false; // both arms in-loop: no header exit at all
   if (body == L.h)

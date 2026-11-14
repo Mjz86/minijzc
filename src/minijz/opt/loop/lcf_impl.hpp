@@ -36,9 +36,9 @@
 #include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
 #include "../linear/linform.hpp"
-#include "loop_shape.hpp" // HPhi (the shared header-phi record)
-#include "lcf_sim.hpp"    // LcfSimIn + lcf_sim_fold + the budgets
 #include "lcf_rt.hpp"     // LcfEvo + LcfRtIn + lcf_rt_fold
+#include "lcf_sim.hpp"    // LcfSimIn + lcf_sim_fold + the budgets
+#include "loop_shape.hpp" // HPhi (the shared header-phi record)
 
 // ---- the series algebra (a^n, S(n), T(n), all mod 2^64) -----------------
 // lcf_pow has no callers today (kept: it documents the a^N in K1 and is
@@ -249,7 +249,7 @@ constexpr bool lcf_arms(LcfLoop &L) {
   if (L.hterm.t == L.X && L.hterm.f != NONE && L.inL[L.hterm.f]) {
     L.body = L.hterm.f;
     L.exit_on_true = true; // break-style: TRUE leaves (a folded `break`
-  } // became the header test: constant while-tests
+  }                        // became the header test: constant while-tests
   else if (L.hterm.f == L.X && L.hterm.t != NONE && L.inL[L.hterm.t]) {
     L.body = L.hterm.t;
     L.exit_on_true = false; // continue-style: the ordinary while shape
