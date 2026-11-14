@@ -1,91 +1,91 @@
-# Checkpoint 27 — unswitch_bif decomposed (round five) + the LLVM-gap backlog
+# Checkpoint 28 — taildup decomposed (round six) + fuzz_parity.sh
 
-branchA @ (one commit on top of checkpoint 26's fold commit). The
-OPT_CHECKLIST queue's next named target, consumed:
-`opt/loop/unswitch_bif.hpp`'s unswitch_body_if — at 432 lines the
-biggest function left in the opt/ tree — got the cdfold/lcf/unroll/
-fold treatment, under the byte-identical discipline. Plus the
-standing plan ask: the LLVM optimization-list coverage analysis
-(127 items mapped to minijzc passes) is now a ranked backlog inside
-OPT_CHECKLIST.md, minus the excluded families (vectorization,
-cache, instruction selection).
+branchA @ (one commit on top of checkpoint 27's unswitch_bif
+commit). The OPT_CHECKLIST queue's next named target, consumed:
+`opt/scalar/taildup.hpp`'s opt_taildup — at 419 lines the biggest
+function left in the opt/ tree — got the cdfold/lcf/unroll/fold/
+unswitch_bif treatment, under the byte-identical discipline. Plus
+one tooling continuation: the differential-fuzz half of the
+protocol is now a committed script (scripts/fuzz_parity.sh), the
+ckpt-26 parity_diff.sh precedent applied to the fuzz windows.
 
 ## What landed
 
-### unswitch_bif: the 432-line monolith, decomposed (`unswitch_bif.hpp` 517 -> 87 + `unswitch_bif_impl.hpp` 767)
+### taildup: the 419-line monolith, decomposed (`taildup.hpp` 483 -> 94 + `taildup_impl.hpp` 719)
 
-The body-if unswitch (checkpoint 19's pass — the versioning of a
-loop on an invariant INNER branch, whose delivered walk restores
-SSA dominance after the guard splits the loop in two) became a
-21-line driver plus a support layer of 57 small constexpr
-functions + the BifCtx struct:
+The tail-duplication pass (checkpoint 20's feature — the small
+2-pred merge T duplicated into both dedicated preds, T's phis
+MOVING to routing phis at the continuations and born phis at
+re-merges) became a 24-line driver plus a support layer of 28
+small constexpr functions + the TdCtx struct:
 
-- **BifCtx**: fn/S/inL/bs (the rewrite target, the scan tables,
-  the loop flags, the matched shape) + h/pre/nb/nv + the scan
-  state (exits, loopdef, arm_edge, vm_vals, reads) + the commit
-  state (C the CloneMap, edge_vm, vm_phi, dcache) — the locals the
-  monolith held, grouped; dcache is shared by the delivered walk
-  and the rewire sweep so the sweep reads exactly what the walk
-  produced.
-- **the gates**: bif_preheader_ok (a dedicated `br h' block — the
-  guard replaces it wholesale) and bif_growth_ok (1..120 in-loop
-  instrs).
-- **the classification**: bif_mark_loopdefs (SSA one-def scan) and
-  bif_mark_arms (bif_is_pure_arm: an outside block whose only pred
-  is an in-loop exit source — the block whose value provider is the
-  one VM below it).
-- **the reverse-reachability flood**: bif_rr + bif_rr_step — every
-  exit target that reaches b through outside blocks; the worklist
-  walks PREDECESSOR edges and an in-loop pred means x is itself an
-  exit target (recorded — x, not p: the edge p->x leaves the loop).
-- **the outside-use scan**: phi args keyed to an in-loop pred are
-  exit edges (the VM entering the block merges the arg); outside
-  keys and plain operands are READS collected over rr into
-  vm_vals[t] + reads (bif_phi_arg_src / bif_outside_arg_src /
-  bif_plain_src / bif_collect_read). A read no exit reaches sets
-  bad — dominance says it cannot execute; bail untouched.
-- **the routes validator**: bif_routes (+ chain/merge/pred helpers)
-  proves every read providable at its block entry — pure arm -> the
-  VM carries it, chain -> the pred routes, merge -> one arg per
-  pred — cycle-guarded, all BEFORE the commit's first edit: a
-  mid-commit bail would leave a half-versioned fn.
-- **the commit tail**: bif_clone_loop (bypass NONE — the
-  while-test stays live in BOTH versions), bif_rewrite_branches
-  (bif: br A / bif': br B'), the VM blocks (bif_emit_vm + phis:
-  one phi per vm_vals entry, keyed {exit source, its clone}),
-  bif_retarget_exits (both sides enter their VMs), bif_emit_guard
-  (pre: cbr(INV) h / h'), the delivered walk (bif_delivered +
-  arm/chain/merge walkers, bif_emit_merge_phi with the
-  range-shift bookkeeping, memoized in dcache), and the rewire
-  sweep (bif_rekey_phi for in-loop keys -> the VM,
-  bif_rewrite_use for plain reads -> the delivered value).
-- **the one retirement**: the monolith's `pi = 3' failure sentinel
-  became a direct `return NONE' — same observable result (no phi,
-  no dcache entry), one less piece of hidden state; documented in
-  the impl header's THEORY block next to the
-  validate-then-edit argument.
+- **TdCtx**: fn/A/T/P0/P1/U0/U1 (the rewrite target, the analysis,
+  the candidate) + nb/nv (the pass-entry universe — the sub/rw
+  guards read nv so the commit's own fresh vregs are invisible to
+  the substitution scans) + tterm (saved pre-edit) + the scan
+  tables (phi_dst/a/b, defv, local0/1, route, bsites, isdef,
+  need0/1, bvals, bad) + the commit state (uphi0/1, bphi).
+- **the gates**: td_preds_ok + td_dedicated_br (preds(T) == {P0,
+  P1}, both ending in a dedicated `br T', T not a loop header —
+  that is rotation's), td_content_ok + td_collect_phi +
+  td_phi_arg (the phis keyed to both preds, the body <=
+  TAILDUP_BODY_MAX of Const/Copy/Bin/Print, the terminator Br/Cbr/
+  Exit/Ret), td_continuations (Br: one target; Cbr: two, a
+  degenerate collapses; Exit/Ret: none), td_succs_ok (each
+  continuation T-private and phi-free at its top).
+- **the routing fixpoint**: td_route_seed (dominance: exactly one
+  continuation dominating b -> its phi; T/P0/P1 dead), then
+  td_route_step + td_born_site under td_route_fixpoint — the mini
+  SSA construction: single-pred chains pass their supplier down,
+  same-supplier merges read it, different-supplier merges get a
+  fresh phi BORN there (the loop-latch feedback edge is exactly
+  this shape — what makes in-loop merges duplicable). Round cap
+  nb+1, block order, in-place in-round visibility: all the
+  original's.
+- **the outside-use scan**: td_outside_uses_ok + td_check_use +
+  td_mark_need — every outside use of a T-defined value must be
+  routable (plain use: its block's route; phi arg: the KEYED
+  PRED's route), and each use marks its need down the supplier
+  chain (need0/need1 for the uphis, bvals for the born phis on the
+  route, recursively). A stray read bails the candidate BEFORE the
+  commit's first edit — validate, then edit.
+- **the commit tail**: td_alloc_locals (fresh per-copy vregs,
+  local0 then local1 per def), td_emit_uphis (the continuations'
+  routing phis, one per needed defv, U0 then U1), td_emit_bphis
+  (site order = creation order, so a site's args reference only
+  EARLIER sites' phis and the uphis), td_copy_tail + td_sub_val +
+  td_install_tail + td_emit_copies (the two substituted copies —
+  phis skipped, defs and operands substituted, P's `br T' replaced
+  by T's substituted terminator, the bounds re-read fresh per
+  side), td_rewire_uses + td_rewire_use (every outside use -> its
+  route's phi), td_commit (os.taildups first, recompute_preds
+  last).
+- **the two dedups** (both provably identical, in the impl
+  contract): td_prepend_phis — the uphi and born-phi prepends
+  shared one exact insert-and-shift statement sequence (the copy
+  install's shift stays separate: it REPLACES a terminator,
+  signed compares, end-only shift for the target block); td_arg_of
+  — the (r,di) -> phi-dst lookup the born phis' args and the
+  rewire's assignment both computed.
+- **the landmine honored**: the allocation ORDER is observable (the
+  register-audit table keys on vreg ids) — body locals, then
+  uphis U0-then-U1 for the needed defs only, then born phis
+  site-by-site in bvals order; every order preserved to the
+  character and documented.
 
-40 of the 57 functions are at most 10 lines; the rest are integral
-steps (the flood step, the designated-initializer phi emitters,
-the merge walkers). Every scan bound, emission order, counter
-increment and preserved asymmetry is the original's.
+9 of the 28 functions are at most 10 lines; the rest are integral
+steps (the route step's four cases, the content walk's
+load-bearing if-chain, the mark_need stack walk, the phi emitters,
+the replace-and-shift install).
 
-### the plan: the LLVM-gap backlog (OPT_CHECKLIST.md)
+### the tooling: scripts/fuzz_parity.sh (the differential fuzz, committed)
 
-The 127-item coverage analysis (download/LLVM_OPT_COVERAGE.md;
-62% of the applicable items — IR-cleanup 86, control-flow 80,
-memory 77, interprocedural 76, scalar 68, loop 54,
-target-profitability 36, backend 34) became a ranked backlog:
-4 high-value (PRE/LCM, DSE killing-store chains, dependence
-analysis as the enabler, SCEV-as-shared-analysis), 9 medium (code
-sinking, runtime-trip partial unrolling, loop predication,
-aggressive DCE, splice chains, function outlining, attribute
-inference, register coalescing, InstCombine rule growth), 4
-machine-layer (block placement, asm peephole, spill placement,
-shrink-wrapping), and the deliberately-not-planned list with
-reasons on record — vectorization, cache, and instruction
-selection excluded by request; scheduling delegated to the OoO
-core; LCSSA deferred until PRE exists.
+The ckpt-26 move (parity as a committed script) extended to the
+fuzz half of the protocol: scripts/fuzz_parity.sh OLD NEW FROM TO
+runs both binaries over a seed window and compares the outputs
+modulo the timing lines (the [fuzz k/n] progress lines and the
+wall summary). Both committed windows verified through it at this
+checkpoint.
 
 ## The verification (all green)
 
@@ -93,19 +93,25 @@ core; LCSSA deferred until PRE exists.
   (47 programs x 3 variants, stdin-aware, + 3 debugger tours +
   --demo + the -O3 stats report) via scripts/parity_diff.sh
 - audit: examples/audit/RESULTS.md regenerated — git clean
-  (identical table)
+  (identical table: 710 vregs / 137 spills)
 - differential fuzz: 16131-16280 and 14231-14430, old vs new —
-  identical modulo timing lines, zero mismatches (the stats line:
-  36 unswitches, 49 body-if bait programs exercised)
+  identical modulo timing lines, zero mismatches, via
+  scripts/fuzz_parity.sh (the stats line — including the taildups
+  counter — compared verbatim)
 - selftest 207/207; ctest 44/44; units 6328/6328; check-format
-  clean; header order 101/101 + umbrella; includes 427/427
+  clean (clang-format 16.0.6 — the tree's formatting version; see
+  OPT_CHECKLIST.md's protocol note); header order 102/102 +
+  umbrella; includes 431/431
 
 ## Layout deltas
 
-- new: src/minijz/opt/loop/unswitch_bif_impl.hpp (767 lines, the
-  support layer + the full theory banner)
-- rewritten: src/minijz/opt/loop/unswitch_bif.hpp (517 -> 87: the
-  theory intro + the 21-line driver)
-- OPT_CHECKLIST.md: unswitch_bif moved to Done; the LLVM-gap
-  backlog section added
-- README.md: this checkpoint's ledger entry (section 13)
+- new: src/minijz/opt/scalar/taildup_impl.hpp (719 lines, the
+  support layer + the full theory banner + the byte-identical
+  contract)
+- rewritten: src/minijz/opt/scalar/taildup.hpp (483 -> 94: the
+  theory intro + the 24-line driver)
+- new: scripts/fuzz_parity.sh (the differential-fuzz gate)
+- OPT_CHECKLIST.md: taildup moved to Done; the queue's next up is
+  mem2reg (~415); the protocol names fuzz_parity.sh + the
+  clang-format-16 note
+- README.md: this checkpoint's ledger entry (section 14)

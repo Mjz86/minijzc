@@ -1443,3 +1443,72 @@ refactor, zero behavior change.
   44/44, units 6328/6328, check-format clean, header order 101/101
   + umbrella (unswitch_bif_impl.hpp is the 101st), includes
   427/427.
+
+## 14. checkpoint 28: taildup decomposed (the code-quality continuation, round six) — DONE
+
+The queue's #1 target, consumed: `opt/scalar/taildup.hpp`'s
+opt_taildup — at 419 lines the biggest function left in the opt/
+tree (the whole 483-line file was one function plus banners; the
+tail-duplication pass: the small 2-pred merge duplicated into both
+arms, whose routing fixpoint and born phis restore SSA dominance).
+The cdfold/lcf/unroll/fold/unswitch_bif treatment, round six. Pure
+refactor, zero behavior change.
+
+* **the split**: `taildup.hpp` 483 -> 94 lines; the driver is a
+  24-line opt_taildup (the phase sequence reads top to bottom:
+  scan, preds, content, continuations, succs, the escape inventory,
+  the route seed + fixpoint, the outside-use scan, the commit). The
+  new `taildup_impl.hpp` (719 lines) holds TdCtx (the scan tables +
+  the commit state the monolith held in locals) and 28 small
+  constexpr functions: the gates (td_preds_ok/td_dedicated_br,
+  td_content_ok with td_collect_phi/td_phi_arg, td_continuations,
+  td_succs_ok), the routing (td_route_seed, the fixpoint's
+  td_route_step + td_born_site + td_route_fixpoint — the mini SSA
+  construction: single-pred chains pass their supplier down,
+  same-supplier merges read it, different-supplier merges get a
+  fresh phi BORN there), the use scan (td_outside_uses_ok +
+  td_check_use + td_mark_need — the need0/need1/bvals closure over
+  the supplier routes, bailing the candidate BEFORE the commit's
+  first edit), and the commit tail (td_alloc_locals, td_emit_uphis,
+  td_emit_bphis, td_copy_tail + td_sub_val, td_install_tail,
+  td_emit_copies, td_rewire_uses, td_commit). 9 of the 28 are at
+  most 10 lines; the rest are integral steps (the route step's four
+  cases, the content walk's load-bearing if-chain, the stack walk,
+  the designated-initializer phi emitters, the replace-and-shift
+  install).
+* **the two dedups** (both provably identical, documented in the
+  impl contract — the w_bin precedent): td_prepend_phis — the uphi
+  and born-phi prepends shared one exact statement sequence
+  (insert at the block's begin, then the three-way bound shift),
+  now one helper; the copy install's shift stays SEPARATE because
+  it is a different operation (terminator replacement: erase +
+  insert at term_pos, signed begin/end compares, the target block
+  shifts only its end). And td_arg_of — the (r,di) -> phi-dst
+  lookup that the born phis' .a/.b2 and the rewire's assignment
+  both computed as the same conditional chain.
+* **the landmine honored**: the ALLOCATION ORDER is observable (the
+  register-audit table keys on vreg ids): body locals local0-then-
+  local1 per def in defv order, then the routing phis U0's defs
+  then U1's (only the needed ones, di ascending), then the born
+  phis site-by-site in bvals order — every order preserved to the
+  character, and the copy walk re-reads T's block bounds fresh per
+  side (side 0's install may shift them; side 1 must see the
+  shifted window). All in the impl header's byte-identical
+  contract, alongside the preserved asymmetries (the unguarded
+  dedicated-br terminator read, the both-continuations full scan,
+  the content walk's if-chain order, the fixpoint's in-round
+  visibility, mark_need's r0-before-r1 push order).
+* **the verification**: 146 parity runs (47 programs x three flag
+  variants, stdin-aware, + three scripted debugger tours + --demo +
+  the -O3 stats report) byte-identical vs the pre-refactor binary;
+  the register-audit table regenerated identically (git clean);
+  differential fuzz 16131-16280 + 14231-14430 identical modulo
+  timing lines, zero mismatches — now via the committed
+  scripts/fuzz_parity.sh (the parity_diff.sh precedent: the
+  differential step is a script, not ad-hoc bash); selftest
+  207/207, ctest 44/44, units 6328/6328, check-format clean (note:
+  the tree is formatted with clang-format 16 — 16.0.6 reproduces
+  the gate clean tree-wide; 17+ would reflow tests/unit_tests.cpp's
+  hand-shaped nested-brace blocks wholesale — recorded in
+  OPT_CHECKLIST.md's protocol), header order 102/102 + umbrella
+  (taildup_impl.hpp is the 102nd), includes 431/431.

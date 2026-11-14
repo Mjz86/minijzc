@@ -31,12 +31,25 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
       in the impl header) (ckpt 27; verified: 146-run parity,
       audit table identical, both fuzz windows identical modulo
       timing)
+- [x] opt/scalar/taildup.hpp — opt_taildup 419 lines -> 24-line
+      driver + taildup_impl.hpp, 28 small functions + TdCtx (the
+      gates: dedicated-pred pair, content envelope, private
+      continuations; the route seed + fixpoint with the born sites;
+      the outside-use scan's need/bvals closure, validated before
+      the commit's first edit; the commit tail: per-copy vregs,
+      routing phis, born phis, the two substituted copies, the
+      rewire); TWO dedups (td_prepend_phis: the uphi and born-phi
+      prepends' identical statement sequence; td_arg_of: the born
+      phis' and the rewire's shared (r,di) lookup), the
+      allocation-order landmine documented (ckpt 28; verified:
+      146-run parity, audit table identical, both fuzz windows
+      identical modulo timing via the committed scripts/
+      fuzz_parity.sh)
 
 ## Queue (priority = biggest first; sizes re-measured 2026-11-14)
 
-- [ ] opt/scalar/taildup.hpp — ~419 lines (483-line file) NEXT UP.
 - [ ] opt/mem2reg.hpp — ~415 lines (474-line file; the SSA-promotion
-      core, theory header already landed at 25)
+      core, theory header already landed at 25) NEXT UP.
 - [ ] opt/loop/rotate.hpp — ~405 lines (477-line file)
 - [ ] opt/interprocedural/scctco.hpp — scctco_member ~392 lines
       (735-line file, also on the >700-line file list)
@@ -74,10 +87,16 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
 
 README task-list ledger update -> full battery green (selftest,
 ctest, units, format, parity spot-checks incl. stdin tapes, fuzz
-windows clean differentially) -> commit -> `download/NN-*.zip` with
-fresh SUMMARY.md + CONTINUE.md -> archive with ANCHORED excludes
-(`./build`, `./build-ho`, `./mjz_lib`, `*.exe`, `*.out.tmp`,
-`*.mbc`) -> do NOT push origin.
+windows clean differentially via scripts/fuzz_parity.sh) -> commit
+-> `download/NN-*.zip` with fresh SUMMARY.md + CONTINUE.md ->
+archive with ANCHORED excludes (`./build`, `./build-ho`, `./mjz_lib`,
+`*.exe`, `*.out.tmp`, `*.mbc`) -> do NOT push origin.
+
+NOTE on format versions: the tree is formatted with clang-format 16
+(16.0.6 reproduces check-format clean tree-wide, including the
+hand-shaped nested-brace blocks in tests/unit_tests.cpp that
+17+ would reflow wholesale). Pip-install that exact version for the
+gate.
 
 ## The LLVM-gap backlog (added 2026-11-14, from the coverage analysis)
 
