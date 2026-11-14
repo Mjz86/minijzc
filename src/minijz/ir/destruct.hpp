@@ -2,6 +2,37 @@
 // === destruct.hpp ========================================
 // SSA destruction: split critical edges, materialize phis as copies,
 // fuse copy chains.
+//
+// THEORY (phi lowering as parallel assignment):
+//   A phi is a SIMULTANEOUS assignment of all its args at once --
+//   when control traverses edge p -> s, every phi in s receives its
+//   p-keyed arg in the same instant. Lowering to sequential copies
+//   must preserve that parallelism; the two classic hazards are:
+//   * THE SWAP CYCLE (lost-copy problem): `x,y = y,x` -- naive
+//     sequential copies clobber the source before its reader runs.
+//     sequentialize() therefore emits only copies whose dst is not
+//     a pending source; whatever survives that greedy filter is
+//     exactly a permutation cycle, broken by saving ONE source
+//     into a fresh anon temp (cycles_broken) -- the swap then
+//     reads the temp, never a clobbered slot.
+//   * UNDEF ARGS: minimal SSA placed phis whose args are NONE on
+//     edges where the variable was not live-in (an.hpp's
+//     placement theory); destruction materializes them as
+//     Const 0 -- matching the language's zero-initialized storage
+//     (the oracle reads 0 there).
+//   * CRITICAL EDGES: an edge from a 2-succ pred into a phi block
+//     needs a block of its own -- the copies must execute ONLY on
+//     that edge, but the pred's other successor must not see them.
+//     split_critical_edges inserts [br s] on such edges; after it
+//     every phi-block pred is single-succ, so each pred's copy set
+//     can sit directly before its own terminator.
+//   The rebuild reads block ranges from a SNAPSHOT (old_blocks):
+//     it rewrites fn.blocks[p] while later preds still read phi
+//     ranges by the old coordinates.
+//   9g2's post_destruct_peephole then fuses `t = e; d = t` pairs
+//   (single-reader renames) -- its soundness conditions (same
+//   block, no intermediate reader of dst, def above the copy) are
+//   documented inline below and are the load-bearing part.
 
 #include "../base/pass_cfg.hpp"
 #include "instr.hpp" // Fn (was masked by the old an.hpp include)

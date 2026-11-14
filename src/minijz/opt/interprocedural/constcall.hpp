@@ -6,6 +6,35 @@
 // its interprocedural home; loop/lcf_rt.hpp now really is the
 // runtime-trip closed-form layer of the LCF pass.)
 
+// ALGORITHM (opt_constcall): (1) classify every fn into pure[f] with
+//   fn_pure_closure -- a cycle-safe DFS demanding fn_local_pure (only
+//   Const/Copy/Bin/Br/Cbr/Phi/Depth/Call/Ret) at every closure node.
+//   (2) per caller, build def_at (the SSA def index) and cval, a
+//   bounded 16-hop walk over Copy and Phi-of-equal-arms chains that
+//   resolves an argument vreg to its defining Const. (3) for each
+//   Call with all-constant args to a pure callee of matching arity,
+//   apply the frame rules: a site in main evaluates at depth 0
+//   (exact); any other site refuses Depth-reading closures
+//   (closure_has_depth) and starts at MJZ_MAX_CALL_DEPTH-1, so only
+//   non-nesting chains can fold. (4) eval_pure_fn then interprets
+//   the SSA exactly (zero-init env, staged phis, w_bin); on success
+//   the Call becomes a Const with the same dst (constcalls stat).
+// DATA STRUCTURES: the pure[] table, def_at/cval per caller, the
+//   seen/work DFS lists of the closure walks, and the two budgets:
+//   MJZ_MAX_CALL_DEPTH (shared with every runner) and
+//   MJZ_CONSTCALL_STEPS (2^20 steps per attempt).
+// THEORY: purity leaves the return value and a possible trap as the
+//   only observable effects, and the evaluator mirrors the runtime
+//   exactly (same wrapping w_bin, same traps, same zero-initialized
+//   storage, same phi edge semantics, same depth cap), so a completed
+//   evaluation IS the runtime result; any trap, cap hit or exhausted
+//   budget aborts and keeps the call (a runtime trap is observable).
+//   Substitution is sound because SSA gives each vreg one def and
+//   cval follows only value-preserving links.
+// DOWNSTREAM: the folded Const keeps the call's dst, so every user
+//   reads the constant directly and the per-fn rounds propagate it
+//   (branch pruning, arithmetic folding); recursion that inlining can
+//   never expand is exactly what this pass resolves instead.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"

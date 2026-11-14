@@ -2,6 +2,36 @@
 // === icf.hpp ========================================
 // interprocedural identical code folding (ICF).
 
+// ALGORITHM (opt_icf, whole program, four phases):
+//   * candidacy: cand[f] is cleared for main (f==0), tailrec merge
+//     products (tce_sel != 0), post-destruction shapes (slot_of set)
+//     and any body containing K::Depth (frame-count dependent).
+//   * seeding: icf_serialize builds each fn's key with EVERY callee
+//     wildcarded (ICF_WILD); icf_group merges candidates into classes
+//     by first-equal-key, rep pointing every member at its class head.
+//   * refinement (8 rounds max): re-serialize with callees encoded as
+//     ICF_SELF for self-calls, literal for out-of-range indices, and
+//     rep[c] for the callee's CURRENT class representative; icf_group
+//     splits classes whose keys diverge. Folding happens only after a
+//     round that changed nothing (verified fixpoint); reaching the
+//     cap still changing declines the whole pass (return false).
+//   * redirect: every K::Call to a non-representative member is
+//     retargeted to rep[c]; ostats[rep[f]].icf counts each fold.
+// DATA STRUCTURES: keys[f], the vector<uint64_t> canonical serial
+//   (nparams/nvars/versions/blocks/succ/preds/stk_arrays plus every
+//   Instr field except src), matched by direct equality in icf_group
+//   (keys[g] == keys[f], no hashing); the cand eligibility table; the
+//   rep representative map; the ICF_WILD/ICF_SELF sentinels.
+// THEORY: two bodies with equal keys are structurally identical
+//   modulo the callee mapping, so every value, trap and allocation
+//   either can produce is the same -- a caller cannot tell a class
+//   member from its representative, making the I.c redirect inert.
+//   Wildcard seeding can only over-merge, and refinement only splits
+//   (equal refined keys imply equal wildcard keys), so the fixpoint
+//   classes are exactly the mutually-equivalent sets -- mutual
+//   recursion pairs A<->B / C<->D fold this way.
+// DOWNSTREAM: the true return tells the driver to run the dead-fn
+//   sweep, which deletes the folded duplicates.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 

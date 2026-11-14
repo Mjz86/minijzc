@@ -1,6 +1,32 @@
 #pragma once
 // === unreach.hpp ========================================
 // unreachable-block removal + phi arg pruning.
+//
+// ALGORITHM: opt_remove_unreachable runs three steps. (1) Mark: a
+//   worklist from block 0 floods reach[] through fn.succ0/succ1. (2)
+//   Sweep: if some unreachable block is genuinely new (not already
+//   isolated -- empty range, NONE succs -- which is old news), the
+//   reachable code is compacted per block; unreachable blocks are
+//   emptied, their succs set to NONE (isolate: no stale edges into
+//   analyses), counted in os.blocks_gone only if they died this round.
+//   (3) Prune: recompute_preds() always runs (succ may have changed
+//   via Cbr folds with no dead blocks); each leading Phi is checked
+//   pred by pred -- both live -> unchanged; one live -> K::Copy of
+//   that edge's arg; none live -> K::Const 0 undef (DCE food).
+// DATA STRUCTURES:
+//   * reach + wl: the per-block mark bytes and the flood worklist.
+//   * nc: the compacted instr vector, fn.blocks ranges updated.
+//   * I.t/I.f + fn.preds: phi pred ids vs the live pred list -- the
+//     pruning key, checked by is_live_pred.
+// THEORY: unreachable code can never execute, so deleting and
+//   isolating it preserves semantics; the sweep keeps per-block ranges
+//   valid. Phi pruning is exact because phi args carry their pred ids
+//   (t/f, set during SSA construction): with one pred left the phi
+//   always takes that edge's argument (-> copy), and with none it is
+//   undef -> K::Const 0 (cannot happen in a live block, but be safe).
+// ENABLES: degenerated phis become plain copies for copyprop and
+//   Const-0 undefs for dce; isolated blocks leave no stale edges for
+//   the analyses and scans that run later.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

@@ -2,6 +2,35 @@
 // === canon.hpp ========================================
 // canonicalization: comparison direction, commutative order,
 // NOT-of-compare combination (notcomb).
+//
+// ALGORITHM: opt_canon has two phases over all blocks. (1) Shape: for
+//   each K::Bin, `a > b` / `a >= b` swaps its operands and flips to
+//   `b < a` / `b <= a` (os.canon_cmps++); commutative ops (Add, Mul,
+//   Eq, Ne, And, Or, Xor, MulHi) put the smaller key() operand first
+//   (os.canon_swaps++) -- key(v): 0 for NONE, (1<<63)^value for a
+//   known const, else the vreg id. (2) notcomb: with defi/ndefs/uses
+//   built, an Eq/Ne whose right operand is a known const 0 or 1 and
+//   whose left operand t1 has ndefs == 1 and uses == 1, defined by a
+//   comparison D, rewrites itself into D's compare -- inverted through
+//   inv() for `== 0` / `!= 1` -- keeping canonical order (os.notcombs++).
+// DATA STRUCTURES:
+//   * kc/kv + key: const temps and the orderable tag -- the SAME key
+//     order the CSE pass uses, so `7*x` and `x*7` unify there.
+//   * defi/ndefs/uses: vreg -> def index plus def/use counts -- the
+//     notcomb gate (exactly one def, exactly one use: this test).
+// THEORY: comparisons never trap and swapping commutative operands
+//   preserves wrapping two's-complement results, so both shape rewrites
+//   are always sound. notcomb is sound because a comparison result is
+//   exactly 0/1 -- testing it against 0/1 IS the comparison (or its
+//   negation); the single-def/single-use gate makes the rewrite exact,
+//   and inv() maps each compare to its involutive negation (Lt<->Ge,
+//   Le<->Gt, Eq<->Ne -- the Gt/Ge rows once had results swapped, bug
+//   4, fuzz seed 1211). The pass is idempotent and strictly
+//   progress-making (no oscillation).
+// ENABLES: one canonical shape per computation is what makes CSE hit
+//   (`a>b` and `b<a` unify); the orphaned compare D loses its only use
+//   and becomes DCE food; with branch fusion, notcomb turns
+//   `if (!((a != b))) goto L;` into `if (a == b) goto L;`.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

@@ -1,6 +1,35 @@
 #pragma once
 // === dce.hpp ========================================
 // SSA dead-code elimination.
+//
+// ALGORITHM: opt_dce is a mark-sweep plus a phi fixpoint. (1) Seed
+//   scans build def_idx (vreg -> defining instr) and known/kval (const
+//   temps); may_trap(I) flags a Div/Mod without I.nt whose divisor is
+//   not a known nonzero const. (2) Mark: every root -- Print, Br, Cbr,
+//   Exit, Store, Input, Alloc, Load, Ret, Call, Bkpt, may_trap -- goes
+//   into live and the worklist wl; popping i marks def_idx of each
+//   operand in I.args and {I.a, I.b2, I.c2} live and pushes it. (3)
+//   Sweep: live instrs compact per block (os.dce++ per drop). (4) Up
+//   to 10 rounds of trivial-phi collapse: phi(a,a) / phi(a,self) /
+//   phi(a) becomes K::Copy of that arg; rounds cascade to a fixpoint.
+// DATA STRUCTURES:
+//   * known/kval: const temps, feeding may_trap's divisor test.
+//   * def_idx: vreg -> def instr index -- the use->def edge the
+//     worklist walk follows.
+//   * live + wl: per-instr mark byte and the worklist; an instr is
+//     pushed at most once, so the walk is linear in fn.code.size().
+//   * nc: the compacted vector the sweep rebuilds per block range.
+// THEORY: a def is live iff it transitively feeds a root, and roots
+//   are exactly the observable instrs: control flow (Br/Cbr/Exit),
+//   output (Print), arena mutation (Store), stdin consumption (Input),
+//   possible traps (Div/Mod without nt, Alloc: n<0 or OOM, Load: out
+//   of bounds) -- sweeping a dead def erases no observable behavior.
+//   Bkpt stays so -O3 builds remain debuggable. The phi collapse is
+//   sound because, with all non-self arguments equal, the phi has only
+//   one possible value.
+// ENABLES: the collapsed phis become plain copies (copyprop's food),
+//   only genuine phis remain for later scans, and the sweep leaves a
+//   smaller fn.code with per-block ranges intact.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

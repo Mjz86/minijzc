@@ -1,117 +1,116 @@
-# Checkpoint 24 — lcf decomposed (the code-quality continuation, round two)
+# Checkpoint 26 — fold decomposed (round four) + the persisted checklist/parity tooling
 
-branchA @ (one commit on top of checkpoint 23's code-quality commit).
-The CONTINUE backlog's item 1 named `opt/loop/lcf.hpp`'s opt_lcf
-(~640 lines) as the next-biggest function in the tree; this
-checkpoint consumed it with the same treatment cdfold got at 23:
-support layer + slim driver, one small constexpr function per phase,
-scan bounds and emission order preserved exactly. Pure refactor,
-zero behavior change, verified byte-identical.
+branchA @ (one commit on top of checkpoint 25's unroll commit).
+The CONTINUE backlog's item 1 consumed its next named target:
+`opt/scalar/fold.hpp`'s opt_constprop — at 450 lines the biggest
+function left in the tree (the whole 497-line file was one
+function plus banners) — got the cdfold/lcf/unroll treatment,
+under the byte-identical discipline. Plus two recovery asks that
+landed as tooling: the decomposition queue is now a committed file
+(OPT_CHECKLIST.md) after the checklist was lost between sessions,
+and the parity differential is a committed script
+(scripts/parity_diff.sh) instead of ad-hoc bash.
 
 ## What landed
 
-### lcf: the 640-line driver, decomposed (`lcf.hpp` 718 -> 64 + `lcf_impl.hpp` 980)
+### fold: the 450-line monolith, decomposed (`fold.hpp` 497 -> 67 + `fold_impl.hpp` 629)
 
-The single 640-line `opt_lcf` (scan + loop recognition + trip
-counting + three fold strategies inline) became a 24-line driver
-plus a support layer of 66 constexpr functions — nothing in the
-pair exceeds 25 lines:
+The single opt_constprop became an 11-line driver plus a support
+layer of 28 small constexpr functions + the FoldCtx struct:
 
-- **LcfScan** (the pass-wide tables) + **LcfLoop** (the per-loop
-  shape): all the state the original held in 40+ locals, now
-  grouped; lcf_scan fills kc/kv (ndefs==1 const marking — stricter
-  than loop_shape.hpp's loop_scan), defi/defb, uses/ndefs, and the
-  nest-descending header list.
-- **the five shape matchers**, in the original's order: edges
-  (lcf_loop_edges/lcf_inloop/lcf_unique_entry — several back-edges
-  tolerated, the LAST is the latch), the unique header-only exit
-  (lcf_single_exit/lcf_block_exit_ok), the arms + exit polarity
-  (lcf_arms), the (pre,latch)-keyed header phis
-  (lcf_gather_hphis/lcf_one_hphi), and the induction match
-  (lcf_find_ind -> lcf_try_ind_phi -> lcf_step_match +
-  lcf_cond_uses_ind).
-- **the plan gates**: lcf_bound/lcf_bound_outside (runtime bounds
-  must be defined outside the loop), lcf_trip_count/lcf_exits_now
-  (the exact stepping, LCF_TRIP_BUDGET-capped, polarity-aware),
-  lcf_zero_trip (the N==0 header rewrite), lcf_outside_uses_ok,
-  lcf_pre_avoids_exit, lcf_body_pure, lcf_maytrap_scan (unproven
-  Div/Mod), and the analytic scan (lcf_analyze -> lcf_one_evo ->
-  lcf_lin_to_evo over lin_expand's analysis mode).
-- **LcfGo {Skip, Folded, Emit}** — the plan's tri-state: zero-trip
-  and runtime-version folds return Folded (the driver returns
-  true), a failed gate returns Skip, a constant trip returns Emit.
-  The two dispatchers (lcf_sim_call for the no-induction general
-  simulator, lcf_rt_call for the guarded runtime closed form) fill
-  their In structs field-for-field as the original did — including
-  leaving LcfRtIn.C unset.
-- **the emitters**: lcf_splice (the preheader insert + block-range
-  fixup, bounded by pass-entry nb), the closed form
-  (lcf_emit_closed -> lcf_emit_one_closed -> lcf_push_closed ->
-  lcf_push_scaled: the four K1/K0 shapes with the exact vreg
-  allocation order fv-then-c/t/c2), and the N-iteration fallback
-  simulator (lcf_sim_n -> lcf_phi_inputs_const/lcf_loop_instrs/
-  lcf_loop_operands_const/lcf_body_chain/lcf_sim_iterations ->
-  lcf_sim_header_pass/lcf_sim_chain_pass/lcf_latch_transfer/
-  lcf_eval1 -> lcf_emit_sim_batch).
-- **the rewire tail**: lcf_rewire -> lcf_rewire_preheader (pre ->
-  X), lcf_rewrite_uses (outside uses -> final values),
-  lcf_rekey_exit_phis (the h-edge departs from pre),
-  recompute_preds.
+- **FoldCtx**: the def-index map (defi), the per-round known-const
+  tables (known/kval), nv0, and the fn/os references — the state
+  the original held in pass-wide locals, now grouped.
+- **the def-index**: fold_def_index — vreg -> its def's instr
+  index, the LAST def winning (SSA: normally the only one; the
+  guard defensive, the original's). Built ONCE at pass entry: this
+  pass rewrites instrs in place, never moves them, so the indices
+  stay valid all 12 rounds.
+- **the fixpoint mechanics**: fold_reset_tables (every live Const
+  re-enters the tables per round — a Const MADE by round k is
+  visible to round k+1; consts made DURING a round wait for the
+  rebuild: that is the observable iteration structure), fold_round
+  (rebuild + the full block/instr scan, `|=` never
+  short-circuiting), fold_ctx (the factory).
+- **the compare-domain machinery**: fold_cmp_def (is a vreg
+  EXACTLY one compare result? re-checks D.k == K::Bin at USE time,
+  so a def folded to Const this round no longer qualifies — the
+  original's behavior), fold_inv_cmp (predicate inversion:
+  Lt<->Ge, Le<->Gt, Eq<->Ne), the fact trio fold_cmp_keep
+  ((cmp)&1, (cmp)%2 keep the compare), fold_cmp_zero ((cmp)&~1,
+  (cmp)>>k are exactly 0), fold_cmp_not ((cmp)^1 = the negated
+  compare), gated by fold_bin_cmpfacts (b-side known, a-side a
+  compare; mutually exclusive guards, so keep->zero->not preserves
+  the original five-way order exactly).
+- **the two-def identity**: fold_bin_double_neg (0-(0-x) = x, with
+  the I.b2 != I.a guard against self-matching).
+- **the nine algebraic families**: add/sub, mul, div/mod, and, or,
+  xor, shift, mulhi, same-vreg — annihilators before identities,
+  ka before kb, each sub-case's field writes and counters exactly
+  the original's. The same-vreg table deliberately does NOT fold
+  Add/Mul/Div/Mod (x+x changes the value; x/x can TRAP).
+- **the one dedup**: the former 20-case inline wrapped-arithmetic
+  switch is now instr.hpp's SHARED w_bin — provably the same table
+  (same w_* per op, same {cmp,false} results; w_bin's unreachable
+  trailing {0,true} vs the original's value-initialized Rv{} is
+  dead in both: the B enum has exactly the 18 covered values).
+  cdfold's dedup precedent, documented in the contract header.
+- **the per-kind handlers**: fold_copy (Copy of a known const ->
+  Const, os.folds), fold_phi (same vreg -> Copy; same const ->
+  Const), fold_depth (main's frame count is provably 1), fold_cbr
+  (identical arms -> Br; known cond -> Br toward the taken arm;
+  fn.succ rewritten in the terminator's own field order).
+- **the dispatch**: fold_instr — the original's switch, ka/kb
+  looked up BEFORE the switch (every kind sees the same operand
+  facts), and fold_bin — the cascade, first match wins (the
+  original's `break`s), the phase list reading top to bottom:
+  cmpfacts -> double-neg -> add/sub -> mul -> div/mod -> and ->
+  or -> xor -> shifts -> mulhi -> same-vreg -> full-const.
 
-### The trap caught in review
+The byte-identical contract is fold_impl.hpp's header block; the
+one landmine worth naming: the 12-round structure is observable
+(os.iters — the pass's return value drives the pipeline's
+fixpoint), so the round structure — rebuild, scan, quiet-round
+exit, the cap — is preserved to the character.
 
-The original `continue`s the WHOLE header loop when the test value
-is not header-defined — the general simulator is NOT tried for that
-loop. A naive "ind == NONE -> simulator" driver would have changed
-behavior. lcf_find_ind therefore returns bool: false = gate failed
-(skip the loop entirely), true = gate passed (ind may still be
-NONE, and only then does the driver try the simulator). This is
-documented at both the function and the README ledger.
+### The recovery tooling (lost-checklist incident)
 
-### Deliberate non-reuse
-
-loop_shape.hpp's look-alike helpers are NOT used: loop_scan marks
-kc/kv from the LAST def (lcf requires ndefs==1) and carries no
-uses/ndefs; loop_shape_of requires exactly one internal pred (lcf
-tolerates several back-edges) and derives no exit polarity.
-lcf keeps its own scans, with a comment in lcf_impl.hpp explaining
-why (a future unification must reconcile the semantics first).
+- **OPT_CHECKLIST.md** (repo root): the standing decomposition
+  queue — done list (cdfold/lcf/unroll/fold, with contracts),
+  the priority-ordered remainder (unswitch_bif next, then taildup,
+  mem2reg, rotate, scctco_member, unswitch, argpromo, tce_merge,
+  ...), the >700-line files list, the standing traps (the
+  `| tail` pipeline landmine, the stdin-aware differential, the
+  preserved asymmetries, the no-loop-shape-sharing rule), and the
+  protocol. Survives session loss by living in the repo.
+- **scripts/parity_diff.sh**: the differential as a committed
+  gate — every .mjz in the corpus x three flag variants
+  (default/-O3/--check-all), stdin-aware, + three scripted
+  debugger tours + --demo + the -O3 pass-statistics report; 146
+  runs this checkpoint, all byte-identical.
 
 ## Verification (the strongest available differential)
 
-* 93 CLI parity runs over demos/ + examples/ + examples/audit/
-  (--check-all, -O0, and flag-error variants), all diffed
-  byte-identical against the pre-refactor binary.
-* 30 stdin-aware --check-all runs (audit tapes piped in) —
-  identical, including the per-pass counter line (`LCF a+s+g|r`).
-* The full 206-check --demo suite (every lcf_* demo: additive,
-  geometric, runtime_init, rt_dynamic_bound, rt_le, rt_edge_max,
-  sim_fallback, nested) — identical.
-* The register-audit table regenerated byte-identically
-  (regen_audit_results.py; RESULTS.md untouched: 710 vregs /
-  573 housed / 137 spills / 424 traffic).
-* Differential fuzz, old binary vs new, on the committed windows:
-  16131-16280 (rotation) and 14231-14430 (taildup + rt-lcf) —
-  outputs identical modulo timing lines, zero mismatches.
-* selftest 207/207, ctest 44/44, units 6328/6328, check-format
-  clean; header order 98/98 + umbrella (the new lcf_impl.hpp is
-  self-contained); include portability 414/414.
+- parity_diff.sh: **146 runs, 0 mismatches** (stdout + stderr +
+  exit codes) vs the pre-refactor binary
+- register-audit table regenerated **byte-identically**
+  (710 vregs / 137 spill slots / 424 traffic)
+- differential fuzz old-vs-new, 16131-16280 and 14231-14430:
+  **identical modulo timing lines, zero mismatches**
+- selftest **207/207**, ctest **44/44**, units **6328/6328**
+- check-format clean; header order **100/100** + umbrella
+  (fold_impl.hpp is the 100th); includes **422/422**
 
 ## Measured shape
 
-Top-level brace-matched functions in src/minijz/**/*.hpp: 253 ->
-317 (+64: 66 new small functions, the old trio replaced by the
-driver). <= 10 lines: 76 -> 101; 11-20: 50 -> 84; 21-40: 42 -> 48;
-71+: 69 -> 68 — the 640-line opt_lcf is gone; the biggest function
-in the tree is now opt_unroll (~470), the next backlog target.
+- fold.hpp: 497 -> 67 lines (driver: 11)
+- fold_impl.hpp: 629 lines, 28 constexpr functions + FoldCtx,
+  largest ~28 lines (house norm)
+- the tree's opt/ biggest functions are now all under ~440 lines:
+  next targets unswitch_bif (~432), taildup (~419), mem2reg (~415)
 
 ## Known limits
 
-* The 71+ bucket barely moved (69 -> 68): this checkpoint consumed
-  ONE function, by design — the backlog is a queue, not a batch.
-* The tree-wide function census uses a brace-matching heuristic
-  (scripts convention), not a compiler database; the per-file
-  numbers (66 functions in lcf_impl.hpp, driver 24 lines) are
-  exact.
-* No MSVC run (unchanged since checkpoint 16: no MSVC in the
-  sandbox; native parity ran on g++).
+- unchanged from checkpoint 25: no MSVC in the sandbox (the
+  `vs-msvc` run remains the one unverified step); fuzz floors are
+  seed-anchored (a new bait flavor needs a NEW floor constant).

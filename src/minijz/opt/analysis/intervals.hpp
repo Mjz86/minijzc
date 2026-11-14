@@ -1,6 +1,36 @@
 #pragma once
 // === intervals.hpp ========================================
 // signed-interval value range analysis with branch refinement.
+//
+// ALGORITHM (range_analyze): bail unless nb*nv fits the 4M-slot
+// cap; scan raw/ndefs/defi to find each Cbr's single-use
+// comparison def (is_cmp_def); then iterate: a block's entry state
+// is the iv_hull over pred exits refined per out-edge (iv_refine
+// on the Cbr's comparison, taken side as fact) plus the phi rule
+// (hull of per-edge args); block 0 enters top; iv_transfer walks
+// the body into exit_. Plain rounds (cap `plain`), then widening
+// at loop headers only, then a give-up bound (all states -> TOP),
+// then 3 narrowing rounds; iv_decide folds comparisons
+// (singletons -> exact w_bin, disjoint/ordered hulls -> 0/1).
+//
+// DATA STRUCTURES: Iv{lo, hi, bot} (bot = unreachable point);
+// Ranges{ok, nb, nv, entry}, entry holding nv intervals per block
+// entry; scratch st/edge, the exit_ table, the touched flags.
+//
+// THEORY: abstract interpretation on the lattice of signed
+// intervals [lo,hi] plus bottom, ordered by containment; join =
+// the convex hull iv_hull (may-analysis). Transfers are sound:
+// +,-,* use 128-bit corner arithmetic and go top on overflow, Div
+// needs a single-sign divisor, Mod uses |r| < |y| and sign(r) =
+// sign(x). One def per vreg makes its value a single runtime
+// integer tracked across reaching paths, so a taken comparison
+// tightens the operands themselves. States grow from bottom and
+// widen ONLY at loop headers (widening elsewhere re-inflates
+// refined bodies and can poison a counter's lo to MIN forever),
+// then narrow; no fixpoint -> TOP: always a sound over-approx.
+//
+// DOWNSTREAM: the driver shares one Ranges between trapelim and
+// jthread (ifconv runs its own); iv_decide serves both consumers.
 
 #include "../../../minijz/ir/instr.hpp"
 #include "../../../minijz/opt/analysis/alias.hpp"

@@ -6,6 +6,36 @@
 // unchanged). Included by emit_x64.hpp in the header-only build
 // (constexpr) and by tu/backends.cpp in the multi-TU build — include it
 // nowhere else.
+//
+// PHASES (emit_x64_fn per Fn; emit_x64 assembles the whole program):
+//   * plan + allocator: make_emit_plan, then ra_plan -> RaPlan{color,
+//     spill, nspill, usedmask}; RREGS maps colors 0..4 to
+//     rbx/r12/r13/r14/r15; loc(v) is the register or the spill home
+//     -8*(npush+k+1)(%rbp), BELOW the pushed callee-saved regs.
+//   * prologue: pushq %rbp; movq %rsp,%rbp; pushq the used subset;
+//     subq $frame (nspill*8 rounded up to 16, +8 when npush is odd --
+//     calls stay 16-aligned); non-main fns incq mjz_depth with the 512
+//     guard; params move in from rdi/rsi/rdx/rcx/r8/r9 (never-used
+//     params get NO mov: their homes are free for live values); no
+//     slot zero-init (SSA dominance + Const-0 phi materialization).
+//   * body over P.order (labels .Lb%u in main, .LF%u_%u in helpers,
+//     referenced blocks only): Bin resolves the two-address hazard (y
+//     coalesced into dst => accumulate onto y; Sub stashes y in %rcx);
+//     shifts use %cl (x86's 6-bit mask == the &63 semantics); Div/Mod
+//     guard 0 and INT64_MIN/-1 unless proven (I.nt) or const; Cbr
+//     fuses its compare; helpers serve array ops/printf/input; st_rax
+//     homes each result (register, or spill slot).
+//   * epilogue per Ret: %rax, decq mjz_depth, addq $frame, popq the
+//     saved regs in reverse, popq %rbp, ret (no Exit still => exit).
+//   * emit_x64: feature scan, callees first then main, the
+//     self-aligning mjz_trap, arena/input helpers, .rodata + .bss.
+//
+// THEORY: the prologue/epilogue are exact inverses (rbp, the counted
+//     callee-saved subset, the rounded frame, undone in reverse), and
+//     the RaPlan is the SAME chordal plan regaudit re-derives.
+//
+// CONSUMERS: emit_x64.hpp (both build modes); cli_run.hpp writes the
+//     .s artifact for the native -O matrix.
 
 #include "../base/pass_cfg.hpp"
 #include "../base/srcmap.hpp"

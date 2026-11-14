@@ -10,6 +10,36 @@
 // (constant i0 >= 0, unit step, pure+nt body) drops guard AND fallback.
 // Extracted from lcf.hpp (checkpoint 18's code-quality split); the
 // driver-visible counter is OptStats::lcf_rt.
+// ---- ALGORITHM --------------------------------------------------------
+// lcf_rt_fold(In): the vacuous-guard proof first -- body_pure (the
+// loop holds only Phi/Const/Copy/Br/Cbr and Bin with Div/Mod nt),
+// a constant i0 >= 0, step_mag == 1. If the bound Bv is defined
+// in-loop (defb), G opens with a fresh Const copy Bg (a guard
+// read of the in-loop def would be use-before-def). G: c0 = i0
+// cmp Bg; Dv = Bg - i0; msk = 0 - c0; Dm = Dv & msk; Nv = Dm /
+// step (Le: + c0; Lt: + rnz); unless vacuous, iN = i0 + Nv*step,
+// gok = (c0 & (Dv < 0 | iN cmp Bg)) == 0, cbr(gok) CF / h (the
+// fallback: the ORIGINAL loop). CF: T only if some evo[].b != 0
+// (Tv = N(N-1)/2 via e0 = Nv&1, Nm = Nv-e0: Tv = (Nm>>1) * (Nm
+// + 2*e0 - 1)), then per phi cfv = x0 + (b*i0+g)*N + (b*step)*T
+// (b==g==0: x0). Commit: phidst for outside uses BEFORE the
+// phis exist; merge phis phi(hphis.dst @ h, cfv @ CF) at X; pre
+// enters G; header phis' entry keys pre -> G; os.lcf_rt++.
+// ---- DATA STRUCTURES --------------------------------------------------
+// LcfEvo {ok, a, b, g}; LcfRtIn (h/pre/X/IPi/Bv/step_mag/lhs_is_ind/
+// cmp/C + the shared tables + defb); gi/cfi; konst/bin/nt; cfv.
+// ---- THEORY: runtime trip-count versioning ----------------------------
+// The guard emits the closed form ONLY when it is exact: gok
+// fails exactly when the induction would leave the signed range
+// before reaching B (dneg: Dv < 0; bneg: iN already at/past the
+// bound), and control falls back to h, the ORIGINAL loop. The
+// K1/K0 series algebra: the contract fixes evo[].a == 1, so
+// K1 = a^N = 1 and x_N = x0 + K0, K0 = C*N + B*T with
+// C = b*i0 + g, B = b*step, T(n) = sum_{j<n} j = N(N-1)/2 --
+// the Tv formula (the a != 1 general form is lcf_impl.hpp's).
+// ---- WHAT IT ENABLES --------------------------------------------------
+// A loop over a runtime bound becomes a fixed instruction count,
+// independent of the trip count; the driver re-analyzes.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

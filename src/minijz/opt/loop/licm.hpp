@@ -1,6 +1,37 @@
 #pragma once
 // === licm.hpp ========================================
 // loop-invariant code motion.
+//
+// THEORY (when hoisting one iteration's work to the preheader is
+// sound):
+//   Hoisting moves an instruction OUT of the loop; it then executes
+//   ONCE, before the loop, even if the loop body would have run it
+//   many times -- or ZERO times. That is observable unless the
+//   instruction is PURE, so purity is requirement (1): no traps,
+//   no memory, no stdin, no output. Hence Alloc (fresh handle per
+//   execution), Load/Store (mutable memory), Len (can change when
+//   an Alloc lands in between), Input (consumes the tape) and Call
+//   (may print/trap/read) are never invariant; Div/Mod need the
+//   CONTEXT-FREE safety (constant divisor outside {0,-1}) because
+//   nt proofs are control-flow-sensitive -- see the inline note at
+//   the Bin case.
+//   (2) OPERANDS: each operand must be loop-invariant -- defined
+//   outside the loop with its def DOMINATING the preheader (the
+//   value is then available at the hoist point on every path), or
+//   a Const (position-independent; if the Const is defined INSIDE
+//   the loop it is duplicated into the preheader, since the
+//   original would not dominate the hoist).
+//   (3) PREHEADER: only loops with a unique outside pred qualify;
+//   the hoist lands right before the preheader's terminator --
+//   after its phis and after every operand def living in pre.
+//   SCAN ORDER: the header FIRST (the while lowering computes the
+//   loop condition in the header; an invariant header test is the
+//   classic unswitch enabler), then the body in member-row order.
+//   Rounds: up to 10 fixpoint rounds per loop, each recomputing
+//   the def tables (a hoist removes a def from the loop, which can
+//   make more operands invariant). The surgery is mid-vector (erase
+//   at i, insert at pe, two range-fixup sweeps), unlike the
+//   append-only emitters elsewhere in the tree.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

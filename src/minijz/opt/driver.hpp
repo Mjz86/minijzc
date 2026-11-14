@@ -1,6 +1,40 @@
 #pragma once
 // === driver.hpp ========================================
 // the pass manager: tiered fixpoint scheduling, -O presets.
+//
+// THEORY (phase ordering, and why a fixpoint at all):
+//   * WHY ITERATE. Every pass here exposes work for another: sccp
+//     proves constants fold can use; fold collapses branches which
+//     unreach then deletes; splice merges blocks so CSE sees longer
+//     runs; unroll materializes constants for the next sccp round.
+//     No single ordering is a fixpoint for all programs, so each
+//     tier loops `cap` rounds (fp-limit, default 24) until a full
+//     round changes nothing -- Kleene-style iteration to the least
+//     fixed point of the composition, in practice 2-4 rounds.
+//   * THE TIERS (cheap-first, so expensive passes see maximally
+//     simplified input):
+//       tier 0 (all levels): local simplification to ITS fixpoint
+//         -- sccp, fold, copyprop, canon, cse, gvn, unreach,
+//            splice, dce (each round; normalize_phis between).
+//       tier 1 (level >= 2): mem2reg, ldelim, taildup,
+//         trapelim+jthread (ONE shared range analysis per call --
+//         the cost note below), licm, lsimp, divmagic, reassoc,
+//         ifconv; a tier-0 round runs after each tier-1 round.
+//       tier 2 (level >= 3): the expensive CFG rewrites -- and
+//         their ORDER IS LOAD-BEARING:
+//           unswitch BEFORE unroll (the versioned true-arm loses
+//             its exit edge, so unroll/lcf skip it anyway);
+//           unroll BEFORE lcf (unrolling reshapes the CFG lcf
+//             then scans);
+//           rotate LAST (unswitch/unroll/lcf need the test-first
+//             shape; the rotated header ends in Br -- invisible
+//             to their shape matchers, see the inline note).
+//   * FRESHNESS CONTRACT. Every dominance pass gets a fresh
+//     analyze() -- and each pass guards on A.n == fn.nblocks()
+//     (a stale An from a different block count is rejected).
+//     The per-tier tier0() re-runs after restructuring exist
+//     because restructuring EXPOSES opportunities (dead arms,
+//     new constants, new elbows).
 
 #include "../base/pass_cfg.hpp"
 #include "../ir/instr.hpp"

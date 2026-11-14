@@ -2,6 +2,36 @@
 // === argpromo.hpp ========================================
 // interprocedural argument promotion (array params -> scalar elements).
 
+// ALGORITHM (opt_argpromo): (1) scan every K::Call into `sites`
+//   ({f, i, g}). (2) decide, per callee g ascending under the growth
+//   cap -- guards (tce_sel, slot_of, nparams, ARG_BODY_CAP, no
+//   internal K::Call, no param redefinition, arity match), then
+//   defiG (def-index map), the `fresh` greatest-fixpoint table of
+//   provably-new allocations, and the first param p used ONLY by
+//   Load(a == p, Const index) with sorted index set S (bounded by
+//   ARG_ELEMS_CAP); other Load/Store must name fresh allocations;
+//   `good` holds the sites whose argument resolves (resolve_len over
+//   per-caller defmaps) to a constant-length Alloc with len > max(S).
+//   (3) ONE clone: permutation mp drops p, adds k element params,
+//   turns p's Loads into Copies of them (unresolved sites keep the
+//   generic). (4) apply per caller in DESCENDING i order: 2k instrs
+//   (Const + nt Load pairs) precede each reshaped, retargeted call.
+// DATA STRUCTURES: the sites/PSite/RW vectors, defiG, the `fresh`
+//   table, per-caller defmaps, and the ARG_BODY_CAP / ARG_ELEMS_CAP /
+//   ARG_GROWTH_CAP budgets.
+// THEORY: the materialized pre-call loads must equal what the callee
+//   would have read: p is never stored through, every other Load/
+//   Store in the callee names a provably fresh (non-aliasing)
+//   allocation, and the callee makes no calls, so nothing can change
+//   the array between call and read. len > max(S) makes each insert
+//   provably in bounds (nt holds), and SSA dominance puts the Alloc
+//   before the call -- values and trap order match. The caller
+//   rewrite and the callee signature change are two halves of one
+//   site-atomic edit: each call is reshaped and retargeted together,
+//   so no mixed calling convention is ever observable.
+// DOWNSTREAM: an array that stops escaping lifts in mem2reg; constant
+//   element stores let constcall fold the promoted call; with every
+//   site resolved the dead-fn sweep drops the uncalled generic.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 

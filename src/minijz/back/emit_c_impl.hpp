@@ -4,6 +4,36 @@
 // Included by emit_c.hpp in the header-only build (constexpr) and by
 // tu/backends.cpp in the multi-TU build (external definition) — include
 // it nowhere else.
+//
+// PHASES (emit_c_fn per Fn; emit_c assembles the whole program):
+//   * tables: make_emit_plan; cdefi/nuse; the xor-elision pre-pass (a
+//     fused (v^INT64_MIN vs const) compare's single-use xor drops).
+//   * naming: D()/SN() print r%u (slot home, regalloc on) or v%u; V()
+//     inlines kc constants (UINT64_C when wide); arr_of maps vregs to
+//     Fn::StkArr stack locals (mjz_s<root>).
+//   * signature: int main(void) vs static int64_t mjz_fN (params are
+//     the first slots); the >512 depth guard; the source-lines banner.
+//   * declarations: one int64_t per slot WRITTEN by non-dead code, and
+//     NO initializers -- SSA dominance plus destruction's Const-0
+//     materialization of undef phi args guarantees write-before-read.
+//   * body over P.order: labels only when refd; fallthrough gotos
+//     elided; Const is real code only for multi-def slots; arithmetic
+//     casts through uint64_t (wrap UB-free); div/mod guarded BEFORE the
+//     UB (a callee trap must exit(1) -- `return` would resume the
+//     caller); shifts masked &63; MulHi via unsigned __int128; Cbr
+//     fuses its compare, folding the NOT in (neg_txt) and printing the
+//     unsigned xor pattern readably; array ops hit the stack local
+//     (bounds-checked unless nt) or the mjz_* helpers; a trailing Ret
+//     suppresses the fallthrough tail.
+//   * emit_c: use_arr/use_in/use_stk scan -> prelude, prototypes
+//     (mutual recursion is legal), callees first, main last.
+//
+// THEORY: every value lives in a slot local named via slot_id -- the
+//     interference coloring (disjoint live ranges share r%u) or the
+//     identity map. No spill machinery exists: C locals are unbounded.
+//
+// CONSUMERS: emit_c.hpp (both build modes); cli_run.hpp's native -O
+//     matrix builds the .c artifact.
 
 #include "../base/srcmap.hpp"
 #include "../ir/instr.hpp"

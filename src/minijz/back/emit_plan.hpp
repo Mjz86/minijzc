@@ -5,6 +5,36 @@
 // destroyed IR — block layout/order, inlined constants, fused compares,
 // dead flags. Standalone and LIGHT: the C and asm backends and the
 // debugger all read it without pulling any backend's codegen.
+//
+// ALGORITHM (make_emit_plan -- six phases over one destroyed Fn):
+//   1. reachability: DFS from block 0 over succ0/succ1.
+//   2. reverse postorder, succ0 first => loop headers precede bodies.
+//   3. trace layout: walk the RPO; chain each block to its preferred
+//      unplaced successor (both open => fewer preds wins; succ1 alone
+//      => the false arm falls through, shaping `if (c) goto T;`),
+//      linearizing into P.order and P.next (the fallthrough neighbor).
+//   4. constants: kc/kv mark a vreg literal-inlinable ONLY with exactly
+//      one def that is a Const -- post-destruction phi slots hold one
+//      def per edge; inlining one edge's constant everywhere would
+//      freeze the loop test (post_destruct_peephole can fold an edge).
+//   5. fusion: P.fuse[i] = the compare def a Cbr folds into its branch
+//      text; legal only when that vreg has ONE use (this branch) and
+//      ONE def (a phi slot would make "the" def arbitrary).
+//   6. uses/dead: P.uses counts textual uses (consts inlined, fused
+//      branches read the compare's operands); P.dead marks pure instrs
+//      with zero textual uses (Const when kc, Copy/Len/safe Bin, and
+//      every fused compare def).
+//
+// DATA STRUCTURES: EmitPlan{order, next, kc, kv, uses, fuse, dead}.
+//
+// THEORY: the plan is the single truth about what the EMITTED text
+//      will read -- liveness and homes must be decided against the
+//      same fusion/inlining the codegen performs, or another vreg
+//      could lawfully reuse (clobber) a fused compare's live operands.
+//
+// CONSUMERS: emit_c_fn (emit_c_impl.hpp); emit_x64_fn via ra_plan
+//      (regalloc.hpp); the register audit (regaudit_impl.hpp); the slot
+//      allocator assign_slots (astrun.hpp) mirrors the fusion gate.
 
 #include "../ir/instr.hpp"
 

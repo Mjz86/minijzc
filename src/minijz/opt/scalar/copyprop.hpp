@@ -1,6 +1,34 @@
 #pragma once
 // === copyprop.hpp ========================================
 // copy propagation.
+//
+// ALGORITHM: opt_copyprop makes two sweeps. (1) Recording: for each
+//   K::Copy `d = s` (a != dst), r = resolve(I.a) -- sources resolve
+//   transitively, so chains die in one hop; if r != dst then
+//   ren[I.dst] = r, and if r == dst the pair is CROSSED and stays
+//   unrecorded (a self-loop entry would never resolve). (2) Applying:
+//   self-copies (a == dst) and propagated copies (ren[dst] != NONE)
+//   are dropped; every other operand -- I.a, I.b2, I.c2 (a Store's
+//   stored value), I.args (Call arguments) -- is rewritten through
+//   resolve; the sweep then rebuilds fn.code per block range.
+// DATA STRUCTURES:
+//   * ren: the renaming map vreg -> copy source (nv wide, NONE where
+//     untouched); a single write per dst keeps it acyclic.
+//   * resolve: chain walk over ren, capped at nv steps -- belt and
+//     braces so a future multi-def IR cannot resurrect an infinite
+//     `while (ren[v] != NONE)` walk.
+//   * drop: per-instr bytes selecting the copies the sweep omits.
+// THEORY: SSA gives each vreg exactly one def, and a copy's source
+//   dominates the copy (it must run first), hence the source dominates
+//   every replaced use -- always sound. The exception: CROSSED
+//   phi-degenerate copies around a loop (`t473 = t496` + `t496 = t521`
+//   + `t521 = t473`) -- each source is defined only on the incoming
+//   edge, so recording the closing copy would make resolve(a) == dst,
+//   a SELF-LOOP that hung every later resolve (fuzz seed 7406, -O1
+//   with dce disabled); crossed copies stay unpropagated (still sound).
+// ENABLES: this is the pass that cleans up phi-to-copy degenerations
+//   (unreach and dce both emit such copies) and lets CSE see canonical
+//   names; the dropped copies leave fewer instrs for later sweeps.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"

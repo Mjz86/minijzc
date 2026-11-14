@@ -17,6 +17,32 @@
 //    the header is its only other... (not done here: splice already
 //    collapses single-pred/single-succ pairs, which covers the common
 //    shapes; what remains is rare and not worth the CFG surgery).
+// ---- ALGORITHM --------------------------------------------------------
+// opt_lsimp (one rewrite per call): walk A's headers (A.inner[h]==h),
+// build inL from A.loops.range()[h], classify h's preds into a unique
+// latch (inside==1) and a unique pre (outside==1), then scan h's phis
+// (block-first: stop at the first non-Phi). Per phi, la = the
+// latch-keyed arg and pa = the pre-keyed arg (via P.t/P.f); the phi
+// is TRIVIAL when la == P.dst and pa != NONE. Rewrite every use of
+// P.dst in the whole fn -- phi args a/b2 only (their keys are pred
+// ids), plain instrs a/b2/c2/args -- to pa; turn P into K::Copy(pa);
+// normalize_phis(); break (one phi per call: indexes moved). Any
+// change breaks the header loop: the driver re-analyzes.
+// ---- DATA STRUCTURES --------------------------------------------------
+// inL (vector<char> over all blocks), pre/latch/inside/outside from
+// fn.preds[h], la/pa per phi, os.lsimps (the pass counter).
+// ---- THEORY -----------------------------------------------------------
+// la == P.dst means x' = x: the latch feeds the phi itself, i.e. the
+// body stopped changing x (typically after dce/copyprop removed the
+// update), so the phi carries the preheader value through EVERY
+// iteration. The phi's only def is itself, so replacing every use
+// (inside and outside the loop) with pa is observationally identical
+// and dissolving it into Copy(pa) leaves tier-0 copyprop + dce to
+// finish. This is the loop-carried analogue of copyprop and must run
+// as a loop pass: tier-0 copyprop cannot see through the back edge.
+// ---- WHAT IT ENABLES --------------------------------------------------
+// Headers shrink toward the single-entry/single-latch shape unroll /
+// lcf / unswitch match on, with fewer loop-carried phis to key.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../../ir/phi_norm.hpp"

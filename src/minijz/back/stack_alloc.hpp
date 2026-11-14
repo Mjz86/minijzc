@@ -2,6 +2,36 @@
 // === stack_alloc.hpp ========================================
 // stack-allocation analysis for the C backend (non-escaping constant
 // arrays become C locals).
+//
+// ALGORITHM (analyze_stack_allocs -- one Fn, run on the SSA form):
+//   * kc/kv: the single-def constant table (a vreg is a known const
+//     only with exactly ONE def, and that def a Const).
+//   * candidate Allocs: constant length, 1 <= len <=
+//     MJZ_STK_ARR_MAX_ELEMS, within the MJZ_STK_ARR_TOTAL_ELEMS budget.
+//   * alias closure ali: the alloc's dst plus every transitive Copy
+//     destination -- a fixpoint rescan of fn.code until stable.
+//   * escape scan over the FINAL closure: Copy sources and the HANDLE
+//     positions of Load/Store/Len are safe; any other use -- an
+//     index, a stored value, a phi, Bin/Cbr/Print/Call/Ret/Exit/Input
+//     operands -- makes the numeric handle observable and pins the
+//     array to the arena.
+//   * survivors become Fn::StkArr{root, len, vregs} records in
+//     fn.stk_arrays (the array is named after its root vreg).
+//
+// DATA STRUCTURES: ndefs/kc/kv (nv-sized), ali (the alias bitmap),
+// total (the element budget); StkArr itself lives in ir/instr.hpp.
+//
+// THEORY: a provably non-escaping array's handle value is unobservable,
+// so the C backend may keep it in a zero-filled stack local (memset at
+// the allocation point, exactly like the arena) whose indices match
+// the arena's -- bit-identical behavior with no arena traffic. Any
+// observable use (a phi included: an older iteration's array could
+// otherwise be observed after re-allocation) forces the arena home so
+// every runner agrees; the budgets keep frames well under 8 MiB.
+//
+// CONSUMERS: compile_impl.hpp stashes the analysis on the SSA copy
+// before destruction (vreg ids survive); emit_c_fn's arr_of map
+// lowers the array's Alloc/Load/Store/Len to mjz_s<root>[] accesses.
 
 #include "../ir/instr.hpp"
 

@@ -2,6 +2,36 @@
 // === scctco.hpp ========================================
 // SCC tail-call optimization: collapse intra-SCC tail calls into
 // loops (helpers, per-member collapse, the driver).
+//
+// ALGORITHM: opt_scc_tailcall builds the call graph, then per SCC
+// (<= 8 members, main excluded, total <= 6000 instrs, every internal
+// edge a tail call with matching arg count) snapshots the members
+// (snap/snap_of) and runs scctco_member, which prepends D (block 0:
+// t0/k1/z0) + H (block 1), drains the internal tail sites one per
+// round (iter_cap): a self site becomes a back edge (promote/
+// add_backedge), a sibling site inlines the sibling's snapshot once;
+// then the 3b fixup rotates raw pass-through params, scctco_resucc
+// runs, and scctco_fold sees the pristine shape.
+//
+// DATA STRUCTURES: ScctcoHead{entry, root_pred, root_vals, phis,
+// tip_pred, tip_vals, cb, ce, trip_src, trip_phi, phi_vals}, the
+// per-member merge heads (heads[]); trapb (the shared 1/0 trap
+// block); t0/k1/z0, D's consts (511/1/0); T_cur + trip_read.
+//
+// THEORY: a tail call has no continuation -- the caller returns the
+// callee's value unchanged -- so swapping [Call;Ret] for a CFG edge
+// into the callee's code preserves the function's semantics: the
+// same value is produced (a self site feeds the parameter phis, so
+// the params become loop-carried induction variables; a sibling
+// site's inlined copy rets ARE the caller's rets), while the loop-
+// carried trip counter (511 at entry, -1 per edge, trap at <0)
+// reproduces the 512-frame TRAP exactly at the 513th virtual call.
+// The counter runs DOWN so the guard bounds the phi from both
+// sides at once: interval analysis converges in ~2 rounds, not 512.
+//
+// DOWNSTREAM: scctco_fold turns count-down-by-c loops into guard +
+// V0 & (c-1) (is_odd -> n & 1); members stop being recursive, so
+// the inliner pulls them in and range analysis deletes the guard.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
