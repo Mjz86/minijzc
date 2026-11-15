@@ -59,6 +59,51 @@ units 6369 with 41 new kernel checks including a 3-pred N-ary phi a
 2-arg IR cannot spell). The queue item below is what remains THERE:
 the classification gates, not the SSA walk (which is now kernel code).
 
+NOTE (branch generic-ssa, third commit, 2026-11-15): EVERY optimization
+algorithm got the same treatment -- opt/opt_generic.hpp (mjz::opt_ns),
+the kernels over index space, with the passes as policy wrappers:
+  * mark_ns  calculate_live_sites -- dce's mark fixpoint over the
+    def/use bipartite tables (roots are policy, the flood is kernel)
+  * vn_ns    value_number -- the dominator-scoped table walk cse and
+    gvn hand-rolled twice: scoped truncation, operand resolution,
+    const-keying by VALUE, commutative canonicalization, phi
+    congruence with the taint rule (checked over the site rows so
+    hit-dropped phis count, exactly like the old code scan), N-ary
+    phi records (a 3-pred congruence test pins it)
+  * sccp_ns  sccp_engine_t -- the sparse conditional constant ENGINE:
+    two worklists, executable-edge tracking, phi merging over
+    executable in-edges only (the duplicate-pred ANY-slot rule,
+    N-ary), monotone descent, the step guard; the TRANSFER stays a
+    client callback on scalars (the std::sort-comparator precedent)
+  * pcopy_ns sequentialize_pcopy + calculate_edge_splits -- SSA
+    destruction's lost-copy/swap-cycle sequentialization (the temp
+    minting is a callback firing at exactly the cycle-break points)
+    and the critical-edge split plan (>=2 distinct targets + phis)
+  * cfg_ns   calculate_reachable_mask + calculate_splice_plan --
+    unreach's flood and splice's pairing sweep (the kernel keeps its
+    own rekeyed preds copy, exactly like the old inline sweep)
+  * inv_ns   find_unique_outside_pred + calculate_first_invariant_
+    site -- licm's unique-preheader rule, invariance predicate and
+    header-first scan discipline; eligibility (purity, trap safety)
+    stays in the pass
+  * ren_ns   build_copy_rename + resolve_capped -- copyprop's rename
+    map with the crossed-pair self-loop guard (seed 7406's lesson)
+  * calculate_trivial_phi_pick -- dce's phi collapse, N-ary
+Plus ir/sweep.hpp: the identical compaction tail of five passes
+factored once (sweep_survivors, keep-mask convention like the reflow
+plan). Converted wrappers: dce, cse, gvn, copyprop, sccp, unreach,
+splice, licm, ir/destruct (sequentialize + split plan + peephole
+sweep). Byte-identical: 146-run parity, audit table regenerated
+identically, differential fuzz 16281-16380 + 14381-14480 identical
+modulo timing, full battery green (selftest 207, ctest 44, units
+6434 with section 17's 106 new kernel checks, header order 105/105,
+includes 453/453, check-format clean on the tree's clang-format 16).
+The catch found on the way: the first draft had the sweep take a
+DROP mask while dce's live set is a KEEP mask -- the inversion kept
+the dead and dropped the live (the 146-run parity caught it
+instantly); the helper now takes the keep mask, the reflow-plan
+convention.
+
 NOTE (branch generic-ssa, second commit, 2026-11-15): placement got
 the same treatment one layer down. The PURE Cytron relation now lives
 in graph_ns itself (mjz_lib/mjz_lib/graph/phis.hpp — vendored, rides

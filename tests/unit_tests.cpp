@@ -1537,6 +1537,530 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
   }
 }
 
+// ---- 17. the generic optimization kernels (mjz::opt_ns,
+// opt/opt_generic.hpp) ---------------------------------- Pure index-space
+// contracts, no Fn/Instr involved: mark-sweep liveness, scoped value
+// numbering (incl. N-ary phi congruence), the conditional-constant engine
+// (incl. a 3-pred phi merge and a loop-carried constant), parallel-copy
+// sequentialization, the edge-split plan, the CFG flood + splice pairing,
+// loop-invariant selection, the copy-rename guard, the trivial-phi pick.
+{
+  using opt_ns::none_v;
+  auto an_of = [](const std::vector<std::vector<ulen>> &adjs) {
+    struct A_ {
+      gns::treversal_result_t<V> fs, fp, dom_tree, df;
+      std::vector<ulen> idom;
+    } a;
+    a.fs = gns::make_basic_forest<V>(adjs);
+    a.fp = gns::make_basic_inv_forest<V>(adjs);
+    a.idom = gns::calculate_dominators_from_entry<V>(0, a.fs, a.fp);
+    a.dom_tree = gns::make_dominator_forest_given_dominators<V>(a.idom);
+    a.df = gns::calculate_dominance_frontiers_given_dominators<V>(a.idom, a.fp);
+    return a;
+  };
+  auto preds_of = [](const std::vector<std::vector<ulen>> &adjs) {
+    std::vector<std::vector<ulen>> prs(adjs.size());
+    for (ulen b = 0; b < adjs.size(); ++b)
+      for (ulen s : adjs[b])
+        prs[s].push_back(b);
+    return prs;
+  };
+
+  // 17a. mark_ns: liveness over the def/use bipartite tables
+  {
+    std::vector<uintlen_t> def_of{0, 1};
+    std::vector<std::vector<uintlen_t>> args{{}, {}, {0}};
+    auto live = opt_ns::calculate_live_sites<V>(def_of, args,
+                                                std::vector<uintlen_t>{2});
+    UT(live.size() == 3 && live[0] && live[2] && !live[1],
+       "mark: the root's operand chain lives, the unreferenced def dies");
+    std::vector<uintlen_t> def_of2{0, 2};
+    std::vector<std::vector<uintlen_t>> args2{{}, {}, {0}, {1}};
+    auto live2 = opt_ns::calculate_live_sites<V>(def_of2, args2,
+                                                 std::vector<uintlen_t>{3});
+    UT(live2[0] && live2[2] && live2[3],
+       "mark: transitively feeding the root lives");
+    std::vector<std::vector<uintlen_t>> args3{{none_v, 99}};
+    auto live3 = opt_ns::calculate_live_sites<V>(
+        std::vector<uintlen_t>{none_v}, args3, std::vector<uintlen_t>{0});
+    UT(live3[0],
+       "mark: none/junk operands bail out harmlessly (no def, no crash)");
+  }
+
+  // 17b. vn_ns: dominator-scoped value numbering
+  {
+    // diamond 0->{1,2}, 1->3, 2->3
+    const std::vector<std::vector<ulen>> diamond = {{1, 2}, {3}, {3}, {}};
+    auto A = an_of(diamond);
+    std::vector<char> cmask(10, 0);
+    std::vector<int64_t> cval(10, 0);
+    cmask[2] = 1;
+    cval[2] = 7; // v2 is the const 7
+    cmask[3] = 1;
+    cval[3] = 7; // v3 is ALSO the const 7 (a different temp)
+    auto bin_site = [](uintlen_t dst, uintlen_t op, bool comm) {
+      opt_ns::vn_site_t<V> s{};
+      s.tag = opt_ns::vn_bin_v;
+      s.dst = dst;
+      s.op = op;
+      s.flags = comm ? opt_ns::vn_comm_v : 0;
+      return s;
+    };
+    // block 0: d4 = Mul(v0, v2), d9 = Sub(v0, v1)
+    // block 1: d5 = Add(v0, v1) -- no Add in scope: MISS
+    // block 2: d6 = Add(v0, v1) -- block 1's entry truncated: MISS
+    //   (sibling recomputations never unify WITH EACH OTHER)
+    // block 3 (dominated by 0): d7 = Mul(v3, v0) -- commutative +
+    //   const-by-VALUE keying hits d4 across different const temps;
+    //   d8 = Sub(v0, v1) -- the plain dominated recompute hits d9
+    std::vector<std::vector<uintlen_t>> sob = {{0, 1}, {2}, {3}, {4, 5}};
+    std::vector<opt_ns::vn_site_t<V>> sinfo = {
+        bin_site(4, 200, true), bin_site(9, 300, false),
+        bin_site(5, 100, true), bin_site(6, 100, true),
+        bin_site(7, 200, true), bin_site(8, 300, false)};
+    std::vector<std::vector<uintlen_t>> sargs(6);
+    sargs[0] = {0, 2}; // Mul(v0, v2)
+    sargs[1] = {0, 1}; // Sub(v0, v1)
+    sargs[2] = {0, 1}; // Add(v0, v1)
+    sargs[3] = {0, 1}; // Add(v0, v1)
+    sargs[4] = {3, 0}; // Mul(v3, v0) -- the OTHER operand order
+    sargs[5] = {0, 1}; // Sub(v0, v1)
+    std::vector<std::vector<uintlen_t>> spreds(6);
+    auto R = opt_ns::value_number<V>(10, A.dom_tree, sob, sinfo, sargs, spreds,
+                                     cmask, cval);
+    UT(R.ren[5] == none_v && R.ren[6] == none_v,
+       "vn: sibling recomputations do NOT unify (scope exit truncates)");
+    UT(R.ren[7] == 4,
+       "vn: commutative + const-by-VALUE keying unifies across temps");
+    UT(R.ren[8] == 9,
+       "vn: a recompute under the dominating def unifies onto it");
+    UT(R.keep[4] == 0 && R.keep[5] == 0 && R.keep[2] != 0 && R.keep[3] != 0,
+       "vn: hits are exactly the dominated recomputations");
+  }
+  // 17b2. phi congruence, taint, and the N-ARY record (3 preds)
+  {
+    // 3-way branch into one join: 0->{1,2,3}, each ->4 (a 3-pred join
+    // this IR cannot spell; the kernel only sees rows)
+    const std::vector<std::vector<ulen>> tri = {{1, 2, 3}, {4}, {4}, {4}, {}};
+    auto A = an_of(tri);
+    auto prs = preds_of(tri);
+    std::vector<std::vector<uintlen_t>> sob = {{}, {}, {}, {}, {0, 1, 2}};
+    std::vector<opt_ns::vn_site_t<V>> sinfo(3);
+    std::vector<std::vector<uintlen_t>> sargs(3), spreds(3);
+    for (int i = 0; i < 3; ++i) {
+      sinfo[i].tag = opt_ns::vn_phi_v;
+      sinfo[i].dst = uintlen_t(20 + i);
+    }
+    // phi0: (arg 4, pred 1) (arg 5, pred 2) (arg 6, pred 3)
+    sargs[0] = {4, 5, 6};
+    spreds[0] = {1, 2, 3};
+    // phi1: the SAME incoming map -> congruent, renames onto phi0
+    sargs[1] = {4, 5, 6};
+    spreds[1] = {1, 2, 3};
+    // phi2: references phi0's result among its args -> tainted pair
+    sargs[2] = {20, 5, 6};
+    spreds[2] = {1, 2, 3};
+    std::vector<char> cmask(30, 0);
+    std::vector<int64_t> cval(30, 0);
+    auto R = opt_ns::value_number<V>(30, A.dom_tree, sob, sinfo, sargs, spreds,
+                                     cmask, cval);
+    UT(R.ren[21] == 20,
+       "vn: 3-entry phi congruence (N-ary, same incoming map per pred)");
+    UT(R.ren[22] == none_v,
+       "vn: the taint rule refuses a pair whose args reference the other");
+    (void)prs;
+  }
+
+  // 17c. sccp_ns: the conditional constant engine
+  {
+    // 17c1. branch pruning: cbr on a CONST cond makes only the taken
+    // edge executable; the dead arm's def stays TOP; the phi at the
+    // join merges the live edge only. (Every block that ends in an
+    // edge carries a branch site -- the Br sites below -- exactly
+    // like the IR's terminators.)
+    opt_ns::sccp_engine_t<V> E{};
+    // blocks: 0 -> {1, 2}; 1 -> {3}; 2 -> {3}; 3 -> {}
+    E.succs = {{1, none_v}, {3, none_v}, {3, none_v}, {none_v, none_v}};
+    E.sites_of_block = {{0, 1}, {2, 3}, {4, 5}, {6}};
+    E.sites.resize(7);
+    E.sites[0].kind = opt_ns::sccp_value_v; // d0 = const 1
+    E.sites[0].dst = 0;
+    E.sites[1].kind = opt_ns::sccp_branch_v; // cbr d0: t->1, f->2
+    E.sites[2].kind = opt_ns::sccp_value_v;  // d1 = copy d0
+    E.sites[2].dst = 1;
+    E.sites[3].kind = opt_ns::sccp_branch_v; // br 3
+    E.sites[4].kind = opt_ns::sccp_value_v;  // d2 = const 99 (dead arm)
+    E.sites[4].dst = 2;
+    E.sites[5].kind = opt_ns::sccp_branch_v; // br 3 (never executable)
+    E.sites[6].kind = opt_ns::sccp_phi_v;    // d3 = phi(d1@1, d2@2)
+    E.sites[6].dst = 3;
+    E.sites[6].phi = 0;
+    E.phi_block = {3};
+    E.phi_entry_dst = {3};
+    E.phi_entry_pred = {1, 2};
+    E.phi_entry_arg = {1, 2};
+    E.phi_entry_begin = {0, 2};
+    E.uses = {{1}, {6}, {6}, {}}; // d0 read by the cbr; d1/d2 by the phi
+    E.entry_block = 0;
+    E.lat.assign(4, opt_ns::sccp_top_v);
+    E.cval.assign(4, 0);
+    bool ran = E.run(
+        [&](uintlen_t s, uintlen_t b) {
+          if (s == 0)
+            E.lower(0, opt_ns::sccp_cn_v, 1); // d0 = const 1
+          else if (s == 1) {                  // the cbr on d0
+            if (E.lat[0] == opt_ns::sccp_cn_v)
+              E.push_edge(b, E.cval[0] != 0 ? 0 : 1);
+            else if (E.lat[0] == opt_ns::sccp_od_v) {
+              E.push_edge(b, 0);
+              E.push_edge(b, 1);
+            }
+          } else if (s == 2) // d1 = copy d0
+            E.lower(1, E.lat[0], E.cval[0]);
+          else if (s == 3 || s == 5) // br -> the only edge
+            E.push_edge(b, 0);
+          else if (s == 4) // d2 = const 99 (never executable)
+            E.lower(2, opt_ns::sccp_cn_v, 99);
+        },
+        100000);
+    UT(ran, "sccp: the engine terminates on the pruning case");
+    UT(E.lat[0] == opt_ns::sccp_cn_v && E.cval[0] == 1,
+       "sccp: the const cond is CN 1");
+    UT(E.lat[2] == opt_ns::sccp_top_v && !E.bexec[2],
+       "sccp: the dead arm stays TOP in a never-executable block");
+    UT(E.lat[3] == opt_ns::sccp_cn_v && E.cval[3] == 1,
+       "sccp: the phi merges the EXECUTABLE edge only (loop-free join)");
+  }
+  {
+    // 17c2. loop-carried constant: i = phi(0, j) with j = i around a
+    // self-loop -- the classic SCCP proof the local fold cannot make
+    opt_ns::sccp_engine_t<V> E{};
+    // blocks: 0 -> {1}; 1 -> {1, 2} (back edge slot 0, exit slot 1); 2 -> {}
+    E.succs = {{1, none_v}, {1, 2}, {none_v, none_v}};
+    E.sites_of_block = {{0, 4}, {1, 2, 3}, {}};
+    E.sites.resize(5);
+    E.sites[0].kind = opt_ns::sccp_value_v; // d3 = const 0
+    E.sites[0].dst = 3;
+    E.sites[4].kind = opt_ns::sccp_branch_v; // br 1
+    E.sites[1].kind = opt_ns::sccp_phi_v;    // d1 = phi(d3@0, d2@1)
+    E.sites[1].dst = 1;
+    E.sites[1].phi = 0;
+    E.sites[2].kind = opt_ns::sccp_value_v; // d2 = copy d1
+    E.sites[2].dst = 2;
+    E.sites[3].kind = opt_ns::sccp_branch_v; // cbr d0 (OVERDEF) -> both
+    E.phi_block = {1};
+    E.phi_entry_dst = {1};
+    E.phi_entry_pred = {0, 1};
+    E.phi_entry_arg = {3, 2};
+    E.phi_entry_begin = {0, 2};
+    E.uses = {
+        {3}, {2}, {1}, {1}}; // cbr reads d0; copy reads d1; phi reads d3/d2
+    E.entry_block = 0;
+    E.lat.assign(4, opt_ns::sccp_top_v);
+    E.cval.assign(4, 0);
+    E.lat[0] = opt_ns::sccp_od_v; // the loop cond is a runtime value
+    bool ran = E.run(
+        [&](uintlen_t s, uintlen_t b) {
+          if (s == 0)
+            E.lower(3, opt_ns::sccp_cn_v, 0);
+          else if (s == 2)
+            E.lower(2, E.lat[1], E.cval[1]); // j = i
+          else if (s == 3) {                 // cond OVERDEF: both edges
+            E.push_edge(b, 0);
+            E.push_edge(b, 1);
+          } else if (s == 4) // br -> the only edge
+            E.push_edge(b, 0);
+        },
+        100000);
+    UT(ran && E.lat[1] == opt_ns::sccp_cn_v && E.cval[1] == 0,
+       "sccp: the loop-carried i = phi(0, i) converges to CONST 0");
+    UT(E.lat[2] == opt_ns::sccp_cn_v && E.cval[2] == 0,
+       "sccp: the back-edge copy j = i is also 0");
+  }
+  {
+    // 17c3. the N-ARY phi merge: a 3-way branch into one join (a CFG
+    // shape this IR cannot spell); three executable in-edges, two
+    // carrying 5 -> CONST 5 with a differing third -> OVERDEF
+    opt_ns::sccp_engine_t<V> E{};
+    // 0 -> {1, 2, 3}; each of 1..3 -> {4}
+    E.succs = {{1, 2, 3}, {4}, {4}, {4}, {}};
+    E.sites_of_block = {{0, 4}, {1, 5}, {2, 6}, {3, 7}, {8, 9}};
+    E.sites.resize(10);
+    E.sites[0].kind = opt_ns::sccp_value_v; // d0 = const 5
+    E.sites[0].dst = 0;
+    E.sites[4].kind = opt_ns::sccp_branch_v; // the 3-way branch
+    E.sites[1].kind = opt_ns::sccp_value_v;  // d1 = copy d0
+    E.sites[1].dst = 1;
+    E.sites[5].kind = opt_ns::sccp_branch_v; // br 4
+    E.sites[2].kind = opt_ns::sccp_value_v;  // d2 = copy d0
+    E.sites[2].dst = 2;
+    E.sites[6].kind = opt_ns::sccp_branch_v; // br 4
+    E.sites[3].kind = opt_ns::sccp_value_v;  // d3 = const 9 (differs)
+    E.sites[3].dst = 3;
+    E.sites[7].kind = opt_ns::sccp_branch_v; // br 4
+    E.sites[8].kind = opt_ns::sccp_phi_v;    // d4 = phi(d1@1, d2@2, d3@3)
+    E.sites[8].dst = 4;
+    E.sites[8].phi = 0;
+    E.sites[9].kind = opt_ns::sccp_phi_v; // d5 = phi(d1@1, d2@2, d0@3)
+    E.sites[9].dst = 5;
+    E.sites[9].phi = 1;
+    E.phi_block = {4, 4};
+    E.phi_entry_dst = {4, 5};
+    E.phi_entry_pred = {1, 2, 3, 1, 2, 3};
+    E.phi_entry_arg = {1, 2, 3, 1, 2, 0};
+    E.phi_entry_begin = {0, 3, 6};
+    E.uses = {{9}, {8, 9}, {8, 9}, {8}, {}, {}}; // one row per var
+    E.entry_block = 0;
+    E.lat.assign(6, opt_ns::sccp_top_v);
+    E.cval.assign(6, 0);
+    bool ran = E.run(
+        [&](uintlen_t s, uintlen_t b) {
+          if (s == 0)
+            E.lower(0, opt_ns::sccp_cn_v, 5);
+          else if (s == 1 || s == 2) // d1/d2 = copy d0
+            E.lower(s == 1 ? 1 : 2, E.lat[0], E.cval[0]);
+          else if (s == 3) // d3 = const 9
+            E.lower(3, opt_ns::sccp_cn_v, 9);
+          else if (s == 4) { // the 3-way branch: all three edges
+            E.push_edge(b, 0);
+            E.push_edge(b, 1);
+            E.push_edge(b, 2);
+          } else if (s == 5 || s == 6 || s == 7) // br 4
+            E.push_edge(b, 0);
+        },
+        100000);
+    UT(ran && E.lat[4] == opt_ns::sccp_od_v,
+       "sccp: 3-entry phi with a differing arg meets to OVERDEF");
+    UT(E.lat[5] == opt_ns::sccp_cn_v && E.cval[5] == 5,
+       "sccp: 3-entry phi with all-equal args is CONST (N-ary merge)");
+  }
+  {
+    // 17c4. the duplicate-pred rule: a pred whose BOTH slots target the
+    // phi block carries the arg when EITHER edge is executable
+    opt_ns::sccp_engine_t<V> E{};
+    // 0 -> {1, 1} (both arms on one block); 1 -> {}
+    E.succs = {{1, 1}, {none_v}};
+    E.sites_of_block = {{0, 1}, {2}};
+    E.sites.resize(3);
+    E.sites[0].kind = opt_ns::sccp_value_v; // d0 = const 3
+    E.sites[0].dst = 0;
+    E.sites[1].kind = opt_ns::sccp_branch_v; // cbr OVERDEF: both edges
+    E.sites[2].kind = opt_ns::sccp_phi_v;    // d1 = phi(d0@0, d0@0)
+    E.sites[2].dst = 1;
+    E.sites[2].phi = 0;
+    E.phi_block = {1};
+    E.phi_entry_dst = {1};
+    E.phi_entry_pred = {0, 0};
+    E.phi_entry_arg = {0, 0};
+    E.phi_entry_begin = {0, 2};
+    E.uses = {{2}, {}}; // the phi reads d0 (both entries)
+    E.entry_block = 0;
+    E.lat.assign(2, opt_ns::sccp_top_v);
+    E.cval.assign(2, 0);
+    E.lat[0] = opt_ns::sccp_cn_v;
+    E.cval[0] = 3;
+    bool ran = E.run(
+        [&](uintlen_t s, uintlen_t b) {
+          if (s == 1) {
+            E.push_edge(b, 0);
+            E.push_edge(b, 1);
+          }
+        },
+        100000);
+    UT(ran && E.lat[1] == opt_ns::sccp_cn_v && E.cval[1] == 3,
+       "sccp: duplicate-pred entries merge over EITHER edge (N-ary rule)");
+  }
+
+  // 17d. pcopy_ns: parallel-copy sequentialization
+  {
+    // chain: c<-b, b<-a: neither dst is a pending source, so both
+    // emit in ROW order (c<-b first is safe: nothing reads c)
+    opt_ns::pcopy_stats_t st{};
+    auto ops = opt_ns::sequentialize_pcopy(
+        {{2, 1}, {1, 0}}, [](uintlen_t) { return 100; }, st);
+    UT(ops.size() == 2 && ops[0].dst == 2 && ops[0].src == 1 &&
+           ops[1].dst == 1 && ops[1].src == 0,
+       "pcopy: a hazard-free set emits in row order");
+    // swap cycle: a<-b, b<-a -> one temp, three copies
+    opt_ns::pcopy_stats_t st2{};
+    auto ops2 = opt_ns::sequentialize_pcopy(
+        {{0, 1}, {1, 0}}, [](uintlen_t) { return 100; }, st2);
+    UT(ops2.size() == 3 && st2.cycles_broken == 1 && ops2[0].dst == 100 &&
+           ops2[0].src == 1,
+       "pcopy: the swap cycle breaks by saving ONE source into a temp");
+    UT(ops2[1].dst == 1 && ops2[1].src == 0 && ops2[2].dst == 0 &&
+           ops2[2].src == 100,
+       "pcopy: the broken swap runs temp<-src, dst<-src, dst<-temp");
+    // 3-cycle rotation
+    opt_ns::pcopy_stats_t st3{};
+    auto ops3 = opt_ns::sequentialize_pcopy(
+        {{0, 1}, {1, 2}, {2, 0}}, [](uintlen_t) { return 200; }, st3);
+    UT(ops3.size() == 4 && st3.cycles_broken == 1,
+       "pcopy: a 3-cycle rotation needs one temp and four copies");
+    // undef arg -> const zero; self-copy stripped
+    opt_ns::pcopy_stats_t st4{};
+    auto ops4 = opt_ns::sequentialize_pcopy(
+        {{5, 5}, {6, none_v}}, [](uintlen_t) { return 300; }, st4);
+    UT(ops4.size() == 1 && ops4[0].zero && ops4[0].dst == 6 &&
+           st4.self_copies == 1 && st4.zeros == 1,
+       "pcopy: self-copies strip, undef args materialize zero");
+  }
+
+  // 17e. the edge-split plan
+  {
+    // 0 fans out to {3, 2}; 3 holds phis -> split edge (0, slot 0)
+    std::vector<std::vector<uintlen_t>> rows = {{3, 2}, {}, {}, {}};
+    std::vector<char> has_phi = {0, 0, 0, 1};
+    auto plan = opt_ns::calculate_edge_splits(rows, has_phi);
+    UT(plan.size() == 1 && plan[0].pred == 0 && plan[0].slot == 0 &&
+           plan[0].target == 3 && plan[0].fresh == 4,
+       "split: the 2-succ pred's phi-targeted edge gets a fresh block");
+    // both arms on one target: NO split (every path runs the copies)
+    std::vector<std::vector<uintlen_t>> rows2 = {{3, 3}, {}, {}, {}};
+    auto plan2 = opt_ns::calculate_edge_splits(rows2, has_phi);
+    UT(plan2.empty(), "split: cbr(c, Y, Y) needs no split");
+    // single-succ pred: no split
+    std::vector<std::vector<uintlen_t>> rows3 = {{3, none_v}, {}, {}, {}};
+    auto plan3 = opt_ns::calculate_edge_splits(rows3, has_phi);
+    UT(plan3.empty(), "split: a single-succ pred hosts its own copies");
+    // both targets phi-free: no split
+    std::vector<char> has_phi0 = {0, 0, 0, 0};
+    auto plan4 = opt_ns::calculate_edge_splits(rows, has_phi0);
+    UT(plan4.empty(), "split: nothing to place without phis");
+  }
+
+  // 17f. cfg_ns: the flood + the splice pairing plan
+  {
+    // an unreachable island next to a reachable chain
+    std::vector<std::vector<uintlen_t>> adjs = {{1}, {2}, {}, {4}, {3}};
+    auto reach = opt_ns::calculate_reachable_mask(adjs, 0);
+    UT(reach.size() == 5 && reach[0] && reach[1] && reach[2] && !reach[3] &&
+           !reach[4],
+       "flood: the island stays dark");
+    // splice pairing on a chain 0->1->2->3: two matchings, one sweep
+    std::vector<std::vector<uintlen_t>> srows = {{1}, {2}, {3}, {}};
+    std::vector<std::vector<uintlen_t>> prows = preds_of(srows);
+    std::vector<char> has_phi = {0, 0, 0, 0};
+    auto plan = opt_ns::calculate_splice_plan(srows, prows, 0, has_phi);
+    UT(plan.merges_of[0] == 1 && plan.absorbed_of[1] == 0,
+       "splice: block 0 absorbs its single pred'd successor");
+    UT(plan.merges_of[2] == 3 && plan.absorbed_of[3] == 2,
+       "splice: the chain pairs twice in ONE sweep (matchings only)");
+    // a SELF-LOOP successor and the ENTRY successor are kept
+    auto plan_self = opt_ns::calculate_splice_plan(
+        std::vector<std::vector<uintlen_t>>{{0}},
+        std::vector<std::vector<uintlen_t>>{{0}}, 0, has_phi);
+    UT(plan_self.merges_of[0] == none_v,
+       "splice: the self-loop successor is kept (s == b)");
+    auto plan_entry = opt_ns::calculate_splice_plan(
+        std::vector<std::vector<uintlen_t>>{{1}, {0}},
+        std::vector<std::vector<uintlen_t>>{{1}, {0}}, 0, has_phi);
+    UT(plan_entry.merges_of[1] == none_v && plan_entry.absorbed_of[0] == none_v,
+       "splice: nobody absorbs the entry (s == entry is kept)");
+    // a phi-holding successor is refused
+    std::vector<std::vector<uintlen_t>> srows3 = {{1}, {2}, {}};
+    std::vector<std::vector<uintlen_t>> prows3 = preds_of(srows3);
+    std::vector<char> has_phi3 = {0, 1, 0};
+    auto plan3x = opt_ns::calculate_splice_plan(srows3, prows3, 0, has_phi3);
+    UT(plan3x.merges_of[0] == none_v,
+       "splice: a phi-holding successor is refused");
+  }
+
+  // 17g. inv_ns: loop-invariant selection
+  {
+    std::vector<char> in_loop = {1, 1, 1, 0, 0}; // h=0, body=1,2 inside
+    auto [pre, outside] = opt_ns::find_unique_outside_pred(
+        std::vector<uintlen_t>{3, 1, 2}, in_loop);
+    UT(pre == 3 && outside == 1, "inv: the unique outside pred is found");
+    auto [pre2, outside2] = opt_ns::find_unique_outside_pred(
+        std::vector<uintlen_t>{3, 4, 1}, in_loop);
+    UT(outside2 == 2, "inv: two outside preds disqualify the loop");
+    // the invariance predicate + the header-first scan discipline
+    // blocks: 0 = header, 1 = body, 3 = preheader, 4 = an outside def
+    // that DOMINATES the preheader, 2 = an outside def that does NOT
+    // dom intervals: blocks 0 and 4 dominate the preheader 3; block 2
+    // (ib 7) does not; a begin of 0 is the unreachable/invalid marker
+    std::vector<ulen> db{1, 6, 7, 2, 1};
+    std::vector<ulen> de{9, 6, 7, 5, 9};
+    std::vector<uintlen_t> def_block(6, none_v);
+    def_block[0] = 4; // v0: outside, dominates pre
+    def_block[1] = 1; // v1: inside the loop
+    def_block[2] = 2; // v2: outside but NOT dominating pre (ib[2] = 0)
+    def_block[3] = 1; // v3: a CONST defined INSIDE (position-independent)
+    std::vector<char> cmask(6, 0);
+    cmask[3] = 1; // v3 is that inside-loop const
+    std::vector<std::vector<uintlen_t>> sob = {{0, 1}, {2}};
+    std::vector<std::vector<uintlen_t>> sargs(3);
+    sargs[0] = {0};
+    sargs[1] = {1};
+    sargs[2] = {3};
+    std::vector<char> eligible = {1, 1, 1};
+    auto pick = opt_ns::calculate_first_invariant_site<V>(
+        std::vector<uintlen_t>{1}, 0, 3, in_loop, def_block, cmask, db, de, sob,
+        sargs, eligible);
+    UT(pick.first == 0 && pick.second == 0,
+       "inv: the header's invariant site is found FIRST (the unswitch feed)");
+    // make the header site read the inside def: the body's const site wins
+    sargs[0] = {1};
+    pick = opt_ns::calculate_first_invariant_site<V>(
+        std::vector<uintlen_t>{1}, 0, 3, in_loop, def_block, cmask, db, de, sob,
+        sargs, eligible);
+    UT(pick.first == 1 && pick.second == 2,
+       "inv: an inside-const operand is invariant (value, not location)");
+    // an outside def that does not dominate the preheader is NOT invariant
+    sargs[2] = {2};
+    eligible = {1, 0, 1};
+    pick = opt_ns::calculate_first_invariant_site<V>(
+        std::vector<uintlen_t>{1}, 0, 3, in_loop, def_block, cmask, db, de, sob,
+        sargs, eligible);
+    UT(pick.first == none_v,
+       "inv: outside-but-not-dominating defs refuse the hoist");
+  }
+
+  // 17h. ren_ns: the copy-rename builder + the crossed-pair guard
+  {
+    // chain: d1 <- s0, d2 <- d1: both resolve to s0 in one hop
+    auto ren = opt_ns::build_copy_rename(
+        3, std::vector<std::pair<uintlen_t, uintlen_t>>{{1, 0}, {2, 1}});
+    UT(ren[1] == 0 && ren[2] == 0,
+       "ren: chains die in one hop (transitive resolve at record time)");
+    // crossed pair: d1 <- d0 then d0 <- d1 -- the closing copy must NOT
+    // be recorded (a self-loop entry would never resolve; seed 7406)
+    auto ren2 = opt_ns::build_copy_rename(
+        2, std::vector<std::pair<uintlen_t, uintlen_t>>{{1, 0}, {0, 1}});
+    UT(ren2[1] == 0 && ren2[0] == none_v,
+       "ren: the crossed closing copy stays unrecorded");
+    UT(opt_ns::resolve_capped(ren2, none_v) == none_v,
+       "ren: the capped resolve passes none through");
+    UT(opt_ns::resolve_capped(ren2, 0) == 0 &&
+           opt_ns::resolve_capped(ren2, 1) == 0,
+       "ren: d0 keeps its name (unpropagated), d1 renames to d0");
+  }
+
+  // 17i. the trivial-phi pick (N-ary)
+  {
+    UT(opt_ns::calculate_trivial_phi_pick(9, std::vector<uintlen_t>{4, 4}) == 4,
+       "pick: phi(a, a) collapses to a");
+    UT(opt_ns::calculate_trivial_phi_pick(9, std::vector<uintlen_t>{9, 4}) == 4,
+       "pick: phi(self, a) collapses to a");
+    UT(opt_ns::calculate_trivial_phi_pick(9, std::vector<uintlen_t>{4, 5}) ==
+           none_v,
+       "pick: phi(a, b) is genuine");
+    UT(opt_ns::calculate_trivial_phi_pick(9, std::vector<uintlen_t>{9, 9}) ==
+           none_v,
+       "pick: phi(self, self) stays");
+    UT(opt_ns::calculate_trivial_phi_pick(
+           9, std::vector<uintlen_t>{none_v, 4}) == 4,
+       "pick: an absent arg is ignored");
+    UT(opt_ns::calculate_trivial_phi_pick(9, std::vector<uintlen_t>{4, 4, 4}) ==
+           4,
+       "pick: the N-ary phi(a, a, a) collapses (arity 3)");
+    UT(opt_ns::calculate_trivial_phi_pick(9, std::vector<uintlen_t>{4, 5, 4}) ==
+           none_v,
+       "pick: the N-ary phi(a, b, a) is genuine");
+  }
+}
+
 std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
 return ut_fails ? 1 : 0;
 }

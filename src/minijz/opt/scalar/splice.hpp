@@ -34,6 +34,7 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9b2. block splicing
 // ------------------------------------------------------ If a single-succ block
@@ -42,68 +43,73 @@
 // folding leaves behind. Phi pred ids in s's successors are rekeyed s -> b so
 // phi args stay pred-identified.
 constexpr bool opt_splice(Fn &fn, OptStats &os) {
-  uint32_t nb = fn.nblocks();
-  std::vector<uint32_t> absorbed(nb, NONE); // block -> absorber
-  std::vector<uint32_t> merges(nb, NONE);   // absorber -> absorbed block
-  bool any = false;
+  const uint32_t nb = fn.nblocks();
+  // ---- the pairing plan (pure CFG math): matchings only -- b absorbs its
+  // single successor s when s is not b, not the entry, not already paired,
+  // entered ONLY from b, and phi-free. The kernel keeps its own rekeyed
+  // copy of the preds (a later pair's "entered only from b'" check reads
+  // the rekeyed rows, exactly like the old inline sweep); the final
+  // fn.preds are recomputed from succ below anyway.
+  auto U = [](uint32_t v) { return v == NONE ? opt_ns::none_v : (uintlen_t)v; };
+  std::vector<std::vector<uintlen_t>> srows(nb), prows(nb);
+  std::vector<char> has_phi(nb, 0);
   for (uint32_t b = 0; b < nb; ++b) {
-    if (absorbed[b] != NONE || merges[b] != NONE)
-      continue; // already in a pair this sweep (matchings only: no chains)
-    uint32_t s = fn.succ0(b);
-    if (fn.succ1(b) != NONE || s == NONE)
-      continue; // dead or 2-succ
-    if (s == b || s == 0)
-      continue; // self-loop / entry: keep
-    if (absorbed[s] != NONE || merges[s] != NONE)
-      continue;
-    if (fn.preds[s].size() != 1 || fn.preds[s][0] != b)
-      continue;
-    bool s_has_phi = false;
-    for (uint32_t i = fn.blocks[s].begin; i < fn.blocks[s].end; ++i)
+    if (fn.succ0(b) != NONE)
+      srows[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      srows[b].push_back(fn.succ1(b));
+    for (uint32_t p : fn.preds[b])
+      prows[b].push_back(p);
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
       if (fn.code[i].k == K::Phi) {
-        s_has_phi = true;
+        has_phi[b] = 1;
         break;
       }
-    if (s_has_phi)
+  }
+  const opt_ns::splice_plan_t plan =
+      opt_ns::calculate_splice_plan(srows, std::move(prows), 0, has_phi);
+  bool any = false;
+  for (uint32_t b = 0; b < nb; ++b)
+    any |= (plan.merges_of[b] != opt_ns::none_v);
+  if (!any)
+    return false;
+  // ---- the rekeys the plan implies: for every absorber pair, the phis of
+  // the absorbed block's successors rekey pred s -> pred b (pred identity,
+  // never position), in the sweep's own order
+  for (uint32_t b = 0; b < nb; ++b) {
+    const uintlen_t mm = plan.merges_of[b];
+    if (mm == opt_ns::none_v)
       continue;
-    // absorb s into b
-    absorbed[s] = b;
-    merges[b] = s;
-    any = true;
-    os.splices++;
-    // rekey phis in s's successors (pred s -> pred b) and refresh their preds
-    for (uint32_t t : {fn.succ0(s), fn.succ1(s)}) {
+    const uint32_t s2 = (uint32_t)mm;
+    for (uint32_t t : {fn.succ0(s2), fn.succ1(s2)}) {
       if (t == NONE)
         continue;
       for (uint32_t i = fn.blocks[t].begin; i < fn.blocks[t].end; ++i) {
         Instr &I = fn.code[i];
         if (I.k != K::Phi)
           break;
-        if (I.t == s)
+        if (I.t == s2)
           I.t = b;
-        if (I.f == s)
+        if (I.f == s2)
           I.f = b;
       }
-      for (uint32_t &p : fn.preds[t])
-        if (p == s)
-          p = b;
     }
+    os.splices++;
   }
-  if (!any)
-    return false;
-  // rebuild: absorbed blocks vanish; an absorber emits its own non-terminator
-  // instrs, then its absorbed block's instrs, then (that block may itself
-  // have absorbed someone in this sweep) the whole chain, ending at the final
-  // terminator. Ranges AND succs are read from SNAPSHOTS: the rebuild
-  // overwrites fn.blocks/fn.succ while chain ends still need the absorbed
-  // blocks' ORIGINAL successors (an absorbed block isolated earlier in this
-  // same loop must not poison its absorber with NONE succs).
+  // ---- rebuild: absorbed blocks vanish; an absorber emits its own
+  // non-terminator instrs, then its absorbed block's instrs, then (that
+  // block may itself have absorbed someone in this sweep) the whole chain,
+  // ending at the final terminator. Ranges AND succs are read from
+  // SNAPSHOTS: the rebuild overwrites fn.blocks/fn.succ while chain ends
+  // still need the absorbed blocks' ORIGINAL successors (an absorbed block
+  // isolated earlier in this same loop must not poison its absorber with
+  // NONE succs).
   std::vector<Block> old_blocks = fn.blocks;
   std::vector<uint32_t> old_succ = fn.succ;
   std::vector<Instr> nc{};
   nc.reserve(fn.code.size());
   for (uint32_t b = 0; b < nb; ++b) {
-    if (absorbed[b] != NONE) {
+    if (plan.absorbed_of[b] != opt_ns::none_v) {
       fn.blocks[b] = {(uint32_t)nc.size(), (uint32_t)nc.size()};
       fn.succ[2 * b] = NONE;
       fn.succ[2 * b + 1] = NONE;
@@ -113,14 +119,15 @@ constexpr bool opt_splice(Fn &fn, OptStats &os) {
     uint32_t x = b;
     for (;;) {
       uint32_t xb = old_blocks[x].begin, xe = old_blocks[x].end;
-      uint32_t m = merges[x];
-      if (m == NONE) { // chain end: emit everything incl. the terminator
+      const uintlen_t mm = plan.merges_of[x];
+      if (mm == opt_ns::none_v) { // chain end: emit all incl. terminator
         for (uint32_t i = xb; i < xe; ++i)
           nc.push_back(fn.code[i]);
         fn.succ[2 * b] = old_succ[2 * x];
         fn.succ[2 * b + 1] = old_succ[2 * x + 1];
         break;
       }
+      uint32_t m = (uint32_t)mm;
       // x absorbed m: emit x's instrs but its trailing Br, then follow
       if (xe > xb)
         for (uint32_t i = xb; i + 1 < xe; ++i)
@@ -133,5 +140,3 @@ constexpr bool opt_splice(Fn &fn, OptStats &os) {
   fn.recompute_preds();
   return true;
 }
-
-// --- 9c. SSA dead-code elimination -------------------------------------------

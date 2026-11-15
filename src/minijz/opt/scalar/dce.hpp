@@ -33,11 +33,18 @@
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "../../ir/sweep.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9c. SSA dead-code elimination -------------------------------------------
 // roots: Print, Br, Cbr, Exit, and Div/Mod whose divisor is not a known
 // nonzero constant (they may trap — removing them would erase the trap).
+// The mark phase is the generic liveness kernel (opt_ns::
+// calculate_live_sites over the def/use bipartite tables); the phi
+// collapse picks come from opt_ns::calculate_trivial_phi_pick (the N-ary
+// rule over the arg row). The policies (what is a root, what collapses)
+// stay here with the compiler; the fixpoints are kernel code.
 constexpr bool opt_dce(Fn &fn, OptStats &os) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   std::vector<char> known(nv, 0);
@@ -47,12 +54,21 @@ constexpr bool opt_dce(Fn &fn, OptStats &os) {
       known[I.dst] = 1;
       kval[I.dst] = I.c;
     }
-  // def index of each vreg
-  std::vector<uint32_t> def_idx(nv, NONE);
+  // def index + operand rows of each site (the whole IR knowledge the
+  // kernel needs: which var each site defines, which vars it reads)
+  std::vector<uintlen_t> def_idx(nv, opt_ns::none_v);
+  std::vector<std::vector<uintlen_t>> args_of(fn.code.size());
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       if (fn.code[i].dst != NONE)
         def_idx[fn.code[i].dst] = i;
+      for (uint32_t v : fn.code[i].args) // Call arguments
+        if (v != NONE)
+          args_of[i].push_back(v);
+      for (uint32_t v : {fn.code[i].a, fn.code[i].b2, fn.code[i].c2})
+        if (v != NONE)
+          args_of[i].push_back(v);
+    }
   auto may_trap = [&](const Instr &I) {
     if (I.k != K::Bin || (I.b != B::Div && I.b != B::Mod))
       return false;
@@ -60,8 +76,8 @@ constexpr bool opt_dce(Fn &fn, OptStats &os) {
       return false; // proven trap-free: pure, removable
     return !(I.b2 < nv && known[I.b2] && kval[I.b2] != 0);
   };
-  std::vector<char> live(fn.code.size(), 0);
-  std::vector<uint32_t> wl{};
+  // the root scan: the POLICY lives here, the fixpoint in the kernel
+  std::vector<uintlen_t> roots{};
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
@@ -70,58 +86,26 @@ constexpr bool opt_dce(Fn &fn, OptStats &os) {
       // TRAP (Div/Mod with a non-constant divisor, Alloc: n<0 or OOM,
       // Load: out of bounds) — removing them would erase observable behavior.
       // Bkpt is a debugging observation point: it stays so -O3 builds remain
-      // debuggable (its observed args are live uses, walked below).
+      // debuggable (its observed args are live uses, walked by the kernel).
       if (I.k == K::Print || I.k == K::Br || I.k == K::Cbr || I.k == K::Exit ||
           I.k == K::Store || I.k == K::Input || I.k == K::Alloc ||
           I.k == K::Load || I.k == K::Ret || I.k == K::Call || I.k == K::Bkpt ||
-          may_trap(I)) {
-        live[i] = 1;
-        wl.push_back(i);
-      }
+          may_trap(I))
+        roots.push_back(i);
     }
-  while (!wl.empty()) {
-    uint32_t i = wl.back();
-    wl.pop_back();
-    for (uint32_t v : fn.code[i].args) { // Call arguments
-      if (v == NONE || v >= nv)
-        continue;
-      uint32_t d = def_idx[v];
-      if (d != NONE && !live[d]) {
-        live[d] = 1;
-        wl.push_back(d);
-      }
-    }
-    for (uint32_t v : {fn.code[i].a, fn.code[i].b2, fn.code[i].c2}) {
-      if (v == NONE || v >= nv)
-        continue;
-      uint32_t d = def_idx[v];
-      if (d != NONE && !live[d]) {
-        live[d] = 1;
-        wl.push_back(d);
-      }
-    }
-  }
+  const std::vector<char> live =
+      opt_ns::calculate_live_sites<V>(def_idx, args_of, roots);
   // sweep
   bool changed = false;
   {
-    std::vector<Instr> nc{};
-    nc.reserve(fn.code.size());
-    for (uint32_t b = 0; b < fn.nblocks(); ++b) {
-      uint32_t ob = fn.blocks[b].begin, oe = fn.blocks[b].end;
-      fn.blocks[b].begin = (uint32_t)nc.size();
-      for (uint32_t i = ob; i < oe; ++i) {
-        if (live[i])
-          nc.push_back(fn.code[i]);
-        else {
-          changed = true;
-          os.dce++;
-        }
-      }
-      fn.blocks[b].end = (uint32_t)nc.size();
+    const uint32_t gone = sweep_survivors(fn, live);
+    if (gone) {
+      os.dce += gone;
+      changed = true;
     }
-    fn.code = std::move(nc);
   }
   // trivial-phi collapse (x = phi(a, a) / phi(self, a) -> copy), cascading
+  // rounds; the pick is the kernel's N-ary rule over the phi's arg row
   for (int round = 0; round < 10; ++round) {
     bool ch = false;
     for (uint32_t b = 0; b < fn.nblocks(); ++b)
@@ -129,15 +113,15 @@ constexpr bool opt_dce(Fn &fn, OptStats &os) {
         Instr &I = fn.code[i];
         if (I.k != K::Phi)
           continue;
-        uint32_t x = (I.a != NONE && I.a != I.dst) ? I.a : NONE;
-        uint32_t y = (I.b2 != NONE && I.b2 != I.dst) ? I.b2 : NONE;
-        if (x == NONE && y == NONE)
-          continue; // all self/undef
-        if (x != NONE && y != NONE && x != y)
-          continue;                          // genuine phi
-        uint32_t pick = (x != NONE) ? x : y; // phi(a), phi(a,self)
+        const uintlen_t pick = opt_ns::calculate_trivial_phi_pick(
+            I.dst == NONE ? opt_ns::none_v : (uintlen_t)I.dst,
+            std::array<uintlen_t, 2>{
+                I.a == NONE ? opt_ns::none_v : (uintlen_t)I.a,
+                I.b2 == NONE ? opt_ns::none_v : (uintlen_t)I.b2});
+        if (pick == opt_ns::none_v)
+          continue; // genuine phi / all self
         I.k = K::Copy;
-        I.a = pick;
+        I.a = (uint32_t)pick;
         I.b2 = NONE;
         I.t = I.f = NONE;
         os.copies++;

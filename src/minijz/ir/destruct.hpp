@@ -36,7 +36,9 @@
 
 #include "../base/pass_cfg.hpp"
 #include "instr.hpp" // Fn (was masked by the old an.hpp include)
+#include "../opt/opt_generic.hpp"
 #include "stats.hpp"
+#include "sweep.hpp"
 
 // ============================================================================
 // 9g. SSA DESTRUCTION — phis -> edge copies
@@ -49,108 +51,102 @@
 //     3. strip the phis; the result is plain (non-SSA) 3-address code where
 //        every vreg is just a slot
 // ============================================================================
-// sequentialize one parallel copy set; appends real instrs to `out`
+// sequentialize one parallel copy set via the generic kernel
+// (opt_ns::sequentialize_pcopy): the greedy emit-when-dst-not-needed
+// filter, the permutation-cycle break by a fresh temp (the callback
+// below mints the anon vreg exactly at the cycle-break points), undef
+// args materialized as Const 0. The kernel works over (dst, src) id
+// pairs and returns the op stream; the Instr emission stays here.
 constexpr void sequentialize(Fn &fn,
-                             std::vector<std::pair<uint32_t, uint32_t>> &pcs,
+                             std::vector<std::pair<uint32_t, uint32_t>> &pcs_ir,
                              std::vector<Instr> &out, DestrStats &ds) {
-  // self-copies are no-ops (the slot already holds the right value on that
-  // edge) and would otherwise look like unbreakable 1-cycles
-  for (size_t i = 0; i < pcs.size();) {
-    if (pcs[i].first == pcs[i].second && pcs[i].second != NONE) {
-      pcs.erase(pcs.begin() + (long)i);
-      ds.self_copies++;
-    } else {
-      ++i;
-    }
+  std::vector<std::pair<uintlen_t, uintlen_t>> pcs{};
+  pcs.reserve(pcs_ir.size());
+  for (const auto &p : pcs_ir)
+    pcs.push_back({(uintlen_t)p.first,
+                   p.second == NONE ? opt_ns::none_v : (uintlen_t)p.second});
+  opt_ns::pcopy_stats_t st{};
+  const auto ops = opt_ns::sequentialize_pcopy(
+      std::move(pcs),
+      [&](uintlen_t d) {
+        return (uintlen_t)new_anon_vreg(fn, fn.base_of((uint32_t)d));
+      },
+      st);
+  for (const auto &op : ops) {
+    if (op.zero) // undef arg: materialize 0
+      out.push_back({.k = K::Const, .dst = (uint32_t)op.dst, .c = 0});
+    else
+      out.push_back(
+          {.k = K::Copy, .dst = (uint32_t)op.dst, .a = (uint32_t)op.src});
   }
-  while (!pcs.empty()) {
-    bool progress = false;
-    for (size_t i = 0; i < pcs.size(); ++i) {
-      uint32_t d = pcs[i].first;
-      bool d_needed = false; // is d still a source of a pending copy?
-      for (const auto &p : pcs)
-        if (p.second == d) {
-          d_needed = true;
-          break;
-        }
-      if (d_needed)
-        continue;                  // emitting now would clobber a needed value
-      if (pcs[i].second == NONE) { // undef arg: materialize 0
-        out.push_back({.k = K::Const, .dst = d, .c = 0});
-        ds.zeros++;
-      } else {
-        out.push_back({.k = K::Copy, .dst = d, .a = pcs[i].second});
-        ds.copies++;
-      }
-      pcs.erase(pcs.begin() + (long)i);
-      progress = true;
-      break;
-    }
-    if (!progress && !pcs.empty()) {
-      // swap cycle: save the source into a fresh temp, redirect this copy
-      uint32_t d = pcs[0].first, s = pcs[0].second;
-      uint32_t t = new_anon_vreg(fn, fn.base_of(d));
-      out.push_back({.k = K::Copy, .dst = t, .a = s});
-      pcs[0].second = t;
-      ds.copies++;
-      ds.cycles_broken++;
-    }
-  }
+  ds.self_copies += (uint32_t)st.self_copies;
+  ds.zeros += (uint32_t)st.zeros;
+  ds.copies += (uint32_t)st.copies;
+  ds.cycles_broken += (uint32_t)st.cycles_broken;
 }
 
 constexpr void split_critical_edges(Fn &fn, DestrStats &ds) {
-  uint32_t n0 = fn.nblocks();
+  const uint32_t n0 = fn.nblocks();
+  // the plan (pure CFG math): which (pred, slot) edges need a block of
+  // their own -- a pred fanning out to >= 2 DISTINCT targets (this IR's
+  // succ discipline: slot 1 valid implies slot 0 valid, so "2 valid
+  // slots, not all one target" is exactly the old succ1/succ0 gate)
+  // with a phi-holding target. Enumerated p-ascending, slot-ascending;
+  // the client's rebuild mints identical fresh block ids in that order.
+  std::vector<char> has_phi(n0, 0);
+  for (uint32_t s = 0; s < n0; ++s)
+    for (uint32_t i = fn.blocks[s].begin; i < fn.blocks[s].end; ++i)
+      if (fn.code[i].k == K::Phi) {
+        has_phi[s] = 1;
+        break;
+      }
+  std::vector<std::vector<uintlen_t>> rows(n0);
   for (uint32_t p = 0; p < n0; ++p) {
-    if (fn.succ1(p) == NONE || fn.succ0(p) == fn.succ1(p))
-      continue;
-    for (uint32_t si = 0; si < 2; ++si) {
-      uint32_t s = si ? fn.succ1(p) : fn.succ0(p);
-      if (s == NONE)
-        continue;
-      bool s_has_phi = false;
-      for (uint32_t i = fn.blocks[s].begin; i < fn.blocks[s].end; ++i)
-        if (fn.code[i].k == K::Phi) {
-          s_has_phi = true;
-          break;
-        }
-      if (!s_has_phi)
-        continue; // no copies to place: no split needed
-      // fresh block m = [br s] on the edge p -> s
-      uint32_t m = fn.nblocks();
-      fn.blocks.push_back({});
-      fn.succ.push_back(s);
-      fn.succ.push_back(NONE);
-      fn.blocks[m].begin = (uint32_t)fn.code.size();
-      fn.code.push_back({.k = K::Br, .t = s});
-      fn.blocks[m].end = (uint32_t)fn.code.size();
-      // retarget p's edge s -> m (succ table + terminator instr)
-      if (si == 0)
-        fn.succ[2 * p] = m;
-      else
-        fn.succ[2 * p + 1] = m;
-      for (uint32_t i = fn.blocks[p].begin; i < fn.blocks[p].end; ++i) {
-        Instr &I = fn.code[i];
-        if (I.k == K::Cbr) {
-          if (si == 0 && I.t == s)
-            I.t = m;
-          if (si == 1 && I.f == s)
-            I.f = m;
-        } else if (I.k == K::Br && I.t == s) {
+    if (fn.succ0(p) != NONE)
+      rows[p].push_back(fn.succ0(p));
+    if (fn.succ1(p) != NONE)
+      rows[p].push_back(fn.succ1(p));
+  }
+  const auto plan = opt_ns::calculate_edge_splits(rows, has_phi);
+  for (const auto &sp : plan) {
+    const uint32_t p = (uint32_t)sp.pred;
+    const uint32_t si = (uint32_t)sp.slot;
+    const uint32_t s = (uint32_t)sp.target;
+    // fresh block m = [br s] on the edge p -> s
+    uint32_t m = fn.nblocks();
+    fn.blocks.push_back({});
+    fn.succ.push_back(s);
+    fn.succ.push_back(NONE);
+    fn.blocks[m].begin = (uint32_t)fn.code.size();
+    fn.code.push_back({.k = K::Br, .t = s});
+    fn.blocks[m].end = (uint32_t)fn.code.size();
+    // retarget p's edge s -> m (succ table + terminator instr)
+    if (si == 0)
+      fn.succ[2 * p] = m;
+    else
+      fn.succ[2 * p + 1] = m;
+    for (uint32_t i = fn.blocks[p].begin; i < fn.blocks[p].end; ++i) {
+      Instr &I = fn.code[i];
+      if (I.k == K::Cbr) {
+        if (si == 0 && I.t == s)
           I.t = m;
-        }
-      }
-      // rekey phis in s: the arg formerly keyed by pred p now arrives via m
-      for (uint32_t i = fn.blocks[s].begin; i < fn.blocks[s].end; ++i) {
-        Instr &I = fn.code[i];
-        if (I.k != K::Phi)
-          break;
-        if (I.t == p)
-          I.t = m;
-        if (I.f == p)
+        if (si == 1 && I.f == s)
           I.f = m;
+      } else if (I.k == K::Br && I.t == s) {
+        I.t = m;
       }
-      ds.edges_split++;
     }
+    // rekey phis in s: the arg formerly keyed by pred p now arrives via m
+    for (uint32_t i = fn.blocks[s].begin; i < fn.blocks[s].end; ++i) {
+      Instr &I = fn.code[i];
+      if (I.k != K::Phi)
+        break;
+      if (I.t == p)
+        I.t = m;
+      if (I.f == p)
+        I.f = m;
+    }
+    ds.edges_split++;
   }
   fn.recompute_preds();
 }
@@ -231,7 +227,7 @@ constexpr void post_destruct_peephole(Fn &fn, DestrStats &ds) {
         def_idx[I.dst] = i;
     }
     bool changed = false;
-    std::vector<char> drop(fn.code.size(), 0);
+    std::vector<char> keep(fn.code.size(), 1);
     for (uint32_t b = 0; b < fn.nblocks() && !changed; ++b)
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && !changed;
            ++i) {
@@ -241,7 +237,7 @@ constexpr void post_destruct_peephole(Fn &fn, DestrStats &ds) {
         if (I.a >= nv || uses[I.a] != 1)
           continue; // src read only here
         uint32_t d = def_idx[I.a];
-        if (d == NONE || d == i || drop[d])
+        if (d == NONE || d == i || !keep[d])
           continue;
         if (d > i)
           continue; // def BELOW the copy. Post-destruction vregs are plain
@@ -273,7 +269,7 @@ constexpr void post_destruct_peephole(Fn &fn, DestrStats &ds) {
           if (between_writes_src)
             continue;
           I.a = D.a;
-          drop[d] = 1;
+          keep[d] = 0;
         } else if (same_block && D.k != K::Br && D.k != K::Cbr &&
                    D.k != K::Print && D.k != K::Exit && D.k != K::Store) {
           // rename the def's destination to the copy's dst and drop the copy.
@@ -296,7 +292,7 @@ constexpr void post_destruct_peephole(Fn &fn, DestrStats &ds) {
           if (between_reads_dst)
             continue;
           D.dst = I.dst;
-          drop[i] = 1;
+          keep[i] = 0;
         } else
           continue;
         ds.fused++;
@@ -305,16 +301,6 @@ constexpr void post_destruct_peephole(Fn &fn, DestrStats &ds) {
     if (!changed)
       return;
     // sweep the one dropped instr, preserving block ranges
-    std::vector<Instr> nc{};
-    nc.reserve(fn.code.size());
-    for (uint32_t b = 0; b < fn.nblocks(); ++b) {
-      uint32_t ob = fn.blocks[b].begin, oe = fn.blocks[b].end;
-      fn.blocks[b].begin = (uint32_t)nc.size();
-      for (uint32_t i = ob; i < oe; ++i)
-        if (!drop[i])
-          nc.push_back(fn.code[i]);
-      fn.blocks[b].end = (uint32_t)nc.size();
-    }
-    fn.code = std::move(nc);
+    sweep_survivors(fn, keep);
   }
 }

@@ -2,21 +2,24 @@
 // === copyprop.hpp ========================================
 // copy propagation.
 //
-// ALGORITHM: opt_copyprop makes two sweeps. (1) Recording: for each
-//   K::Copy `d = s` (a != dst), r = resolve(I.a) -- sources resolve
-//   transitively, so chains die in one hop; if r != dst then
-//   ren[I.dst] = r, and if r == dst the pair is CROSSED and stays
-//   unrecorded (a self-loop entry would never resolve). (2) Applying:
-//   self-copies (a == dst) and propagated copies (ren[dst] != NONE)
-//   are dropped; every other operand -- I.a, I.b2, I.c2 (a Store's
-//   stored value), I.args (Call arguments) -- is rewritten through
-//   resolve; the sweep then rebuilds fn.code per block range.
+// ALGORITHM: opt_copyprop makes two sweeps. (1) Recording: every
+//   eligible K::Copy `d = s` (a != dst) becomes a pair; the generic
+//   rename builder (opt_ns::build_copy_rename) walks them in code
+//   order, resolving sources transitively through the map being
+//   built (chains die in one hop) and refusing the CROSSED closing
+//   copy of a cyclic rename (resolve(src) == dst -- a self-loop
+//   entry that would never resolve; the phi-degenerate hazard, fuzz
+//   seed 7406). (2) Applying: self-copies (a == dst) and propagated
+//   copies (ren[dst] set) are dropped; every other operand --
+//   I.a, I.b2, I.c2 (a Store's stored value), I.args (Call
+//   arguments) -- is rewritten through the capped resolve
+//   (opt_ns::resolve_capped); the sweep then rebuilds fn.code per
+//   block range.
 // DATA STRUCTURES:
-//   * ren: the renaming map vreg -> copy source (nv wide, NONE where
-//     untouched); a single write per dst keeps it acyclic.
-//   * resolve: chain walk over ren, capped at nv steps -- belt and
-//     braces so a future multi-def IR cannot resurrect an infinite
-//     `while (ren[v] != NONE)` walk.
+//   * the kernel's ren map (nv wide, none where untouched); a single
+//     write per dst keeps it acyclic, the crossed-pair guard keeps it
+//     self-loop-free, the resolve cap is belt and braces so a future
+//     multi-def IR cannot resurrect an infinite walk.
 //   * drop: per-instr bytes selecting the copies the sweep omits.
 // THEORY: SSA gives each vreg exactly one def, and a copy's source
 //   dominates the copy (it must run first), hence the source dominates
@@ -32,7 +35,9 @@
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "../../ir/sweep.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9a2. copy propagation
 // ---------------------------------------------------- `d = s` (Copy): every
@@ -48,43 +53,39 @@
 // then yields resolve(a) == dst — a SELF-LOOP that sends every later resolve
 // into an infinite `while (ren[v] != NONE)` walk (fuzz seed 7406, -O1 with
 // dce disabled, hung here). Such crossed copies stay unpropagated instead:
-// uses keep their original names (conservative, still sound).
+// uses keep their original names (conservative, still sound). Both rules live
+// in the generic rename builder now.
 constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  std::vector<uint32_t> ren(nv, NONE);
-  auto resolve = [&](uint32_t v) -> uint32_t {
-    uint32_t steps = 0;
-    while (v != NONE && v < nv && ren[v] != NONE) {
-      v = ren[v];
-      // belt-and-braces: ren stays acyclic by construction (single write per
-      // dst + the self-loop guard below); the cap keeps any future
-      // multi-def IR from resurrecting the infinite walk
-      if (++steps > nv)
-        break;
-    }
-    return v;
-  };
+  // the recording sweep: eligible copies as (dst, src) pairs in code
+  // order (the whole IR knowledge the kernel needs)
+  std::vector<std::pair<uintlen_t, uintlen_t>> pairs{};
   bool had = false;
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
       if (I.k == K::Copy && I.dst != NONE && I.a != NONE && I.a != I.dst) {
-        uint32_t r = resolve(I.a); // sources resolve transitively: chains die
-        if (r != I.dst)            // r == dst: crossed pair — do not record
-          ren[I.dst] = r;          // (a self-loop entry would never resolve)
+        pairs.push_back({(uintlen_t)I.dst, (uintlen_t)I.a});
         had = true;
       }
     }
   if (!had)
     return false;
+  // the rename map: transitive chains die in one hop; crossed closing
+  // copies stay unrecorded (the self-loop guard)
+  const std::vector<uintlen_t> ren = opt_ns::build_copy_rename(nv, pairs);
+  auto resolve = [&](uint32_t v) -> uint32_t {
+    return (uint32_t)opt_ns::resolve_capped(ren, v == NONE ? opt_ns::none_v
+                                                           : (uintlen_t)v);
+  };
   bool changed = false;
-  std::vector<char> drop(fn.code.size(), 0);
+  std::vector<char> keep(fn.code.size(), 1);
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       Instr &I = fn.code[i];
       if (I.k == K::Copy && I.dst != NONE &&
-          (I.a == I.dst || ren[I.dst] != NONE)) { // self copy or propagated
-        drop[i] = 1;
+          (I.a == I.dst || ren[I.dst] != opt_ns::none_v)) { // self/propagated
+        keep[i] = 0;
         if (I.a != I.dst)
           os.copyprops++;
         changed = true;
@@ -111,19 +112,8 @@ constexpr bool opt_copyprop(Fn &fn, OptStats &os) {
         av = r;
       }
     }
-  if (changed) { // sweep dropped copies, preserving block ranges
-    std::vector<Instr> nc{};
-    nc.reserve(fn.code.size());
-    for (uint32_t b = 0; b < fn.nblocks(); ++b) {
-      uint32_t ob = fn.blocks[b].begin, oe = fn.blocks[b].end;
-      fn.blocks[b].begin = (uint32_t)nc.size();
-      for (uint32_t i = ob; i < oe; ++i)
-        if (!drop[i])
-          nc.push_back(fn.code[i]);
-      fn.blocks[b].end = (uint32_t)nc.size();
-    }
-    fn.code = std::move(nc);
-  }
+  if (changed) // sweep dropped copies, preserving block ranges
+    sweep_survivors(fn, keep);
   return changed;
 }
 

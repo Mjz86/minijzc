@@ -31,25 +31,25 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9b. unreachable block removal + phi arg pruning -------------------------
 // Phi instrs carry their pred block ids in t/f (set during SSA construction),
-// so pruning is by pred identity — no guesswork.
+// so pruning is by pred identity — no guesswork. The flood is the generic
+// reachability kernel (opt_ns::calculate_reachable_mask over the valid-target
+// rows); the isolation policy (what "dead" means for the sweep) stays here.
 constexpr bool opt_remove_unreachable(Fn &fn, OptStats &os) {
-  std::vector<char> reach(fn.nblocks(), 0);
-  std::vector<uint32_t> wl{0};
-  reach[0] = 1;
-  while (!wl.empty()) {
-    uint32_t b = wl.back();
-    wl.pop_back();
-    for (uint32_t s : {fn.succ0(b), fn.succ1(b)})
-      if (s != NONE && !reach[s]) {
-        reach[s] = 1;
-        wl.push_back(s);
-      }
+  const uint32_t nb = fn.nblocks();
+  std::vector<std::vector<uintlen_t>> rows(nb);
+  for (uint32_t b = 0; b < nb; ++b) {
+    if (fn.succ0(b) != NONE)
+      rows[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      rows[b].push_back(fn.succ1(b));
   }
+  const std::vector<char> reach = opt_ns::calculate_reachable_mask(rows, 0);
   bool any = false;
-  for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+  for (uint32_t b = 0; b < nb; ++b) {
     if (reach[b])
       continue;
     if (b != 0 && fn.blocks[b].begin == fn.blocks[b].end &&
@@ -62,7 +62,7 @@ constexpr bool opt_remove_unreachable(Fn &fn, OptStats &os) {
     // compact code of reachable blocks; isolate unreachable ones
     std::vector<Instr> nc{};
     uint32_t gone = 0;
-    for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+    for (uint32_t b = 0; b < nb; ++b) {
       uint32_t ob = fn.blocks[b].begin, oe = fn.blocks[b].end;
       fn.blocks[b].begin = (uint32_t)nc.size();
       if (reach[b]) {
@@ -83,7 +83,7 @@ constexpr bool opt_remove_unreachable(Fn &fn, OptStats &os) {
   // refresh preds, then prune phi args by pred identity
   fn.recompute_preds();
   bool degenerated = false;
-  for (uint32_t b = 0; b < fn.nblocks(); ++b) {
+  for (uint32_t b = 0; b < nb; ++b) {
     if (fn.preds[b].empty())
       continue;
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
