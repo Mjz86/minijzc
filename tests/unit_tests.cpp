@@ -1449,6 +1449,92 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
     UT(o.out.size() == 2 && o.out[0] == 1 + 2 + 4 && o.out[1] == 5,
        "kernel: s = 1+2+4 (3 skipped, 5 breaks), i = 5");
   }
+  // 16i. the PURE graph_ns layer vs the policy wrapper: graph_ns::
+  // calculate_phi_placements is the Cytron relation with NO IR
+  // assumptions -- single-def vars place their DF(def) phis (the
+  // wrapper drops them: the builder's dominance guarantee), one-pred
+  // blocks can host phis (an entry sitting in its own cycle; the
+  // wrapper's >= 2-slot rule drops them), and the universe transpose
+  // handles the var-space/block-space mismatch the square sibling
+  // indexes out of bounds on.
+  {
+    // the diamond of 16a, var-major: var 0 (defs in both arms) ->
+    // the join; var 1 (single def at the entry, which dominates
+    // everything) -> nothing anywhere
+    const std::vector<std::vector<ulen>> diamond = {{1, 2}, {3}, {3}, {}};
+    auto A = an_of(diamond);
+    std::vector<std::vector<ulen>> defs = {{1, 2}, {0}};
+    const auto pure = gns::calculate_phi_placements<V>(A.df, defs);
+    UT(row_is(pure, 0, {3}),
+       "pure: the diamond's var 0 places at the join (var-major)");
+    UT(row_is(pure, 1, {}),
+       "pure: single-def-at-entry var places nothing (empty frontier)");
+    const auto inv = gns::calculate_inv_phi_placements<V>(A.df, defs);
+    UT(row_is(inv, 3, {0}) && row_is(inv, 0, {}) && row_is(inv, 1, {}) &&
+           row_is(inv, 2, {}),
+       "pure: the transposed index matches 16a's wrapper output");
+    // the loop of 16a: the SINGLE-DEF body var gets its DF(def) phi
+    // at the header in the pure layer; the wrapper drops it
+    const std::vector<std::vector<ulen>> loop = {{1}, {2, 3}, {1}, {}};
+    auto A2 = an_of(loop);
+    std::vector<std::vector<ulen>> defs2 = {{0, 2}, {2}};
+    const auto pure2 = gns::calculate_phi_placements<V>(A2.df, defs2);
+    UT(row_is(pure2, 0, {1}) && row_is(pure2, 1, {1}),
+       "pure: BOTH vars place at the header -- the single-def one too");
+    const auto inv2 = gns::calculate_inv_phi_placements<V>(A2.df, defs2);
+    UT(row_is(inv2, 1, {0, 1}), "pure: the header hosts both vars, ascending");
+    auto prs2 = preds_of(loop);
+    auto pf2 = gns::make_basic_forest<V>(prs2);
+    auto pl2 = ssa_ns::calculate_phi_placements<V>(A2.df, pf2, defs2);
+    UT(row_is(pl2, 1, {0}),
+       "wrapper: the <2-def policy drops var 1 (16a parity)");
+    // entry-in-its-own-cycle: the pure layer places at the ENTRY -- a
+    // ONE-PRED block (no <2-pred assumption exists down there) -- and
+    // the renaming kernel lowers the ARITY-1 record just as naturally
+    const std::vector<std::vector<ulen>> ecyc = {{1}, {0, 2}, {}};
+    auto A3 = an_of(ecyc);
+    std::vector<std::vector<ulen>> defs3 = {{1}};
+    const auto pure3 = gns::calculate_phi_placements<V>(A3.df, defs3);
+    UT(row_is(pure3, 0, {0}),
+       "pure: an entry in its own cycle hosts the phi (1-pred block)");
+    const auto inv3 = gns::calculate_inv_phi_placements<V>(A3.df, defs3);
+    auto prs3 = preds_of(ecyc);
+    auto pf3 = gns::make_basic_forest<V>(prs3);
+    auto pl3 = ssa_ns::calculate_phi_placements<V>(A3.df, pf3, defs3);
+    UT(row_is(pl3, 0, {}) && row_is(pl3, 1, {}) && row_is(pl3, 2, {}),
+       "wrapper: both policies drop it (single def, one pred slot)");
+    auto sf3 = gns::make_basic_forest<V>(ecyc);
+    std::vector<std::vector<ssa_event_t>> evs3 = {
+        {}, {{ssa_def_v, 0, 0}}, {{ssa_use_v, 0, 1}}};
+    auto R3 = ssa_ns::rename_ssa<V>(1, 2, A3.dom_tree, sf3, pf3, inv3, evs3);
+    UT(R3.phi_block.size() == 1 && R3.phi_block[0] == 0 && R3.phi_var[0] == 0,
+       "arity-1: the phi record lives at the entry, var 0");
+    UT(R3.phi_entry_begin[1] - R3.phi_entry_begin[0] == 1,
+       "arity-1: ONE entry (the lone back-edge slot)");
+    UT(R3.phi_entry_pred[R3.phi_entry_begin[0] + 0] == 1 &&
+           R3.phi_entry_def[R3.phi_entry_begin[0] + 0] == 0,
+       "arity-1: the back edge carries block 1's def");
+    UT(R3.reaching_def[1] == 0,
+       "arity-1: the dominated exit reads block 1's def, not the phi");
+    UT(R3.def_ordinal[2] == 0,
+       "arity-1: the phi itself is version 0 at the entry head");
+    // zero-def vars: no seeds, nothing placed
+    const auto pure0 = gns::calculate_phi_placements<V>(
+        A2.df, std::vector<std::vector<ulen>>{{}, {}});
+    UT(row_is(pure0, 0, {}) && row_is(pure0, 1, {}),
+       "pure: zero-def vars place nothing (no seeds)");
+    // the universe transpose: non-square relations both ways -- more
+    // rows than the universe, and entries beyond the row count (the
+    // square sibling sizes by the row count and would index OOB)
+    const std::vector<std::vector<ulen>> rows4 = {{2}, {0, 2}, {1}, {2}};
+    auto uni = gns::make_basic_inv_forest_universe<V>(rows4, 3);
+    UT(row_is(uni, 0, {1}) && row_is(uni, 1, {2}) && row_is(uni, 2, {0, 1, 3}),
+       "universe: 4 var rows over 3 blocks, ascending fill");
+    auto uni2 = gns::make_basic_inv_forest_universe<V>(
+        std::vector<std::vector<ulen>>{{4}, {0, 4}}, 5);
+    UT(row_is(uni2, 0, {1}) && row_is(uni2, 4, {0, 1}),
+       "universe: entries beyond the row count (the square trap)");
+  }
 }
 
 std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);

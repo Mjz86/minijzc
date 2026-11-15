@@ -10,13 +10,16 @@ manual.
 
 ## The generic-ssa branch (the uintlen_t SSA kernel)
 
-Branch `generic-ssa` (off the ckpt-28 main, one commit) holds the
+Branch `generic-ssa` (off the ckpt-28 main, two commits) holds the
 generic SSA-construction redesign: `src/minijz/ir/ssa_generic.hpp`
 (`mjz::ssa_ns`, the graph_ns treatment — uintlen_t blocks/vars/sites,
 version_t templates, CSR forests, MJZ_CX_FN noexcept) with
 
-  * `calculate_phi_placements` — Cytron IDF placement, ascending-var
-    rows (both clients' old loop order),
+  * `calculate_phi_placements` — THE IR POLICY WRAPPER (see the
+    second-commit note below): block-major ascending-var rows, now
+    computed as graph_ns's PURE placement + this IR's two filters
+    (the <2-defs skip, the >=2-pred-slot rule) — the assumptions
+    live with the compiler, not in the algorithm,
   * `rename_ssa` — the dominator-tree walk as a PURE TABLE:
     reaching_def[site], def_ordinal[site] (stack-depth-at-push),
     visit_order, and phi records with N-ARY (pred, incoming) entries
@@ -39,6 +42,44 @@ battery green (selftest 207, ctest 44, units 6369 — 41 new kernel
 checks —, header order 103/103, includes 437/437, check-format clean
 on clang-format 16). The kernel is liftable into mjz_lib's graph_ns
 unchanged (it depends only on graph_lib.hpp).
+
+### The second commit: the pure layer + the policy wrapper
+
+The placement contract changed shape (same signature, same output,
+byte-identical parity). The PURE Cytron relation moved down into
+graph_ns itself — `mjz_lib/mjz_lib/graph/phis.hpp` (in the vendored
+String clone, NOT in this repo's git; rides in the zip):
+
+  * `graph_ns::calculate_phi_placements(df, defs)` — the VAR-major
+    relation, row v = IDF(defs(v)), with ZERO client assumptions:
+    every def count places (single-def vars get their DF(def) phis,
+    zero-def vars nothing), pred rows are not even an input (an
+    entry sitting in its own cycle places at a ONE-PRED block),
+    arity is a lowering concern,
+  * `graph_ns::calculate_inv_phi_placements(df, defs)` — the
+    block-major transpose, rows in ascending var order,
+  * `make_basic_inv_forest_universe(rows, node_count)` (csr.hpp) —
+    the transpose for BIPARTITE relations: the square
+    make_basic_inv_forest sizes by the ROW count and indexes out of
+    bounds when var space != block space; the universe variant takes
+    the target space explicitly (phi placement's var->block rows are
+    the canonical case — the draft phis.hpp that motivated this had
+    exactly that bug).
+
+`ssa_ns::calculate_phi_placements` is now THE COMPILER'S POLICY
+WRAPPER: pure placement, then the two IR filters (vars with < 2 def
+blocks place nothing — the builder's dominance guarantee; blocks
+with < 2 incoming edge slots place nothing — the IR's phi rule,
+duplicates counting), then the transpose. an.hpp and mem2reg are
+unchanged (they already called the wrapper). Units 16i pins the
+pure-vs-policy gap both ways, the arity-1 entry-cycle phi record
+through rename_ssa, and the non-square universe transpose. Verified:
+146-run parity byte-identical, fuzz windows 16501-16650 + 16651-16800
+identical modulo timing, audit table identical, full battery green
+(selftest 207, ctest 44, units 6385, check-format clean on 16).
+NOTE for the String repo: graph/phis.hpp + the csr.hpp universe
+transpose + the algo.hpp include are changes in the vendored clone
+that should be upstreamed there.
 
 ## Setup (2 min)
 

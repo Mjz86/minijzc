@@ -132,7 +132,8 @@ constexpr An analyze(const Fn &fn) {
 //    (ir/ssa_generic.hpp, mjz::ssa_ns): the parts that KNOW the IR stay
 //    here (which Instr fields are uses/defs, how a phi record becomes a
 //    2-slot Phi instr), the graph math lives in the kernel:
-//    - 8b placement: ssa_ns::calculate_phi_placements (Cytron IDF,
+//    - 8b placement: ssa_ns::calculate_phi_placements (the IR policy
+//      wrapper over graph_ns's PURE placement in graph/phis.hpp;
 //      ascending-var rows -- the loop order the old code hand-rolled)
 //    - 8c rebuild: ssa_ns::calculate_reflow_plan (head inserts only)
 //    - 8d renaming: ssa_ns::rename_ssa (the dominator-tree walk as a

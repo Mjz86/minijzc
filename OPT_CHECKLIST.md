@@ -59,6 +59,33 @@ units 6369 with 41 new kernel checks including a 3-pred N-ary phi a
 2-arg IR cannot spell). The queue item below is what remains THERE:
 the classification gates, not the SSA walk (which is now kernel code).
 
+NOTE (branch generic-ssa, second commit, 2026-11-15): placement got
+the same treatment one layer down. The PURE Cytron relation now lives
+in graph_ns itself (mjz_lib/mjz_lib/graph/phis.hpp — vendored, rides
+in the zip, not in git): `graph_ns::calculate_phi_placements` is the
+var-major relation with NO client assumptions (every def count places
+— single-def vars get their DF(def) phis, zero-def vars nothing;
+pred rows are not even an input, so an entry sitting in its own cycle
+places at a ONE-PRED block), and graph_ns's
+`calculate_inv_phi_placements` is the block-major transpose via the
+new `make_basic_inv_forest_universe` (csr.hpp — the transpose for
+BIPARTITE relations: the square make_basic_inv_forest sizes by the
+row count and indexes out of bounds when var space != block space;
+the universe variant takes the block count explicitly and fills
+ascending). `ssa_ns::calculate_phi_placements` became THE COMPILER'S
+POLICY WRAPPER: same signature, same ascending-var block-major
+output, now computed as pure placement + the two IR filters (the
+<2-defs skip and the >=2-pred-slot rule) — the assumptions moved
+OUT of the algorithm and INTO the wrapper where they belong. Units
+16i pins the gap both ways (single-def loop-body var places in the
+pure layer, is dropped by the wrapper; the entry-cycle arity-1 phi
+record lowers through rename_ssa untouched; the non-square universe
+transpose both directions). Verified: 146-run parity byte-identical,
+fuzz windows 16501-16650 + 16651-16800 identical modulo timing,
+audit table regenerated identically, full battery green (selftest
+207, ctest 44, units 6385, header order 102/102, includes 431/431,
+check-format clean on clang-format 16).
+
 - [ ] opt/mem2reg.hpp — the classification gates (liftable / dead /
       bkpt-observed / budget) + the alias-driven pre-checks, on top of
       the generic SSA kernel (the SSA-promotion core itself moved to

@@ -1,3 +1,60 @@
+# The generic-ssa branch — the uintlen_t SSA kernel, now with the
+# pure placement layer (two commits on the ckpt-28 main)
+
+This zip: branch `generic-ssa`, TWO commits past checkpoint 28.
+
+**Commit 1 — the kernel.** `src/minijz/ir/ssa_generic.hpp`
+(`mjz::ssa_ns`): SSA construction as pure index math — uintlen_t
+blocks/vars/sites/events, version_t templates, CSR forests, no
+Instr/Fn/phi-instruction anywhere. The three hard parts, generic:
+multi-branch phis as N-ARY RECORDS (arity = pred count, any count —
+unit 16d proves a 3-pred join this IR cannot spell); renaming as
+Cytron's dominator-tree walk driven by event streams, output pure
+tables (reaching_def / def_ordinal / visit_order / phi records with
+per-edge-slot entries); instruction removal as a NON-EVENT (emit no
+events) plus the reflow plan (the flat-code rebuild index math three
+passes used to hand-roll). an.hpp's ssa_construct, mem2reg's
+promotion and pred_norm's merge chains became thin adapters,
+byte-identical.
+
+**Commit 2 — the contract change (this delivery).** The placement
+assumptions moved OUT of the algorithm and INTO the wrapper, per the
+"algorithms must not depend on how the compiler works" rule:
+
+  * NEW `mjz_lib/mjz_lib/graph/phis.hpp` (graph_ns, in the vendored
+    String clone — zip-only, not in this repo's git): the PURE
+    Cytron relation. `calculate_phi_placements(df, defs)` = the
+    var-major map, row v = IDF(defs(v)), with NO client assumptions
+    — every def count places (single-def vars get their DF(def)
+    phis; the wrapper drops them as IR policy), pred rows are not
+    even an input (an entry sitting in its own cycle places at a
+    ONE-PRED block — no <2-pred assumption anywhere),
+    `calculate_inv_phi_placements` = the block-major transpose.
+  * NEW `make_basic_inv_forest_universe(rows, node_count)`
+    (csr.hpp): the transpose for BIPARTITE relations — the square
+    make_basic_inv_forest sizes by the row count and would index
+    out of bounds on var-space-into-block-space rows; the universe
+    variant takes the target space explicitly and fills ascending
+    (the emission order vreg minting depends on).
+  * `ssa_ns::calculate_phi_placements` is now THE COMPILER'S POLICY
+    WRAPPER: same signature, same output, same parity — computed as
+    the pure placement + the two IR filters (the <2-defs skip, the
+    >=2-pred-slot rule with duplicates counting). an.hpp and
+    mem2reg unchanged.
+
+Unit 16i pins the layer gap both directions (single-def loop-body
+var places in the pure layer, is dropped by the wrapper; the
+entry-cycle ARITY-1 phi record lowers through rename_ssa untouched;
+the non-square universe transpose both ways). Verified: 146-run
+stdin-aware parity byte-identical, differential fuzz 16501-16650 +
+16651-16800 identical modulo timing, audit table regenerated
+identically, full battery green (selftest 207, ctest 44, units 6385,
+header order 102/102, includes 431/431, check-format clean on
+clang-format 16). Upstream note: phis.hpp + the csr.hpp universe
+transpose + the algo.hpp include belong in the String repo.
+
+---
+
 # Checkpoint 28 — taildup decomposed (round six) + fuzz_parity.sh
 
 branchA @ (one commit on top of checkpoint 27's unswitch_bif

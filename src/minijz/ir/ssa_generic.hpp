@@ -40,7 +40,14 @@
 //     pre-normalizes >2-pred joins into merge chains (pred_norm, now
 //     driven by the generic calculate_merge_chain_plan below), so the
 //     records it lowers always have <= 2 entries; an N-ary-phi IR
-//     would consume the same records row-for-row.
+//     would consume the same records row-for-row. PLACEMENT ITSELF
+//     now has the same shape: the pure Cytron relation (every var,
+//     any def count, any pred count) lives in graph_ns
+//     (graph/phis.hpp -- calculate_phi_placements is var-major,
+//     calculate_inv_phi_placements the block-major transpose); the
+//     calculate_phi_placements below is THIS IR's policy wrapper (the
+//     <2-defs skip and the >=2-pred-slot rule are compiler policy,
+//     and they live with the compiler, not in the algorithm).
 //   * VARIABLE RENAMING. Cytron's dominator-tree walk with per-variable
 //     version stacks, driven by events instead of instruction fields:
 //     a use binds its site to the stack top's SITE, a def pushes its
@@ -97,15 +104,25 @@ struct ssa_event_t {
 };
 
 // ---- placement ------------------------------------------------------------
-// Minimal-SSA phi placement (Cytron): variable v needs a phi at block Y
-// iff Y is in the iterated dominance frontier of v's def blocks AND Y has
-// >= 2 incoming edge slots (with duplicates -- a [p,p] row from cbr(c,Y,Y)
-// counts, matching the IR's own rule). Vars with < 2 def blocks are
-// skipped outright (the classic construction; the language's builder
-// guarantees their single def dominates every use that matters).
-// Rows of the returned forest = the variables needing phis in block b,
-// in ASCENDING variable order -- the order the old per-client loops
-// produced and the phi-placeholder emission order depends on.
+// THE COMPILER'S POLICY WRAPPER over the pure placement (graph_ns,
+// graph/phis.hpp: the Cytron relation itself -- every var, any def
+// count, any pred count, zero IR assumptions, N-arity by construction).
+// This IR keeps exactly two policies, applied to the pure var-major
+// rows before the transpose to block-major:
+//   * vars with < 2 def blocks place NOTHING (the classic
+//     construction; the language's builder guarantees their single
+//     def dominates every use that matters -- the pure layer WOULD
+//     place their DF(def) phis, and unit test 16i pins that gap),
+//   * blocks with < 2 incoming edge slots place nothing (the IR's own
+//     phi rule; duplicates count -- a [p,p] row from cbr(c,Y,Y) is 2;
+//     the pure layer places at one-pred blocks when the theory says
+//     so, e.g. an entry sitting in its own cycle).
+// Output contract unchanged from the hand-rolled era: rows = the
+// variables needing phis in block b, in ASCENDING variable order --
+// the order the old per-client loops produced and the phi-placeholder
+// emission order depends on. (Name note: the pure graph_ns function
+// of the same name returns the VAR-major relation; this wrapper
+// returns the transposed, policy-filtered direction the IR consumes.)
 template <version_t version_v, class Rdf = std::span<const uintlen_t>,
           class Rpr = std::span<const uintlen_t>>
 MJZ_CX_FN gns::treversal_result_t<version_v> calculate_phi_placements(
@@ -113,17 +130,25 @@ MJZ_CX_FN gns::treversal_result_t<version_v> calculate_phi_placements(
     const gns::basic_forest_t<version_v, Rpr> &preds_of_block,
     const auto &def_blocks_of_var) noexcept {
   const uintlen_t nb = uintlen_t(std::ranges::size(preds_of_block.range()));
+  // the pure placement: row v = IDF(defs(v)), EVERY variable (the
+  // worklist also runs for single-def vars -- one pop plus a usually
+  // empty frontier row -- whose rows the policy below drops)
+  const gns::treversal_result_t<version_v> pure =
+      gns::calculate_phi_placements<version_v>(dominance_frontiers,
+                                               def_blocks_of_var);
+  auto pure_rows = pure.range();
+  auto pred_rows = preds_of_block.range();
   std::vector<std::vector<uintlen_t>> rows(nb);
   uintlen_t v = 0;
-  for (const auto &def_row : def_blocks_of_var) {
-    if (std::ranges::size(def_row) >= 2) {
-      std::vector<uintlen_t> idf{};
-      gns::calculate_iterated_dominance_frontiers_given_dominance_frontiers<
-          version_v>(idf, dominance_frontiers, def_row);
-      for (uintlen_t blk : idf) {
+  auto def_it = std::ranges::begin(def_blocks_of_var);
+  for (const auto &pure_row : pure_rows) {
+    const bool multi_def = std::ranges::size(*def_it) >= 2;
+    ++def_it;
+    if (multi_def) {
+      for (uintlen_t blk : pure_row) {
         if (blk >= nb)
           continue;
-        if (std::ranges::size(preds_of_block.range()[blk]) < 2)
+        if (std::ranges::size(pred_rows[blk]) < 2)
           continue;
         bool dup = false;
         for (uintlen_t x : rows[blk])
