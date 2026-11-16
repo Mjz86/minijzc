@@ -78,6 +78,15 @@ examples/ demos/        showcase programs (+ general.in input tape), BUGFIXES.md
                         examples/audit/ = 20 natural programs + RESULTS.md
                         (the register-allocation audit)
 bugrepro/               historical repros for bugs 1-6, examples/BUGFIXES.md
+ALGORITHMS.md           every algorithm in the tree, its reference paper
+                        (Cytron rename/placement, Lengauer-Tarjan, Tarjan
+                        SCC, Wegman-Zadeck SCCP, Alpern-Wegman-Zadeck VN,
+                        Briggs destruction/trivial phis, Cousot abstract
+                        interpretation, Steensgaard unification, Granlund-
+                        Montgomery div-magic, ...) and what was added to
+                        implement each — plus the kernel/wrapper split of
+                        the generic index-space layers (graph_ns, ssa_ns,
+                        opt_ns)
 cmake/                  run_showcases.cmake
 ```
 
