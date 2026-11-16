@@ -1,0 +1,15 @@
+#!/bin/sh
+# minimal cmake shim for an already-configured build dir (the real
+# cmake lives in a venv the sandbox sometimes recycles away). It
+# fakes the meta-operations make needs: build-system checks and
+# glob verification are no-ops (the tree is configured), echo is
+# cosmetic, link scripts are executed line by line, and depends
+# rely on the existing .d files.
+if [ "$1" = "-E" ] && [ "$2" = "cmake_link_script" ]; then
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then
+      eval "$line" || exit $?
+    fi
+  done < "$3"
+fi
+exit 0

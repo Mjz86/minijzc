@@ -44,11 +44,11 @@ struct Cli {
   unsigned repeats{3};
   uint64_t steps{200000000ull};
   long fuzz{0}, fuzz_native{0}, fuzz_from{1};
-  long fuzz_jobs{0};         // --fuzz-jobs=N: parallel fuzz workers
-                             // (0 = auto: selftest serial, else cores)
-  bool fuzz_random{false};   // --fuzz-cfg=random: random pass configs
-  long fuzz_kernels{0};        // --fuzz-kernels[=N]: component fuzzer
-  long fuzz_kernels_from{1};   // --fuzz-kernels-from=S (own seed space)
+  long fuzz_jobs{0};                // --fuzz-jobs=N: parallel fuzz workers
+                                    // (0 = auto: selftest serial, else cores)
+  bool fuzz_random{false};          // --fuzz-cfg=random: random pass configs
+  long fuzz_kernels{0};             // --fuzz-kernels[=N]: component fuzzer
+  long fuzz_kernels_from{1};        // --fuzz-kernels-from=S (own seed space)
   std::string fuzz_kernel_filter{}; // --fuzz-kernel=NAME (substring)
   std::string shrink_file{}; // --shrink=FILE: delta-debug a failing program
   bool demo{false}, selftest{false}, help{false};
@@ -409,6 +409,8 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_unreach = on;
   else if (eq("splice"))
     p.p_splice = on;
+  else if (eq("breq"))
+    p.p_breq = on;
   else if (eq("dce"))
     p.p_dce = on;
   else if (eq("mem2reg"))

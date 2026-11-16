@@ -91,17 +91,16 @@ constexpr AliasInfo alias_analyze(const Fn &fn) {
     if (I.k == K::Copy) {
       defs.push_back({.var = I.dst,
                       .kind = opt_ns::alias_copy_v,
-                      .src = (I.a != NONE && I.a < nv) ? I.a
-                                                       : opt_ns::none_v});
+                      .src = (I.a != NONE && I.a < nv) ? I.a : opt_ns::none_v});
     } else if (I.k == K::Phi) {
       // the 2-slot phi args as an N-ary row (an absent arg is obscure
       // to the kernel, exactly the old conservative rule)
       std::vector<uintlen_t> args{};
       args.reserve(2);
       args.push_back((I.a != NONE && I.a < nv) ? (uintlen_t)I.a
-                                                : opt_ns::none_v);
+                                               : opt_ns::none_v);
       args.push_back((I.b2 != NONE && I.b2 < nv) ? (uintlen_t)I.b2
-                                                  : opt_ns::none_v);
+                                                 : opt_ns::none_v);
       defs.push_back(
           {.var = I.dst, .kind = opt_ns::alias_phi_v, .args = std::move(args)});
     }

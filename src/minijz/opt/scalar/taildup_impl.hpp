@@ -391,8 +391,8 @@ constexpr void td_route_seed(const An &A, TdCtx &X) {
     dom0[b] = (X.U0 != NONE) && A.dominates(X.U0, b);
     dom1[b] = (X.U1 != NONE) && A.dominates(X.U1, b);
   }
-  const opt_ns::route_plan_t plan = opt_ns::calculate_supplier_routes(
-      X.fn.preds, dead, dom0, dom1, 2);
+  const opt_ns::route_plan_t plan =
+      opt_ns::calculate_supplier_routes(X.fn.preds, dead, dom0, dom1, 2);
   X.route = std::move(plan.route);
   X.bsites = std::move(plan.sites);
 }
@@ -403,9 +403,9 @@ constexpr void td_route_seed(const An &A, TdCtx &X) {
 // phi arg keys to its pred); the closure itself is opt_ns::
 // route_ns::calculate_route_needs -- which values each continuation
 // and each born site must merge, first-appearance order
-constexpr void td_check_use(TdCtx &X, uint32_t v, uint32_t key_pred, bool isphi,
-                            uint32_t b,
-                            std::vector<std::pair<uintlen_t, uintlen_t>> &reads) {
+constexpr void
+td_check_use(TdCtx &X, uint32_t v, uint32_t key_pred, bool isphi, uint32_t b,
+             std::vector<std::pair<uintlen_t, uintlen_t>> &reads) {
   if (v == NONE || v >= X.nv || !X.isdef[v] || X.bad)
     return;
   const uintlen_t r = X.route[isphi ? key_pred : b];
@@ -446,8 +446,8 @@ constexpr bool td_outside_uses_ok(const Fn &fn, TdCtx &X) {
     return false;
   // the kernel: need[source][defv] + bvals[site] in first-appearance
   // order (the born-phi emission order the commit keys on)
-  opt_ns::calculate_route_needs(2, (uintlen_t)X.defv.size(), X.bsites,
-                                reads, X.need, X.bvals);
+  opt_ns::calculate_route_needs(2, (uintlen_t)X.defv.size(), X.bsites, reads,
+                                X.need, X.bvals);
   return true;
 }
 
@@ -484,10 +484,10 @@ constexpr void td_prepend_phis(Fn &fn, uint32_t B,
 // the (r,di) -> phi-dst lookup shared by the born phis' args and the
 // rewire's assignment (0 = U0's phi, 1 = U1's, 2+k = site k's)
 constexpr uint32_t td_arg_of(const TdCtx &X, uintlen_t r, uint32_t di) {
-  return (r == 0) ? X.uphi0[di]
-                  : ((r == 1) ? X.uphi1[di]
-                             : X.bphi[(size_t)(r - opt_ns::route_born_base_v)]
-                                        [di]);
+  return (r == 0)
+             ? X.uphi0[di]
+             : ((r == 1) ? X.uphi1[di]
+                         : X.bphi[(size_t)(r - opt_ns::route_born_base_v)][di]);
 }
 
 // per-continuation routing phis (U has no phis of its own: single-pred)

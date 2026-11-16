@@ -55,6 +55,7 @@
 #include "loop/unswitch.hpp"
 #include "mem2reg.hpp"
 #include "optimize_api.hpp" // the entry declaration (light)
+#include "scalar/breq.hpp"
 #include "scalar/canon.hpp"
 #include "scalar/copyprop.hpp"
 #include "scalar/cse.hpp"
@@ -148,6 +149,13 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
       if (cfg.p_splice) {
         c = opt_splice(fn, os); // collapse single-pred/succ jump chains
         dbg_pass(cfg, fn, "splice", c);
+        ch |= c;
+      }
+#endif
+#ifndef MJZ_DBG_NO_BREQ
+      if (cfg.p_breq) {
+        c = opt_breq(fn, os); // reconverging transparent arms -> br
+        dbg_pass(cfg, fn, "breq", c);
         ch |= c;
       }
 #endif

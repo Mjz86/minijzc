@@ -232,11 +232,19 @@ remains, ranked by value; each names the pass it would extend.
       (`if (i < n) x = a[i];`-shaped) folded to select arithmetic
       (ifconv's lowering, gated by the interval analysis proving
       both arms trap-free).
-- [ ] aggressive DCE (the control-dependence kind) — a Cbr whose
-      arms reconverge with no observable difference (pure arms,
-      same terminator) folds to Br; fold handles the const-cond
-      case, this is the both-arms-equivalent case. Extends
-      splice's pairing scan.
+- [x] aggressive DCE (the control-dependence kind) — DONE (branch
+      generic-ssa, 2026-11-17): `opt/scalar/breq.hpp`, the tier-0
+      pass after splice. A Cbr whose arms are PRIVATE, phi-free
+      `br`-only relays reconverging on one join (or one arm IS the
+      join and the other relays into it), with the join's phis
+      carrying the same vreg on both arm edges, folds to `br J`:
+      the phis rekey to the single edge (the duplicate-pred shape
+      phi_degens collapses), the relay arms go unreachable, the
+      condition loses a use. fold's cbr_same keeps the
+      identical-TARGETS case; this owns the RECONVERGING case
+      (stat cbr~ in the -O3 report). One fold per invocation — the
+      tier-0 loop fixpoints it; the pass reads fn.preds fresh each
+      call so the sweep's rows stay honest.
 - [ ] splice chains — multi-hop single-pred/succ merging (the
       current pass matches pairs only, no chains, documented).
 - [ ] function outlining — the inverse of the inliner: identical

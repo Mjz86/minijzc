@@ -82,7 +82,7 @@ constexpr bool opt_deadargs(std::vector<Fn> &fns,
     return false;
   // ---- analysis -----------------------------------------------------------
   std::vector<char> eligible(n, 1);
-  std::vector<std::vector<char>> alive(n);              // [g][p]
+  std::vector<std::vector<char>> alive(n);                             // [g][p]
   std::vector<std::vector<std::vector<opt_ns::soft_edge_t>>> softs(n); // [g][p]
   for (uint32_t g = 0; g < n; ++g) {
     const Fn &G = fns[g];

@@ -11,8 +11,8 @@
 #include "../../minijz/base/native_run.hpp"
 
 int minijz_app_main(Cli C) {
-  bool have_action = C.demo || C.selftest || C.fuzz > 0 ||
-                     C.fuzz_kernels > 0 || !C.shrink_file.empty();
+  bool have_action = C.demo || C.selftest || C.fuzz > 0 || C.fuzz_kernels > 0 ||
+                     !C.shrink_file.empty();
   std::string src{};
   std::string stem = "stdin";
   bool src_from_stdin = false; // stdin already consumed as the PROGRAM

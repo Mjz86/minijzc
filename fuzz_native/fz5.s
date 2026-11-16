@@ -243,20 +243,12 @@ main:
 1:
   cqto
   idivq %rcx
-  movq %rax, %r12
+  movq %rax, %rbx
   # 43:15
   movq $-3, %rax
-  movq %r12, %rcx
+  movq %rbx, %rcx
   cmpq %rcx, %rax
   jge .Lb62
-  movq $1, %r12
-.Lb63:
-  # 43:14
-  imulq %r12, %rbx
-  # 43:13
-  testq %rbx, %rbx
-  je .Lb66
-.Lb66:
   xorl %edi, %edi
   call exit
 .Lb17:
@@ -278,8 +270,8 @@ main:
   xorl %edi, %edi
   call exit
 .Lb62:
-  movq $0, %r12
-  jmp .Lb63
+  xorl %edi, %edi
+  call exit
 mjz_trap:
   pushq %rbp
   movq %rsp, %rbp

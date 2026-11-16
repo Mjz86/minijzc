@@ -369,9 +369,6 @@ main:
   movq $7, %rsi
   call mjz_f4
   movq %rax, %r12
-  testq %r12, %r12
-  jne .Lb39
-.Lb39:
   # 58:59
   movq %rbx, %rdi
   call mjz_len
@@ -400,12 +397,6 @@ main:
   movq $6, %rdi
   call mjz_f2
   movq %rax, %r12
-  # 59:10
-  addq $-5, %r12
-  # 59:9
-  testq %r12, %r12
-  je .Lb52
-.Lb52:
   # 59:42
   movq %rbx, %rdi
   movq $0, %rsi

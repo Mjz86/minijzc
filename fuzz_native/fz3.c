@@ -108,18 +108,16 @@ int main(void) {
   printf("%lld\n", (long long)0);
   /* 8:10 */
   r2 = mjz_input();
-  if (r2 != 0) goto L97;
-L97:;
   /* 8:1 */
   printf("%lld\n", (long long)0);
   /* 9:13 */
   r2 = mjz_input();
-  if (!((r2 != 0))) goto L100;
+  if (!((r2 != 0))) goto L98;
   /* 9:24 */
   r2 = mjz_len(0);
   /* 9:13 */
-  if (!((r2 != 0))) goto L100;
-L101:;
+  if (!((r2 != 0))) goto L98;
+L99:;
   /* 15:1 */
   printf("%lld\n", (long long)11);
   printf("%lld\n", (long long)11);
@@ -137,16 +135,7 @@ L101:;
   r6 = (int64_t)((uint64_t)r6 + (uint64_t)-7);
   /* 37:6 */
   if (!((r6 != 0))) goto L73;
-  /* 38:13 */
-  r6 = mjz_len(r2);
-  /* 38:23 */
-  r7 = mjz_len(r2);
-  /* 38:13 */
-  r6 = (r6 < r7);
-  /* 38:11 */
-  if (r6 < 1) goto L83;
-L83:;
-L77:;
+L74:;
   /* 41:33 */
   r7 = mjz_arena[r2 + 1];
   /* 41:27 */
@@ -189,10 +178,10 @@ L88:;
   /* 49:1 */
   mjz_arena[r2 + 1] = 0;
   return 0;
-L100:;
-  goto L101;
+L98:;
+  goto L99;
 L73:;
-  goto L77;
+  goto L74;
 L87:;
   goto L88;
 }

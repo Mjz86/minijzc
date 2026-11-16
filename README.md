@@ -486,7 +486,12 @@ the ctest/CLI toggle names):
 * already covered: DCE/ADCE (`dce`, mark-and-sweep from side-effect
   roots — trap-aware), dead-block + unreachable-block elimination
   (`unreach`), CFG simplification / block merging / jump-chain splicing
-  (`splice`), branch folding (`fold` + `unreach`), if-conversion
+  (`splice`), branch folding (`fold` + `unreach`), **branch folding on
+  reconverging transparent arms (`breq`, the control-dependence ADCE:
+  a Cbr whose two arms are private phi-free `br`-only relays to one
+  join — with the join's phis agreeing on both arm edges — becomes
+  `br J`; fold's cbr_same owns identical targets, breq owns the
+  reconverging shape)**, if-conversion
   (`ifconv`), loop deletion-via-closed-forms (`lcf` + `cdfold`),
   constant folding/propagation (`fold`), SCCP + branch pruning
   (`sccp`), algebraic simplification / instruction combining

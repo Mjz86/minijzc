@@ -381,13 +381,23 @@ Minimum Feedback Arc Set in Reducible Flow Graphs*, J. Algorithms
   among the orders of S (a self loop is backward under every order,
   so it rides along outright); 2^V words, the exact answer for the
   small and dense — a loop nest, a hot CFG — and the library SAYS so
-  instead of a polynomial pretending (the Ramachandran reducible
-  special case is noted, not reproduced: the sweep is exact on EVERY
-  graph, reducible ones included, and the survivors' topological
-  order rides home as the certificate). This answers the weighted
-  reducible-graph question directly: given the cyclic weighted
-  graph, the removal set that leaves a DAG is exact here, with the
-  order certificate in the result;
+  instead of a polynomial pretending. The survivors' topological
+  order rides home as the certificate;
+* THE REDUCIBLE SPECIAL CASE, POLYNOMIAL — Ramachandran's answer
+  for arc-weighted reducible flow graphs, one Dinic min cut per
+  natural loop: the contract check (strip the dominator back arcs,
+  demand a DAG), the structure it rides (cycles partition by their
+  unique on-cycle header; outer cycles cross inner regions only
+  along transit paths, never the inner back arcs), a cycle PACKING
+  first (innermost first, min-cost flows over the shared
+  capacities, an arc priced by how many enclosing loops' paths
+  cross it — the flow spends the private arcs first), then the cut
+  walk outermost-first with the packing loads as the per-arc
+  discounts (the loads sum to the inner flow over any of its cuts,
+  so the shared-transit group credit is exact — the reason
+  per-arc drop credits fail there). The packing total rides home
+  as a lower-bound witness: when it meets the committed weight the
+  minimum is proven outright, no exponential reference needed;
 * THE TRANSITIVE REDUCTION of a DAG — the unique minimum arc set
   with the same reachability (Aho–Garey–Ullman), successors swept in
   topological order, an arc surviving iff its head is not yet
@@ -401,9 +411,12 @@ Minimum Feedback Arc Set in Reducible Flow Graphs*, J. Algorithms
 * CYCLE NODES — the nodes on some cycle (SCC size > 1 or a self
   loop), the DAG-contract checker every client ends up writing.
 Fuzzed as `gns.rmas` (subset enumeration for the minimum, Kahn for
-the FAS-ness, the order certificate), `gns.tr` (the length-≥2-path
-redundancy rule), and `gns.meg` (reachability preservation + the
-exact-on-DAGs guarantee + the 2(n−1) honesty bound).
+the FAS-ness, the order certificate), `gns.rmasp` (the polynomial
+walk held against the exact sweep's 2^V minimum on every seed, the
+irreducible witness reporting itself empty, the packing bound),
+`gns.tr` (the length-≥2-path redundancy rule), and `gns.meg`
+(reachability preservation + the exact-on-DAGs guarantee + the
+2(n−1) honesty bound).
 
 ### 1.22 Transitive closure — `graph/reach.hpp` / `graph/cut.hpp`
 **Paper.** Stephen Warshall, *A Theorem on Boolean Matrices*, J. ACM
@@ -941,4 +954,4 @@ end to end.
 | 35 | Bellman 1958; Ford 1956; Moore 1959; Warshall, J. ACM 1962 | distances.hpp, reach.hpp |
 | 36 | Dijkstra, Numerische Mathematik 1959; Hart, Nilsson & Raphael, IEEE TSSC 1968; Johnson, J. ACM 1977 | dijkstra.hpp |
 | 37 | Aho, Garey & Ullman, *The Transitive Reduction of a Directed Graph*, SIAM J. Comput. 1972 | rmas.hpp (transitive reduction) |
-| 38 | Ramachandran, *Finding a Minimum Feedback Arc Set in Reducible Flow Graphs*, J. Algorithms 1988; Karp, *Reducibility among Combinatorial Problems*, 1972 | rmas.hpp (weighted FAS — exact by Held–Karp sweep, the reducible special case noted) |
+| 38 | Ramachandran, *Finding a Minimum Feedback Arc Set in Reducible Flow Graphs*, J. Algorithms 1988; Karp, *Reducibility among Combinatorial Problems*, 1972 | rmas.hpp (weighted FAS — exact by Held–Karp sweep; the reducible special case polynomial: the packing-discounted per-loop min-cut walk) |

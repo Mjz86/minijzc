@@ -54,16 +54,9 @@ mjz_f1:
   # 13:10
   movq $3, %rdi
   call mjz_alloc
-  movq %rax, %r13
+  movq %rax, %r12
   # 14:13
   jmp mjz_trap
-  # 14:51
-  movq %r13, %rdi
-  call mjz_len
-  movq %rax, %r12
-  # 14:37
-  testq %r12, %r12
-  je .LF1_25
   # 15:3
   movq %rbx, %rax
   decq mjz_depth(%rip)
@@ -128,28 +121,14 @@ mjz_f1:
 1:
   cqto
   idivq %rcx
-  movq %rax, %r12
+  movq %rax, %rbx
   # 11:25
   movq $3, %rax
-  movq %r12, %rcx
+  movq %rbx, %rcx
   cmpq %rcx, %rax
   jge .LF1_17
-  movq $1, %r12
 .LF1_18:
-  # 11:24
-  movq %rbx, %rax
-  movq %r12, %rcx
-  cmpq %rcx, %rax
-  setne %dl
-  movzbq %dl, %rbx
-  # 11:8
-  movq %rbx, %rcx
-  movq $-6580, %rbx
-  subq %rcx, %rbx
   # 11:7
-  testq %rbx, %rbx
-  jne .LF1_20
-.LF1_20:
   movq $1, %rbx
   jmp .LF1_3
 .LF1_9:
@@ -168,20 +147,9 @@ mjz_f1:
 .LF1_13:
   jmp .LF1_14
 .LF1_17:
-  movq $0, %r12
   jmp .LF1_18
 .LF1_5:
   jmp .LF1_7
-.LF1_25:
-  # 15:3
-  movq %rbx, %rax
-  decq mjz_depth(%rip)
-  addq $8, %rsp
-  popq %r13
-  popq %r12
-  popq %rbx
-  popq %rbp
-  ret
   xorl %edi, %edi
   call exit
 mjz_f2:
@@ -238,16 +206,9 @@ mjz_f2:
   # 13:10
   movq $3, %rdi
   call mjz_alloc
-  movq %rax, %r13
+  movq %rax, %r12
   # 14:13
   jmp mjz_trap
-  # 14:51
-  movq %r13, %rdi
-  call mjz_len
-  movq %rax, %r12
-  # 14:37
-  testq %r12, %r12
-  je .LF2_25
   # 15:3
   movq %rbx, %rax
   decq mjz_depth(%rip)
@@ -312,28 +273,14 @@ mjz_f2:
 1:
   cqto
   idivq %rcx
-  movq %rax, %r12
+  movq %rax, %rbx
   # 11:25
   movq $3, %rax
-  movq %r12, %rcx
+  movq %rbx, %rcx
   cmpq %rcx, %rax
   jge .LF2_17
-  movq $1, %r12
 .LF2_18:
-  # 11:24
-  movq %rbx, %rax
-  movq %r12, %rcx
-  cmpq %rcx, %rax
-  setne %dl
-  movzbq %dl, %rbx
-  # 11:8
-  movq %rbx, %rcx
-  movq $-6580, %rbx
-  subq %rcx, %rbx
   # 11:7
-  testq %rbx, %rbx
-  jne .LF2_20
-.LF2_20:
   movq $1, %rbx
   jmp .LF2_3
 .LF2_9:
@@ -352,20 +299,9 @@ mjz_f2:
 .LF2_13:
   jmp .LF2_14
 .LF2_17:
-  movq $0, %r12
   jmp .LF2_18
 .LF2_5:
   jmp .LF2_7
-.LF2_25:
-  # 15:3
-  movq %rbx, %rax
-  decq mjz_depth(%rip)
-  addq $8, %rsp
-  popq %r13
-  popq %r12
-  popq %rbx
-  popq %rbp
-  ret
   xorl %edi, %edi
   call exit
 mjz_f3:
@@ -422,16 +358,9 @@ mjz_f3:
   # 13:10
   movq $3, %rdi
   call mjz_alloc
-  movq %rax, %r13
+  movq %rax, %r12
   # 14:13
   jmp mjz_trap
-  # 14:51
-  movq %r13, %rdi
-  call mjz_len
-  movq %rax, %r12
-  # 14:37
-  testq %r12, %r12
-  je .LF3_25
   # 15:3
   movq %rbx, %rax
   decq mjz_depth(%rip)
@@ -496,28 +425,14 @@ mjz_f3:
 1:
   cqto
   idivq %rcx
-  movq %rax, %r12
+  movq %rax, %rbx
   # 11:25
   movq $3, %rax
-  movq %r12, %rcx
+  movq %rbx, %rcx
   cmpq %rcx, %rax
   jge .LF3_17
-  movq $1, %r12
 .LF3_18:
-  # 11:24
-  movq %rbx, %rax
-  movq %r12, %rcx
-  cmpq %rcx, %rax
-  setne %dl
-  movzbq %dl, %rbx
-  # 11:8
-  movq %rbx, %rcx
-  movq $-6580, %rbx
-  subq %rcx, %rbx
   # 11:7
-  testq %rbx, %rbx
-  jne .LF3_20
-.LF3_20:
   movq $1, %rbx
   jmp .LF3_3
 .LF3_9:
@@ -536,20 +451,9 @@ mjz_f3:
 .LF3_13:
   jmp .LF3_14
 .LF3_17:
-  movq $0, %r12
   jmp .LF3_18
 .LF3_5:
   jmp .LF3_7
-.LF3_25:
-  # 15:3
-  movq %rbx, %rax
-  decq mjz_depth(%rip)
-  addq $8, %rsp
-  popq %r13
-  popq %r12
-  popq %rbx
-  popq %rbp
-  ret
   xorl %edi, %edi
   call exit
 mjz_f4:
@@ -623,7 +527,7 @@ mjz_f5:
   jg mjz_trap
   movq %rdi, %rbx
   movq %rsi, %r12
-  movq $5, %r14
+  movq $6, %r14
   movq $511, %r13
 .LF5_1:
   # 24:18
@@ -679,7 +583,7 @@ mjz_f6:
   jg mjz_trap
   movq %rdi, %rbx
   movq %rsi, %r12
-  movq $6, %r14
+  movq $5, %r14
   movq $511, %r13
 .LF6_1:
   # 24:18
@@ -798,9 +702,6 @@ main:
   # 35:25
   call mjz_input
   movq %rax, %r12
-  testq %r12, %r12
-  je .Lb86
-.Lb87:
   # 35:1
   movq $0, %rsi
   leaq .Lfmt(%rip), %rdi
@@ -846,7 +747,7 @@ main:
   # 55:42
   movq %r12, %rdi
   movq $3, %rsi
-  call mjz_f6
+  call mjz_f5
   movq %rax, %r14
   # 55:63
   call mjz_input
@@ -860,7 +761,7 @@ main:
   # 55:81
   movq %r12, %rdi
   movq $5, %rsi
-  call mjz_f5
+  call mjz_f6
   movq %rax, %r12
   # 55:76
   movq %r12, %rcx
@@ -927,10 +828,61 @@ main:
   # 73:20
   call mjz_input
   movq %rax, %r12
-  # 73:14
-  testq %r12, %r12
-  je .Lb92
-.Lb93:
+  # 74:15
+  call mjz_input
+  movq %rax, %r12
+  # 74:10
+  movq %r13, %r14
+  addq %r12, %r14
+  movq %r14, %r15
+  sarq $63, %r15
+  movq %r14, %r12
+  xorq %r15, %r12
+  subq %r15, %r12
+  movq %r12, %rax
+  movabsq $-7905747460161236406, %rcx
+  mulq %rcx
+  movq %rdx, %r12
+  shrq $2, %r12
+  xorq %r15, %r12
+  movq %r12, %rcx
+  movq %r15, %r12
+  subq %rcx, %r12
+  imulq $-7, %r12
+  subq %r12, %r14
+  # 74:39
+  call mjz_input
+  movq %rax, %r12
+  # 74:34
+  addq %r13, %r12
+  # 74:51
+  testq %rbx, %rbx
+  jne .Lb89
+  # 74:57
+  movq $3, %rdi
+  call mjz_f3
+  movq %rax, %r15
+  # 74:51
+  testq %r15, %r15
+  jne .Lb89
+  movq $0, %r15
+.Lb91:
+  # 74:33
+  imulq %r15, %r12
+  # 74:8
+  movq %r12, %rax
+  movq %r14, %rcx
+  cmpq %rcx, %rax
+  setl %dl
+  movzbq %dl, %r12
+  # 74:1
+  movq %r12, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  # 73:20
+  call mjz_input
+  movq %rax, %r12
   # 74:15
   call mjz_input
   movq %rax, %r12
@@ -986,10 +938,6 @@ main:
   # 73:20
   call mjz_input
   movq %rax, %r12
-  # 73:14
-  testq %r12, %r12
-  je .Lb101
-.Lb102:
   # 74:15
   call mjz_input
   movq %rax, %r12
@@ -1019,16 +967,16 @@ main:
   addq %r13, %r12
   # 74:51
   testq %rbx, %rbx
-  jne .Lb104
+  jne .Lb101
   # 74:57
   movq $3, %rdi
   call mjz_f3
   movq %rax, %r15
   # 74:51
   testq %r15, %r15
-  jne .Lb104
+  jne .Lb101
   movq $0, %r15
-.Lb106:
+.Lb103:
   # 74:33
   imulq %r15, %r12
   # 74:8
@@ -1045,10 +993,61 @@ main:
   # 73:20
   call mjz_input
   movq %rax, %r12
-  # 73:14
-  testq %r12, %r12
-  je .Lb110
-.Lb111:
+  # 74:15
+  call mjz_input
+  movq %rax, %r12
+  # 74:10
+  movq %r13, %r14
+  addq %r12, %r14
+  movq %r14, %r15
+  sarq $63, %r15
+  movq %r14, %r12
+  xorq %r15, %r12
+  subq %r15, %r12
+  movq %r12, %rax
+  movabsq $-7905747460161236406, %rcx
+  mulq %rcx
+  movq %rdx, %r12
+  shrq $2, %r12
+  xorq %r15, %r12
+  movq %r12, %rcx
+  movq %r15, %r12
+  subq %rcx, %r12
+  imulq $-7, %r12
+  subq %r12, %r14
+  # 74:39
+  call mjz_input
+  movq %rax, %r12
+  # 74:34
+  addq %r13, %r12
+  # 74:51
+  testq %rbx, %rbx
+  jne .Lb107
+  # 74:57
+  movq $3, %rdi
+  call mjz_f3
+  movq %rax, %r15
+  # 74:51
+  testq %r15, %r15
+  jne .Lb107
+  movq $0, %r15
+.Lb109:
+  # 74:33
+  imulq %r15, %r12
+  # 74:8
+  movq %r12, %rax
+  movq %r14, %rcx
+  cmpq %rcx, %rax
+  setl %dl
+  movzbq %dl, %r12
+  # 74:1
+  movq %r12, %rsi
+  leaq .Lfmt(%rip), %rdi
+  xorl %eax, %eax
+  call printf
+  # 73:20
+  call mjz_input
+  movq %rax, %r12
   # 74:15
   call mjz_input
   movq %rax, %r12
@@ -1079,131 +1078,13 @@ main:
   # 74:51
   testq %rbx, %rbx
   jne .Lb113
-  # 74:57
-  movq $3, %rdi
-  call mjz_f3
-  movq %rax, %r15
-  # 74:51
-  testq %r15, %r15
-  jne .Lb113
-  movq $0, %r15
-.Lb115:
-  # 74:33
-  imulq %r15, %r12
-  # 74:8
-  movq %r12, %rax
-  movq %r14, %rcx
-  cmpq %rcx, %rax
-  setl %dl
-  movzbq %dl, %r12
-  # 74:1
-  movq %r12, %rsi
-  leaq .Lfmt(%rip), %rdi
-  xorl %eax, %eax
-  call printf
-  # 73:20
-  call mjz_input
-  movq %rax, %r12
-  # 73:14
-  testq %r12, %r12
-  je .Lb119
-.Lb120:
-  # 74:15
-  call mjz_input
-  movq %rax, %r12
-  # 74:10
-  movq %r13, %r14
-  addq %r12, %r14
-  movq %r14, %r15
-  sarq $63, %r15
-  movq %r14, %r12
-  xorq %r15, %r12
-  subq %r15, %r12
-  movq %r12, %rax
-  movabsq $-7905747460161236406, %rcx
-  mulq %rcx
-  movq %rdx, %r12
-  shrq $2, %r12
-  xorq %r15, %r12
-  movq %r12, %rcx
-  movq %r15, %r12
-  subq %rcx, %r12
-  imulq $-7, %r12
-  subq %r12, %r14
-  # 74:39
-  call mjz_input
-  movq %rax, %r12
-  # 74:34
-  addq %r13, %r12
-  # 74:51
-  testq %rbx, %rbx
-  jne .Lb122
-  # 74:57
-  movq $3, %rdi
-  call mjz_f3
-  movq %rax, %r15
-  # 74:51
-  testq %r15, %r15
-  jne .Lb122
-  movq $0, %r15
-.Lb124:
-  # 74:33
-  imulq %r15, %r12
-  # 74:8
-  movq %r12, %rax
-  movq %r14, %rcx
-  cmpq %rcx, %rax
-  setl %dl
-  movzbq %dl, %r12
-  # 74:1
-  movq %r12, %rsi
-  leaq .Lfmt(%rip), %rdi
-  xorl %eax, %eax
-  call printf
-  # 73:20
-  call mjz_input
-  movq %rax, %r12
-  # 73:14
-  testq %r12, %r12
-  je .Lb128
-.Lb129:
-  # 74:15
-  call mjz_input
-  movq %rax, %r12
-  # 74:10
-  movq %r13, %r14
-  addq %r12, %r14
-  movq %r14, %r15
-  sarq $63, %r15
-  movq %r14, %r12
-  xorq %r15, %r12
-  subq %r15, %r12
-  movq %r12, %rax
-  movabsq $-7905747460161236406, %rcx
-  mulq %rcx
-  movq %rdx, %r12
-  shrq $2, %r12
-  xorq %r15, %r12
-  movq %r12, %rcx
-  movq %r15, %r12
-  subq %rcx, %r12
-  imulq $-7, %r12
-  subq %r12, %r14
-  # 74:39
-  call mjz_input
-  movq %rax, %r12
-  # 74:34
-  addq %r13, %r12
-  # 74:51
-  testq %rbx, %rbx
-  jne .Lb131
   # 74:57
   movq $3, %rdi
   call mjz_f3
   movq %rax, %rbx
   # 74:51
   testq %rbx, %rbx
-  jne .Lb131
+  jne .Lb113
   # 74:8
   movq $0, %rax
   movq %r14, %rcx
@@ -1217,8 +1098,6 @@ main:
   call printf
   xorl %edi, %edi
   call exit
-.Lb86:
-  jmp .Lb87
 .Lb52:
   jmp .Lb53
 .Lb55:
@@ -1244,29 +1123,19 @@ main:
   jmp .Lb56
 .Lb58:
   jmp .Lb60
-.Lb92:
-  jmp .Lb93
+.Lb89:
+  movq $1, %r15
+  jmp .Lb91
 .Lb95:
   movq $1, %r15
   jmp .Lb97
 .Lb101:
-  jmp .Lb102
-.Lb104:
   movq $1, %r15
-  jmp .Lb106
-.Lb110:
-  jmp .Lb111
+  jmp .Lb103
+.Lb107:
+  movq $1, %r15
+  jmp .Lb109
 .Lb113:
-  movq $1, %r15
-  jmp .Lb115
-.Lb119:
-  jmp .Lb120
-.Lb122:
-  movq $1, %r15
-  jmp .Lb124
-.Lb128:
-  jmp .Lb129
-.Lb131:
   # 74:8
   movq %r12, %rax
   movq %r14, %rcx

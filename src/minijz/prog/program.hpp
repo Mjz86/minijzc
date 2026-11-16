@@ -80,6 +80,7 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.cses += U.ostats.cses;
     t.splices += U.ostats.splices;
     t.cbr_same += U.ostats.cbr_same;
+    t.cbr_reconv += U.ostats.cbr_reconv;
     t.phi_degens += U.ostats.phi_degens;
     t.canon_swaps += U.ostats.canon_swaps;
     t.canon_cmps += U.ostats.canon_cmps;

@@ -167,7 +167,8 @@ MJZ_CX_TOUR_FN bool cx_series() { // unroll, closed forms, divmagic, input()
 // runtime entry: the whole battery in one process (--selftest)
 
 // (regression checks for the 2026-11 bug-hunt, kept as compile-time proofs)
-MJZ_CX_TOUR_FN bool cx_rings() { // the bug-3 repro family through the DEFAULT engine
+MJZ_CX_TOUR_FN bool
+cx_rings() { // the bug-3 repro family through the DEFAULT engine
   constexpr std::string_view src =
       "fn fa(n) { if (n == 0) { return 0; } if (n % 4 == 1) { return fa(n / "
       "4); } return fb(n / 4); }\n"
@@ -190,7 +191,8 @@ MJZ_CX_TOUR_FN bool cx_rings() { // the bug-3 repro family through the DEFAULT e
   RunOut t = run_prog(fns_of(P, 1), 1000000, {});
   return t.out.size() == 3 && t.out[0] == 1 && t.out[1] == 1 && t.out[2] == 1;
 }
-MJZ_CX_TOUR_FN bool cx_notcanon() { // comparison negation at the equality points
+MJZ_CX_TOUR_FN bool
+cx_notcanon() { // comparison negation at the equality points
   constexpr std::string_view src =
       "let z = 0;\n"
       "print !(!(0 < 0));\n" // bug4 class: NOT(a>=b) must be a<b, not a<=b

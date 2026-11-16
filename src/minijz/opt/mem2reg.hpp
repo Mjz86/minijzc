@@ -47,20 +47,20 @@ constexpr bool opt_mem2reg(Fn &fn, const An &A, OptStats &os, bool lift_ok,
     return false; // empty fn / no vregs / no allocations
   if (!X.lift_ok)
     return m2r_sweep_dead_allocs(fn, X, os); // lifting off: sweep only
-  m2r_key_consts(fn, X);   // the sole-def Const index keys
-  m2r_classify(fn, X);     // liftable / dead / neither, the budget spent
+  m2r_key_consts(fn, X);                     // the sole-def Const index keys
+  m2r_classify(fn, X); // liftable / dead / neither, the budget spent
   if (!X.any_lift && !X.any_dead)
     return m2r_sweep_dead_allocs(fn, X, os); // nothing classifiable
   m2r_check_dominance(fn, X); // the defensive pre-check, any_lift demoted
   if (!X.any_lift && !X.any_dead)
     return m2r_sweep_dead_allocs(fn, X, os);
-  m2r_slot_tables(fn, X); // slot_base + the per-slot def blocks
-  m2r_place(fn, X);       // the kernel's phi placement, ordinal offsets
-  m2r_rebuild(fn, X, os); // slot phis + init consts + dead-store drop
+  m2r_slot_tables(fn, X);   // slot_base + the per-slot def blocks
+  m2r_place(fn, X);         // the kernel's phi placement, ordinal offsets
+  m2r_rebuild(fn, X, os);   // slot phis + init consts + dead-store drop
   m2r_gather_events(fn, X); // the Load/Store/init event stream
   if (!m2r_rename(X))
-    return false; // an unrouted load: the rebuild stands (the
-                  // documented asymmetry -- nothing else mutated)
+    return false;    // an unrouted load: the rebuild stands (the
+                     // documented asymmetry -- nothing else mutated)
   m2r_replay(fn, X); // the walk's vreg mints + the rewrites
   (void)m2r_sweep_dead_allocs(fn, X, os); // post-rewrite: the lifted
                                           // handles are now unused

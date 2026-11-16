@@ -2073,12 +2073,12 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
   // 18a. header-pred classification + the loop shape
   {
     std::vector<char> inL{0, 1, 1, 0};
-    auto hp = opt_ns::calculate_header_preds(
-        std::vector<uintlen_t>{0, 1, 2}, inL);
+    auto hp =
+        opt_ns::calculate_header_preds(std::vector<uintlen_t>{0, 1, 2}, inL);
     UT(hp.n_in == 2 && hp.n_out == 1 && hp.latch == 2 && hp.pre == 0,
        "header preds: last inside is the latch, last outside the pre");
-    auto sh = opt_ns::calculate_loop_shape(std::vector<uintlen_t>{0, 1},
-                                           inL, 3, 1);
+    auto sh =
+        opt_ns::calculate_loop_shape(std::vector<uintlen_t>{0, 1}, inL, 3, 1);
     UT(sh.ok && sh.pre == 0 && sh.latch == 1 && sh.body == 1 && sh.X == 3,
        "loop shape: one arm stays (body), one leaves (X)");
     UT(!opt_ns::calculate_loop_shape(std::vector<uintlen_t>{0, 1}, inL, 3, 3)
@@ -2093,8 +2093,7 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
   {
     // blocks 0,1,2 in-loop; 3,4 outside; b1 exits to 3 and 4
     std::vector<char> inL{1, 1, 1, 0, 0};
-    std::vector<std::vector<uintlen_t>> succs{
-        {1}, {3, 4}, {0}, {}, {}};
+    std::vector<std::vector<uintlen_t>> succs{{1}, {3, 4}, {0}, {}, {}};
     std::vector<opt_ns::exit_edge_t> ex{};
     UT(opt_ns::collect_exit_edges(succs, inL, none_v, none_v, none_v, none_v,
                                   ex),
@@ -2120,8 +2119,8 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
   {
     // 0 entry; 1,2 dead (the duplicated tail's preds); 3 = U0, 4 = U1;
     // 5 = the re-merge of {3,4}; 6 = the dead tail T (preds {1,2})
-    std::vector<std::vector<uintlen_t>> preds{
-        {}, {0}, {0}, {1}, {2}, {3, 4}, {1, 2}};
+    std::vector<std::vector<uintlen_t>> preds{{},  {0},    {0},   {1},
+                                              {2}, {3, 4}, {1, 2}};
     std::vector<char> dead{0, 1, 1, 0, 0, 0, 1};
     std::vector<char> dom0{0, 0, 0, 1, 0, 0, 0}; // U0=3 dominates 3 only
     std::vector<char> dom1{0, 0, 0, 0, 1, 0, 0}; // U1=4 dominates 4 only
@@ -2137,8 +2136,7 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
        "route: the born site records its preds' routes");
     // the arity bound as a PARAMETER: a 3-pred join of routes {0,0,1}
     // births an N-ary phi under bound 3, is unroutable under bound 2
-    std::vector<std::vector<uintlen_t>> preds3{
-        {}, {0}, {0}, {0}, {1, 2, 3}};
+    std::vector<std::vector<uintlen_t>> preds3{{}, {0}, {0}, {0}, {1, 2, 3}};
     std::vector<char> d3(5, 0);
     std::vector<char> m0{0, 1, 1, 0, 0}; // U0 dominates 1,2
     std::vector<char> m1{0, 0, 0, 1, 0}; // U1 dominates 3
@@ -2177,8 +2175,7 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
        "alias: the copy chain resolves to the seed id");
     UT(single[3] == 5,
        "alias: the N-ary phi(a,a,a) agrees -- single (arity 3)");
-    UT(single[4] == none_v,
-       "alias: the phi over an obscure arg is obscure");
+    UT(single[4] == none_v, "alias: the phi over an obscure arg is obscure");
     UT(single[5] == none_v && single[7] == none_v,
        "alias: an absent arg is obscure (the conservative rule)");
   }
@@ -2195,10 +2192,16 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
                       .key_b = 3,
                       .val = 10});
     evs[1].push_back(
-        {.kind = opt_ns::mem_load_v, .group = 0, .key_tag = 1, .key_b = 3,
+        {.kind = opt_ns::mem_load_v,
+         .group = 0,
+         .key_tag = 1,
+         .key_b = 3,
          .val = 20}); // hits the store, then records (20, from_load)
     evs[2].push_back(
-        {.kind = opt_ns::mem_load_v, .group = 0, .key_tag = 1, .key_b = 3,
+        {.kind = opt_ns::mem_load_v,
+         .group = 0,
+         .key_tag = 1,
+         .key_b = 3,
          .val = 30}); // b1's entry died with b1's subtree: hits the STORE
     std::vector<char> drop{0, 0, 0};
     auto may_kill = [](uintlen_t eg, uintlen_t, uintlen_t, uintlen_t ekb,
@@ -2223,16 +2226,17 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
                        .key_tag = 1,
                        .key_b = 3,
                        .val = 11});
-    evs2[2].push_back(
-        {.kind = opt_ns::mem_load_v, .group = 0, .key_tag = 1, .key_b = 3,
-         .val = 30});
+    evs2[2].push_back({.kind = opt_ns::mem_load_v,
+                       .group = 0,
+                       .key_tag = 1,
+                       .key_b = 3,
+                       .val = 30});
     std::vector<char> drop2{0, 0, 1}; // block 2 is a join: table drops
     auto hits2 =
         opt_ns::run_dom_scoped_table<V>(dom, evs2, drop2, evs2, may_kill);
-    UT(!hits2[0].found,
-       "mem: the join drop empties the table before the load");
-    auto hits3 = opt_ns::run_dom_scoped_table<V>(dom, evs2, drop, evs2,
-                                                 may_kill);
+    UT(!hits2[0].found, "mem: the join drop empties the table before the load");
+    auto hits3 =
+        opt_ns::run_dom_scoped_table<V>(dom, evs2, drop, evs2, may_kill);
     UT(hits3[0].found && hits3[0].val == 11 && hits3[0].from_store,
        "mem: the second store kills the first (same slot)");
   }
@@ -2293,23 +2297,17 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
     UT(opt_ns::mixed_sort_key(3, kc, kv, 1) ==
            ((uint64_t(1) << 63) ^ uint64_t(7)),
        "key: a known const keys by VALUE after the tag bit");
-    UT(opt_ns::mixed_sort_key(3, kc, kv, 2) == 2,
-       "key: a var keys by its id");
-    UT(opt_ns::mixed_sort_key(3, kc, kv, 1) > opt_ns::mixed_sort_key(3, kc, kv, 2),
+    UT(opt_ns::mixed_sort_key(3, kc, kv, 2) == 2, "key: a var keys by its id");
+    UT(opt_ns::mixed_sort_key(3, kc, kv, 1) >
+           opt_ns::mixed_sort_key(3, kc, kv, 2),
        "key: consts order after every var");
   }
 
   // 18i. the region leak scan
   {
     std::vector<uintlen_t> def_site{4, 5, none_v}; // v0@4, v1@5, v2 none
-    std::vector<std::vector<uintlen_t>> args{{},
-                                             {},
-                                             {},
-                                             {},
-                                             {0},
-                                             {0, 1},
-                                             {0},
-                                             {2}};
+    std::vector<std::vector<uintlen_t>> args{{},  {},     {},  {},
+                                             {0}, {0, 1}, {0}, {2}};
     UT(opt_ns::region_uses_escape(def_site, args, 4, 6),
        "leak: a use at 6 of the v0 defined at 4 escapes");
     UT(!opt_ns::region_uses_escape(def_site, args, 4, 7),
@@ -2325,8 +2323,7 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
     std::vector<std::vector<std::vector<opt_ns::soft_edge_t>>> softs{
         {{}, {{1, 1}}}, {{}, {}}};
     opt_ns::calculate_live_params(eligible, softs, alive);
-    UT(alive[0][1],
-       "ipa: g0's param 1 is live -- it feeds g1's LIVE param 1");
+    UT(alive[0][1], "ipa: g0's param 1 is live -- it feeds g1's LIVE param 1");
     std::vector<std::vector<char>> alive2{{1, 0}, {0, 0}};
     std::vector<std::vector<std::vector<opt_ns::soft_edge_t>>> softs2{
         {{}, {{1, 1}}}, {{}, {}}};
@@ -2354,7 +2351,6 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
        "equi: the verified fixpoint round changes nothing");
   }
 }
-
 
 std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
 return ut_fails ? 1 : 0;

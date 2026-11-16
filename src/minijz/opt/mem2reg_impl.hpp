@@ -167,27 +167,27 @@ struct m2r_cls_t {
 
 // ---- the pass context (the former monolith's locals) ----------------------
 struct M2RCtx {
-  Fn &fn;   // the function under rewrite
+  Fn &fn;      // the function under rewrite
   const An &A; // the caller's fresh analysis (df, dom_tree, dominates)
-  bool lift_ok{}, delalloc_ok{}; // the pass toggles
-  uint32_t nb{}, nv{};           // pass-entry block / vreg universe
-  AliasInfo AI{};                // the single-handle alias analysis
-  std::vector<char> kc{};   // vreg -> sole-def Const (the index key)
-  std::vector<val_t> kv{};  // ... and its value
-  std::vector<m2r_cls_t> cls{}; // per-allocation classification
-  bool any_lift{}, any_dead{};  // the classification summary
-  uint32_t total_slots{};       // the pseudo-variable universe
-  std::vector<uint32_t> slot_base{};       // alloc id -> first slot
-  std::vector<std::vector<ulen>> sdefs{};  // slot -> def blocks
-  gns::treversal_result_t<V> placement{};  // block-major slot phis
-  gns::treversal_result_t<V> pred_rows{};  // the CFG CSR pair
-  gns::treversal_result_t<V> succ_rows{};  // (positional/slot order)
-  std::vector<uint32_t> phi_ord_base{};    // block -> phi ordinal
+  bool lift_ok{}, delalloc_ok{};     // the pass toggles
+  uint32_t nb{}, nv{};               // pass-entry block / vreg universe
+  AliasInfo AI{};                    // the single-handle alias analysis
+  std::vector<char> kc{};            // vreg -> sole-def Const (the index key)
+  std::vector<val_t> kv{};           // ... and its value
+  std::vector<m2r_cls_t> cls{};      // per-allocation classification
+  bool any_lift{}, any_dead{};       // the classification summary
+  uint32_t total_slots{};            // the pseudo-variable universe
+  std::vector<uint32_t> slot_base{}; // alloc id -> first slot
+  std::vector<std::vector<ulen>> sdefs{}; // slot -> def blocks
+  gns::treversal_result_t<V> placement{}; // block-major slot phis
+  gns::treversal_result_t<V> pred_rows{}; // the CFG CSR pair
+  gns::treversal_result_t<V> succ_rows{}; // (positional/slot order)
+  std::vector<uint32_t> phi_ord_base{};   // block -> phi ordinal
   uint32_t total_phis{};
-  std::vector<uint32_t> init_vreg{};  // slot -> the Const-0 vreg
+  std::vector<uint32_t> init_vreg{};    // slot -> the Const-0 vreg
   std::vector<uint32_t> init_slot_of{}; // vreg -> slot (reverse map)
   std::vector<std::vector<ssa_ns::ssa_event_t>> evs{}; // the streams
-  std::vector<uint32_t> site_begin{};     // block -> first site id
+  std::vector<uint32_t> site_begin{};                  // block -> first site id
   std::vector<uint32_t> site_init_vreg{}; // site -> pre-minted vreg
   uint32_t n_sites{};
   ssa_ns::ssa_renaming_t<V> R{}; // the kernel's renaming tables
@@ -223,8 +223,7 @@ constexpr bool m2r_sweep_dead_allocs(Fn &fn, M2RCtx &X, OptStats &os) {
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       const Instr &I = fn.code[i];
-      uint32_t dst_id =
-          (I.dst != NONE && I.dst < nv) ? AI.single[I.dst] : NONE;
+      uint32_t dst_id = (I.dst != NONE && I.dst < nv) ? AI.single[I.dst] : NONE;
       auto use = [&](uint32_t v) {
         if (v == NONE || v >= nv)
           return;
@@ -324,7 +323,7 @@ constexpr void m2r_classify(Fn &fn, M2RCtx &X) {
           }
           continue;
         }
-        if (I.k == K::Bkpt) { // observed handle: the array must STAY in
+        if (I.k == K::Bkpt) {         // observed handle: the array must STAY in
           for (uint32_t v : I.args) { // the arena so the debugger can dump
             uint32_t oid =            // its contents
                 (v != NONE && v < nv) ? AI.single[v] : NONE;
@@ -355,8 +354,7 @@ constexpr void m2r_classify(Fn &fn, M2RCtx &X) {
     for (uint32_t id = 0; id < AI.nallocs; ++id) {
       if (X.cls[id].len < 0 || alloc_instr[id] == NONE)
         continue;
-      if (has_load[id] && !bad[id] &&
-          X.cls[id].len <= MJZ_MEM2REG_MAX_ELEMS &&
+      if (has_load[id] && !bad[id] && X.cls[id].len <= MJZ_MEM2REG_MAX_ELEMS &&
           budget >= (uint32_t)X.cls[id].len) {
         X.cls[id].lift = true;
         budget -= (uint32_t)X.cls[id].len;
@@ -402,8 +400,7 @@ constexpr void m2r_check_dominance(Fn &fn, M2RCtx &X) {
       if (h == NONE || !X.cls[h].lift)
         continue;
       uint32_t ab = alloc_blk[h];
-      if (ab == NONE || !X.A.dominates(ab, b) ||
-          (ab == b && i < alloc_idx[h]))
+      if (ab == NONE || !X.A.dominates(ab, b) || (ab == b && i < alloc_idx[h]))
         X.cls[h].lift = false;
     }
   X.any_lift = false;
@@ -448,8 +445,8 @@ constexpr void m2r_slot_tables(Fn &fn, M2RCtx &X) {
         const Instr &I = fn.code[i];
         if (I.k == K::Store && I.a < nv && AI.single[I.a] != NONE &&
             X.cls[AI.single[I.a]].lift)
-          X.sdefs[X.slot_base[AI.single[I.a]] + (uint32_t)X.kv[I.b2]]
-              .push_back(b);
+          X.sdefs[X.slot_base[AI.single[I.a]] + (uint32_t)X.kv[I.b2]].push_back(
+              b);
       }
   }
 }
@@ -470,8 +467,8 @@ constexpr void m2r_place(Fn &fn, M2RCtx &X) {
   }
   X.pred_rows = gns::make_basic_forest<V>(prs);
   X.succ_rows = gns::make_basic_forest<V>(scs);
-  X.placement = ssa_ns::calculate_phi_placements<V>(X.A.df, X.pred_rows,
-                                                    X.sdefs);
+  X.placement =
+      ssa_ns::calculate_phi_placements<V>(X.A.df, X.pred_rows, X.sdefs);
   auto phis_at = X.placement.range();
   X.phi_ord_base.assign(nb + 1, 0);
   for (uint32_t b = 0; b < nb; ++b)
@@ -500,8 +497,7 @@ constexpr void m2r_rebuild(Fn &fn, M2RCtx &X, OptStats &os) {
           X.cls[AI.single[I.a]].dead) {
         keep[i] = 0; // never read: the store is pure dead weight
         os.mem2reg_dses++;
-      } else if (I.k == K::Alloc && I.dst < nv &&
-                 AI.single[I.dst] != NONE &&
+      } else if (I.k == K::Alloc && I.dst < nv && AI.single[I.dst] != NONE &&
                  X.cls[AI.single[I.dst]].lift)
         after[i] = (uint32_t)X.cls[AI.single[I.dst]].len;
     }
@@ -565,8 +561,7 @@ constexpr void m2r_gather_events(Fn &fn, M2RCtx &X) {
         const Instr &I = fn.code[i];
         if (I.k == K::Phi)
           continue; // slot-phi placeholders: kernel-synthesized defs
-        if (I.k == K::Const && I.dst != NONE &&
-            I.dst < X.init_slot_of.size() &&
+        if (I.k == K::Const && I.dst != NONE && I.dst < X.init_slot_of.size() &&
             X.init_slot_of[I.dst] != NONE) {
           X.evs[b].push_back({.kind = ssa_ns::ssa_def_v,
                               .var = X.init_slot_of[I.dst],
@@ -685,8 +680,7 @@ constexpr void m2r_replay(Fn &fn, M2RCtx &X) {
         Instr &I = fn.code[i];
         if (I.k == K::Phi)
           continue;
-        if (I.k == K::Const && I.dst != NONE &&
-            I.dst < X.init_slot_of.size() &&
+        if (I.k == K::Const && I.dst != NONE && I.dst < X.init_slot_of.size() &&
             X.init_slot_of[I.dst] != NONE) {
           ++site; // the promotion's zero-init: already materialized
         } else if (I.k == K::Load) {

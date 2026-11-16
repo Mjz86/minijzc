@@ -63,9 +63,10 @@ static KzCfg kz_cfg(std::mt19937_64 &rng, ulen nb) {
   C.nb = nb;
   C.succs.assign(nb, {});
   for (ulen b = 0; b < nb; ++b) {
-    int deg = kz_chance(rng, 20) ? 0 : kz_chance(rng, 50) ? 1
-          : kz_chance(rng, 60)   ? 2
-                                 : 3;
+    int deg = kz_chance(rng, 20)   ? 0
+              : kz_chance(rng, 50) ? 1
+              : kz_chance(rng, 60) ? 2
+                                   : 3;
     for (int j = 0; j < deg; ++j) {
       ulen t; // 40% back-ish (target <= b), else anywhere
       if (kz_chance(rng, 40))
@@ -86,8 +87,8 @@ static KzCfg kz_cfg(std::mt19937_64 &rng, ulen nb) {
   C.pf = gns::make_basic_forest<V>(C.preds);
   C.idom = gns::calculate_dominators_from_entry<V>(0, C.fs, C.fp_inv);
   C.dom_tree = gns::make_dominator_forest_given_dominators<V>(C.idom);
-  C.df = gns::calculate_dominance_frontiers_given_dominators<V>(C.idom,
-                                                                C.fp_inv);
+  C.df =
+      gns::calculate_dominance_frontiers_given_dominators<V>(C.idom, C.fp_inv);
   C.reach.assign(nb, 0);
   {
     std::vector<ulen> wl{0};
@@ -109,8 +110,8 @@ static KzCfg kz_cfg(std::mt19937_64 &rng, ulen nb) {
 // reachability, dominator sets by round-robin intersection over the
 // reachable subgraph, idom = the strict dominator whose own dom-set is
 // as large as the strict set, frontiers straight off Cytron's definition.
-static std::vector<char> kz_ref_reach(
-    const std::vector<std::vector<ulen>> &succs, ulen entry) {
+static std::vector<char>
+kz_ref_reach(const std::vector<std::vector<ulen>> &succs, ulen entry) {
   const ulen nb = ulen(succs.size());
   std::vector<char> r(nb, 0);
   if (!nb || entry >= nb)
@@ -236,9 +237,9 @@ kz_ref_df(const std::vector<std::vector<ulen>> &preds,
   return df;
 }
 // the iterated dominance frontier, straight from Cytron's worklist
-static std::vector<ulen> kz_ref_idf(
-    const std::vector<std::vector<ulen>> &df_sets,
-    const std::vector<ulen> &def_blocks) {
+static std::vector<ulen>
+kz_ref_idf(const std::vector<std::vector<ulen>> &df_sets,
+           const std::vector<ulen> &def_blocks) {
   std::vector<char> in_defs(df_sets.size(), 0);
   std::vector<ulen> W{};
   for (ulen d : def_blocks) {
@@ -489,15 +490,16 @@ static void fz_wrapper(std::mt19937_64 &rng, KzRec &R) {
 // ---------------------------------------------------------------------------
 struct KzRenRef {
   std::vector<ulen> visit_order{}, reaching_def{}, def_ordinal{};
-  std::vector<ulen> phi_block{}, phi_var{}, phi_def_site{},
-      phi_entry_begin{}, phi_entry_pred{}, phi_entry_def{};
+  std::vector<ulen> phi_block{}, phi_var{}, phi_def_site{}, phi_entry_begin{},
+      phi_entry_pred{}, phi_entry_def{};
 };
-static KzRenRef kz_rename_ref(
-    ulen nvars, ulen nsites, const std::vector<std::vector<ulen>> &dom_rows,
-    const std::vector<std::vector<ulen>> &succ_rows,
-    const std::vector<std::vector<ulen>> &pred_rows,
-    const std::vector<std::vector<ulen>> &phi_rows,
-    const std::vector<std::vector<ssa_ns::ssa_event_t>> &evs) {
+static KzRenRef
+kz_rename_ref(ulen nvars, ulen nsites,
+              const std::vector<std::vector<ulen>> &dom_rows,
+              const std::vector<std::vector<ulen>> &succ_rows,
+              const std::vector<std::vector<ulen>> &pred_rows,
+              const std::vector<std::vector<ulen>> &phi_rows,
+              const std::vector<std::vector<ssa_ns::ssa_event_t>> &evs) {
   using namespace ssa_ns;
   const ulen nb = ulen(dom_rows.size());
   KzRenRef t{};
@@ -558,8 +560,7 @@ static KzRenRef kz_rename_ref(
           continue;
         const ulen at = t.phi_entry_begin[phi] + entry;
         t.phi_entry_pred[at] = b;
-        t.phi_entry_def[at] =
-            stacks[v].empty() ? ssa_none_v : stacks[v].back();
+        t.phi_entry_def[at] = stacks[v].empty() ? ssa_none_v : stacks[v].back();
       }
     }
     for (ulen c : dom_rows[b])
@@ -622,15 +623,15 @@ static void fz_rename(std::mt19937_64 &rng, KzRec &R) {
     phi_p[b].assign(p.begin(), p.end());
   }
   // (a) the kernel vs the recursive reference, bit-for-bit, both ways
-  auto K1 = ssa_ns::rename_ssa<V>(nvars, nsites, C.dom_tree, C.fs, C.pf, wrap,
-                                   evs);
-  KzRenRef r1 = kz_rename_ref(nvars, nsites, dom_rows, C.succs, C.preds,
-                              phi_w, evs);
+  auto K1 =
+      ssa_ns::rename_ssa<V>(nvars, nsites, C.dom_tree, C.fs, C.pf, wrap, evs);
+  KzRenRef r1 =
+      kz_rename_ref(nvars, nsites, dom_rows, C.succs, C.preds, phi_w, evs);
   R.ok(kz_ren_eq(K1, r1), "rename: tables match the recursive walk (wrap)");
   auto K2 = ssa_ns::rename_ssa<V>(nvars, nsites, C.dom_tree, C.fs, C.pf,
-                                   pureinv, evs);
-  KzRenRef r2 = kz_rename_ref(nvars, nsites, dom_rows, C.succs, C.preds,
-                              phi_p, evs);
+                                  pureinv, evs);
+  KzRenRef r2 =
+      kz_rename_ref(nvars, nsites, dom_rows, C.succs, C.preds, phi_p, evs);
   R.ok(kz_ren_eq(K2, r2), "rename: tables match the recursive walk (pure)");
   // (b) the SEMANTIC verifier: walk random paths, carry the value of
   // every var (the site of its last def along the path, phis included),
@@ -683,8 +684,7 @@ static void fz_rename(std::mt19937_64 &rng, KzRec &R) {
                  "rename: dup-pred slots before the last stay unseeded");
           }
         const ulen at = K2.phi_entry_begin[p2] + last;
-        R.ok(K2.phi_entry_pred[at] == b &&
-                 K2.phi_entry_def[at] == end[v],
+        R.ok(K2.phi_entry_pred[at] == b && K2.phi_entry_def[at] == end[v],
              "rename: the phi arg carries the end-of-pred value");
       }
       val = end;
@@ -784,8 +784,8 @@ static void fz_chain(std::mt19937_64 &rng, KzRec &R) {
     // walk each pred to the block through the chain
     const auto chain_of = [&](ulen j) { return j <= 2 ? 0 : j - 2; };
     for (ulen j = 0; j < k; ++j) {
-      ulen at = j == 0 ? block : (k >= 3 ? nb2 - want_chains + chain_of(j)
-                                         : block);
+      ulen at =
+          j == 0 ? block : (k >= 3 ? nb2 - want_chains + chain_of(j) : block);
       int hops = 0;
       while (at != block && hops++ <= int(k) + 2) {
         // chain block c targets b iff c+1 == chain_count, else c+1
@@ -1013,8 +1013,7 @@ static void fz_vn(std::mt19937_64 &rng, KzRec &R) {
   ulen hits_seen = 0;
   for (ulen s = 0; s < ns; ++s) {
     const auto &si = sinfo[s];
-    if (si.tag == opt_ns::vn_skip_v || si.dst == opt_ns::none_v ||
-        si.dst >= nv)
+    if (si.tag == opt_ns::vn_skip_v || si.dst == opt_ns::none_v || si.dst >= nv)
       continue;
     const uintlen_t r = res.ren[si.dst];
     if (r != opt_ns::none_v) {
@@ -1121,8 +1120,8 @@ static void fz_sccp(std::mt19937_64 &rng, KzRec &R) {
         phi_dst.push_back(freevar);
         for (ulen p : preds[b]) {
           phi_epred.push_back(p);
-          const uintlen_t arg = kz_chance(rng, 75) ? kz_pick(rng, nv)
-                                                   : uintlen_t(opt_ns::none_v);
+          const uintlen_t arg =
+              kz_chance(rng, 75) ? kz_pick(rng, nv) : uintlen_t(opt_ns::none_v);
           phi_earg.push_back(arg);
           if (arg != opt_ns::none_v && arg < nv)
             uses[arg].push_back(s);
@@ -1255,8 +1254,7 @@ static void fz_sccp(std::mt19937_64 &rng, KzRec &R) {
           for (ulen e = phi_ebegin[si.phi]; e < phi_ebegin[si.phi + 1]; ++e) {
             if (!pred_exec2(phi_epred[e], home))
               continue;
-            const bool ok = phi_earg[e] != opt_ns::none_v &&
-                            phi_earg[e] < nv;
+            const bool ok = phi_earg[e] != opt_ns::none_v && phi_earg[e] < nv;
             const uint8_t al = ok ? lat[phi_earg[e]] : uint8_t(sccp_od_v);
             const int64_t av = ok ? cv[phi_earg[e]] : 0;
             uint8_t mr{};
@@ -1276,9 +1274,9 @@ static void fz_sccp(std::mt19937_64 &rng, KzRec &R) {
           } else if (op.kind == 2) {
             const uint8_t la = lat[op.a], lb = lat[op.b];
             if (la != sccp_top_v && lb != sccp_top_v) {
-              const uint8_t tag =
-                  (la == sccp_od_v || lb == sccp_od_v) ? uint8_t(sccp_od_v)
-                                                       : uint8_t(sccp_cn_v);
+              const uint8_t tag = (la == sccp_od_v || lb == sccp_od_v)
+                                      ? uint8_t(sccp_od_v)
+                                      : uint8_t(sccp_cn_v);
               const int64_t val = cv[op.a] + cv[op.b];
               ch |= lower2(si.dst, tag, val);
             }
@@ -1402,8 +1400,8 @@ static void fz_pcopy(std::mt19937_64 &rng, KzRec &R) {
         // the src of row x (kept rows have unique dsts)
         ulen src = opt_ns::none_v;
         for (const auto &p : pcs)
-          if (p.first == x && !(p.first == p.second &&
-                                p.second != opt_ns::none_v))
+          if (p.first == x &&
+              !(p.first == p.second && p.second != opt_ns::none_v))
             src = p.second;
         if (src == opt_ns::none_v || src >= 6000 || !is_kept[src])
           break;
@@ -1669,8 +1667,7 @@ static void fz_inv(std::mt19937_64 &rng, KzRec &R) {
         wpre = p;
         ++wout;
       }
-    R.ok(pre == wpre && nout == wout,
-         "inv: unique-outside-pred scan matches");
+    R.ok(pre == wpre && nout == wout, "inv: unique-outside-pred scan matches");
   }
   // ---- calculate_first_invariant_site ----
   const ulen nv = 1 + kz_pick(rng, 6);
@@ -1884,10 +1881,9 @@ static void fz_shape(std::mt19937_64 &rng, KzRec &R) {
       } else
         ok = false;
     }
-    R.ok(sh.ok == ok &&
-             sh.pre == (okp ? hp.pre : opt_ns::none_v) &&
-             sh.latch == (okp ? hp.latch : opt_ns::none_v) &&
-             sh.body == wb && sh.X == wx,
+    R.ok(sh.ok == ok && sh.pre == (okp ? hp.pre : opt_ns::none_v) &&
+             sh.latch == (okp ? hp.latch : opt_ns::none_v) && sh.body == wb &&
+             sh.X == wx,
          "shape: the test-first classification matches");
   }
 }
@@ -1913,14 +1909,14 @@ static void fz_exits(std::mt19937_64 &rng, KzRec &R) {
         succs[b].push_back(nb + 1 + kz_pick(rng, 2)); // junk
     }
   }
-  const uintlen_t sf = kz_chance(rng, 60) ? kz_pick(rng, nb)
-                                          : uintlen_t(opt_ns::none_v);
-  const uintlen_t st = kz_chance(rng, 60) ? kz_pick(rng, nb)
-                                          : uintlen_t(opt_ns::none_v);
-  const uintlen_t f0 = kz_chance(rng, 40) ? kz_pick(rng, nb)
-                                          : uintlen_t(opt_ns::none_v);
-  const uintlen_t f1 = kz_chance(rng, 40) ? kz_pick(rng, nb)
-                                          : uintlen_t(opt_ns::none_v);
+  const uintlen_t sf =
+      kz_chance(rng, 60) ? kz_pick(rng, nb) : uintlen_t(opt_ns::none_v);
+  const uintlen_t st =
+      kz_chance(rng, 60) ? kz_pick(rng, nb) : uintlen_t(opt_ns::none_v);
+  const uintlen_t f0 =
+      kz_chance(rng, 40) ? kz_pick(rng, nb) : uintlen_t(opt_ns::none_v);
+  const uintlen_t f1 =
+      kz_chance(rng, 40) ? kz_pick(rng, nb) : uintlen_t(opt_ns::none_v);
   std::vector<opt_ns::exit_edge_t> ex{};
   const bool ran = opt_ns::collect_exit_edges(succs, inL, sf, st, f0, f1, ex);
   // reference
@@ -2115,8 +2111,7 @@ static void fz_needs(std::mt19937_64 &rng, KzRec &R) {
         sites[k].proutes.push_back(kz_pick(rng, 2)); // a source
       else if (r < 85 && k > 0)
         // an EARLIER born site (the DAG discipline; k == 0 has none)
-        sites[k].proutes.push_back(opt_ns::route_born_base_v +
-                                   kz_pick(rng, k));
+        sites[k].proutes.push_back(opt_ns::route_born_base_v + kz_pick(rng, k));
       else if (r < 92)
         // out-of-range site id: the DFS bails on it harmlessly
         sites[k].proutes.push_back(opt_ns::route_born_base_v + nsite +
@@ -2290,14 +2285,14 @@ static void fz_mem(std::mt19937_64 &rng, KzRec &R) {
   }
   // three may-kill policies, all exercised per seed
   const int pol = int(kz_pick(rng, 3));
-  auto may_kill = [&](uintlen_t eg, uintlen_t et, uintlen_t eka,
-                      uintlen_t ekb, const opt_ns::mem_event_t &ev) {
+  auto may_kill = [&](uintlen_t eg, uintlen_t et, uintlen_t eka, uintlen_t ekb,
+                      const opt_ns::mem_event_t &ev) {
     if (pol == 0)
       return eg == ev.group && et == ev.key_tag &&
              (ev.key_tag ? ekb == ev.key_b : eka == ev.key_a);
     if (pol == 1)
       return eg == ev.group; // a whole-group clobber
-    return false; // never kills
+    return false;            // never kills
   };
   auto hits = opt_ns::run_dom_scoped_table<V>(domf, evs, drop, evs, may_kill);
   // THE REFERENCE -- an independent restatement of the kernel's LIVE
@@ -2337,8 +2332,8 @@ static void fz_mem(std::mt19937_64 &rng, KzRec &R) {
               keep.push_back(e);
           table = std::move(keep);
           if (ev.val != opt_ns::none_v)
-            table.push_back({ev.group, ev.key_tag, ev.key_a, ev.key_b,
-                             ev.val, d + 1, true});
+            table.push_back({ev.group, ev.key_tag, ev.key_a, ev.key_b, ev.val,
+                             d + 1, true});
         } else if (ev.kind == opt_ns::mem_load_v) {
           opt_ns::mem_hit_t h{};
           for (const Ent &e : table)
@@ -2348,8 +2343,8 @@ static void fz_mem(std::mt19937_64 &rng, KzRec &R) {
               break;
             }
           want.push_back(h);
-          table.push_back({ev.group, ev.key_tag, ev.key_a, ev.key_b,
-                           ev.val, d + 1, false});
+          table.push_back(
+              {ev.group, ev.key_tag, ev.key_a, ev.key_b, ev.val, d + 1, false});
         } else {
           table.clear(); // call / unknown clobber
         }
@@ -2399,8 +2394,7 @@ static void fz_iv(std::mt19937_64 &rng, KzRec &R) {
   // the left is bot -- an implementation choice the algebra must not
   // observe bit-for-bit)
   auto iv_same = [](const iv_t &x, const iv_t &y) {
-    return x.bot == y.bot &&
-           (x.bot || (x.lo == y.lo && x.hi == y.hi));
+    return x.bot == y.bot && (x.bot || (x.lo == y.lo && x.hi == y.hi));
   };
   // join = hull
   {
@@ -2439,8 +2433,7 @@ static void fz_iv(std::mt19937_64 &rng, KzRec &R) {
   // the trap predicates
   {
     const iv_t x = rnd_iv();
-    R.ok(opt_ns::iv_ns::iv_excludes_zero(x) ==
-             (x.bot || x.hi < 0 || x.lo > 0),
+    R.ok(opt_ns::iv_ns::iv_excludes_zero(x) == (x.bot || x.hi < 0 || x.lo > 0),
          "iv: excludes-zero");
     R.ok(opt_ns::iv_ns::iv_excludes_minus1(x) ==
              (x.bot || x.hi < -1 || x.lo > -1),
@@ -2514,12 +2507,11 @@ static void fz_ai(std::mt19937_64 &rng, KzRec &R) {
       const int64_t hi = (*rh)[p] < st[0].hi ? (*rh)[p] : st[0].hi;
       st[0] = lo <= hi ? iv_t{lo, hi, false} : iv_t{0, 0, true};
     }
-    void phi_join(uintlen_t, std::vector<iv_t> &,
-                  const iv_t *, uintlen_t) const {}
+    void phi_join(uintlen_t, std::vector<iv_t> &, const iv_t *,
+                  uintlen_t) const {}
     void transfer(uintlen_t b, std::vector<iv_t> &st) const {
       if (!st[0].bot) {
-        st[0].hi = st[0].hi == INT64_MAX ? INT64_MAX
-                                         : st[0].hi + (*step)[b];
+        st[0].hi = st[0].hi == INT64_MAX ? INT64_MAX : st[0].hi + (*step)[b];
         if (st[0].hi < st[0].lo) // overflow paranoia: stay sound
           st[0].hi = INT64_MAX;
       }
@@ -2541,9 +2533,8 @@ static void fz_ai(std::mt19937_64 &rng, KzRec &R) {
                             const std::vector<std::vector<char>> &marks,
                             const std::vector<int64_t> &step_v) {
     const CB cb{c, &step_v, &ja, &jb, &rl, &rh, &marks};
-    auto Res = opt_ns::ai_ns::solve_forward<V>(nb, 2, preds, widen, 0,
-                                               plain_cap, widen_cap, narrow,
-                                               cb);
+    auto Res = opt_ns::ai_ns::solve_forward<V>(
+        nb, 2, preds, widen, 0, plain_cap, widen_cap, narrow, cb);
     R.ok(Res.entry.size() == nb * 2, "ai: entry table shape");
     if (require_converged)
       R.ok(Res.converged,
@@ -2607,8 +2598,7 @@ static void fz_ai(std::mt19937_64 &rng, KzRec &R) {
   solve_and_walk(widen_at, false, marked, step);
   std::vector<char> widen_all(nb, 1);
   solve_and_walk(widen_all, false, no_marks, step);
-  solve_and_walk(widen_at, true, no_marks,
-                 std::vector<int64_t>(nb, 0));
+  solve_and_walk(widen_at, true, no_marks, std::vector<int64_t>(nb, 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -2776,16 +2766,16 @@ static void fz_equi(std::mt19937_64 &rng, KzRec &R) {
 
 using KzFn = void (*)(std::mt19937_64 &, KzRec &);
 static const KzFn KZ_FNS[] = {
-    fz_forests, fz_dom,     fz_df,        fz_phis,    fz_wrapper, fz_rename,
-    fz_reflow,  fz_chain,   fz_mark,      fz_vn,      fz_sccp,    fz_pcopy,
-    fz_split,   fz_reach,   fz_splice,    fz_inv,     fz_ren,     fz_trivphi,
-    fz_shape,   fz_exits,   fz_route,     fz_needs,   fz_alias,   fz_mem,
-    fz_iv,      fz_ai,      fz_key,       fz_leak,    fz_ipa,     fz_equi,
-    fz_invfam,  fz_scc,     fz_seq,       fz_dsu,     fz_search,  fz_dij,
-    fz_flow,    fz_stcut,   fz_mcf,       fz_gcut,    fz_dgcut,   fz_maxcut,
-    fz_gh,      fz_mst,     fz_match,     fz_blossom, fz_bic,     fz_kcore,
-    fz_euler,   fz_tr,        fz_rmas,      fz_dist,
-    fz_meg,     fz_maxclosure, fz_pathcover};
+    fz_forests,   fz_dom,   fz_df,     fz_phis,    fz_wrapper, fz_rename,
+    fz_reflow,    fz_chain, fz_mark,   fz_vn,      fz_sccp,    fz_pcopy,
+    fz_split,     fz_reach, fz_splice, fz_inv,     fz_ren,     fz_trivphi,
+    fz_shape,     fz_exits, fz_route,  fz_needs,   fz_alias,   fz_mem,
+    fz_iv,        fz_ai,    fz_key,    fz_leak,    fz_ipa,     fz_equi,
+    fz_invfam,    fz_scc,   fz_seq,    fz_dsu,     fz_search,  fz_dij,
+    fz_flow,      fz_stcut, fz_mcf,    fz_gcut,    fz_dgcut,   fz_maxcut,
+    fz_gh,        fz_mst,   fz_match,  fz_blossom, fz_bic,     fz_kcore,
+    fz_euler,     fz_tr,    fz_rmas,   fz_dist,    fz_meg,     fz_maxclosure,
+    fz_pathcover, fz_rmasp};
 static_assert(sizeof(KZ_FNS) / sizeof(KZ_FNS[0]) == KZ_NCOMP,
               "component table mismatch");
 
@@ -2855,13 +2845,12 @@ void run_kernel_fuzz(long n, long from, long jobs, const std::string &filter) {
     for (long seed = from; seed < from + n; ++seed) {
       kz_one(seed, comps, total, nullptr);
       if (++done % report_every == 0 || done == n) {
-        double el = std::chrono::duration<double>(
-                        std::chrono::steady_clock::now() - t0)
-                        .count();
+        double el =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+                .count();
         std::fprintf(stderr,
                      "[kfuzz %ld/%ld] %.0fs elapsed, eta %.0fs, fails %ld\n",
-                     done, n, el, el / done * (n - done),
-                     total.total_fails());
+                     done, n, el, el / done * (n - done), total.total_fails());
         std::fflush(stderr);
       }
     }
@@ -2883,9 +2872,8 @@ void run_kernel_fuzz(long n, long from, long jobs, const std::string &filter) {
             double el = std::chrono::duration<double>(
                             std::chrono::steady_clock::now() - t0)
                             .count();
-            std::fprintf(stderr,
-                         "[kfuzz %ld/%ld] %.0fs elapsed, eta %.0fs\n", d, n,
-                         el, el / d * (n - d));
+            std::fprintf(stderr, "[kfuzz %ld/%ld] %.0fs elapsed, eta %.0fs\n",
+                         d, n, el, el / d * (n - d));
             std::fflush(stderr);
           }
         }
@@ -2914,8 +2902,9 @@ void run_kernel_fuzz(long n, long from, long jobs, const std::string &filter) {
   double secs =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
           .count();
-  std::printf("  wall: %.1fs%s\n", secs, jobs == 1 ? "" :
-              (" on " + std::to_string(jobs) + " jobs").c_str());
+  std::printf("  wall: %.1fs%s\n", secs,
+              jobs == 1 ? ""
+                        : (" on " + std::to_string(jobs) + " jobs").c_str());
   CHECK(total.total_fails() == 0, "kernel fuzz must be clean");
   std::fflush(stdout);
 }

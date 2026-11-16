@@ -117,13 +117,11 @@ constexpr bool opt_ldelim(Fn &fn, const An &A, OptStats &os) {
         evs[b].push_back({.kind = opt_ns::mem_store_v,
                           .group = AI.single[I.a],
                           .key_tag = ck,
-                          .key_a = (I.b2 != NONE && I.b2 < nv)
-                                       ? (uintlen_t)I.b2
-                                       : opt_ns::none_v,
+                          .key_a = (I.b2 != NONE && I.b2 < nv) ? (uintlen_t)I.b2
+                                                               : opt_ns::none_v,
                           .key_b = (uintlen_t)(int64_t)cv,
-                          .val = (I.c2 != NONE && I.c2 < nv)
-                                     ? (uintlen_t)I.c2
-                                     : opt_ns::none_v});
+                          .val = (I.c2 != NONE && I.c2 < nv) ? (uintlen_t)I.c2
+                                                             : opt_ns::none_v});
       } else if (I.k == K::Load) {
         const bool single = I.a != NONE && I.a < nv && AI.single[I.a] != NONE;
         if (!single)
@@ -135,9 +133,8 @@ constexpr bool opt_ldelim(Fn &fn, const An &A, OptStats &os) {
         evs[b].push_back({.kind = opt_ns::mem_load_v,
                           .group = AI.single[I.a],
                           .key_tag = ck,
-                          .key_a = (I.b2 != NONE && I.b2 < nv)
-                                       ? (uintlen_t)I.b2
-                                       : opt_ns::none_v,
+                          .key_a = (I.b2 != NONE && I.b2 < nv) ? (uintlen_t)I.b2
+                                                               : opt_ns::none_v,
                           .key_b = (uintlen_t)(int64_t)cv,
                           .val = I.dst});
         load_at.push_back(i);
@@ -184,9 +181,9 @@ constexpr bool opt_ldelim(Fn &fn, const An &A, OptStats &os) {
       if (ci == 0) {
         for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
           const Instr &I = fn.code[i];
-          const bool single_load = I.k == K::Load && I.a != NONE &&
-                                   I.a < nv && AI.single[I.a] != NONE &&
-                                   I.dst != NONE && I.dst < nv;
+          const bool single_load = I.k == K::Load && I.a != NONE && I.a < nv &&
+                                   AI.single[I.a] != NONE && I.dst != NONE &&
+                                   I.dst < nv;
           if (!single_load)
             continue;
           if (k >= hits.size())

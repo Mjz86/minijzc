@@ -31,21 +31,18 @@
 // ---------------------------------------------------------------------------
 
 static const char *const KZ_NAMES[] = {
-    "gns.forests", "gns.dom",  "gns.df",    "gns.phis",   "ssa.wrapper",
-    "ssa.rename",  "ssa.reflow", "ssa.chain", "opt.mark",  "opt.vn",
-    "opt.sccp",    "opt.pcopy", "opt.split", "opt.reach",  "opt.splice",
-    "opt.inv",     "opt.ren",   "opt.trivphi", "opt.shape", "opt.exits",
-    "opt.route",   "opt.needs", "opt.alias", "opt.mem",    "opt.iv",
-    "opt.ai",      "opt.key",   "opt.leak",  "opt.ipa",    "opt.equi",
+    "gns.forests", "gns.dom", "gns.df", "gns.phis", "ssa.wrapper", "ssa.rename",
+    "ssa.reflow", "ssa.chain", "opt.mark", "opt.vn", "opt.sccp", "opt.pcopy",
+    "opt.split", "opt.reach", "opt.splice", "opt.inv", "opt.ren", "opt.trivphi",
+    "opt.shape", "opt.exits", "opt.route", "opt.needs", "opt.alias", "opt.mem",
+    "opt.iv", "opt.ai", "opt.key", "opt.leak", "opt.ipa", "opt.equi",
     // the graph library's algorithm layer (fuzz_graphs.hpp)
-    "gns.invfam",  "gns.scc",   "gns.seq",    "gns.dsu",    "gns.search",
-    "gns.dij",     "gns.flow",  "gns.stcut",  "gns.mcf",    "gns.gcut",
-    "gns.dgcut",   "gns.maxcut", "gns.gh",    "gns.mst",    "gns.match",
-    "gns.blossom", "gns.bic",   "gns.kcore",  "gns.euler",
-    "gns.tr",      "gns.rmas",  "gns.dist",  "gns.meg",
-    "gns.closure", "gns.pcover"};
-static constexpr int KZ_NCOMP =
-    int(sizeof(KZ_NAMES) / sizeof(KZ_NAMES[0]));
+    "gns.invfam", "gns.scc", "gns.seq", "gns.dsu", "gns.search", "gns.dij",
+    "gns.flow", "gns.stcut", "gns.mcf", "gns.gcut", "gns.dgcut", "gns.maxcut",
+    "gns.gh", "gns.mst", "gns.match", "gns.blossom", "gns.bic", "gns.kcore",
+    "gns.euler", "gns.tr", "gns.rmas", "gns.dist", "gns.meg", "gns.closure",
+    "gns.pcover", "gns.rmasp"};
+static constexpr int KZ_NCOMP = int(sizeof(KZ_NAMES) / sizeof(KZ_NAMES[0]));
 
 struct KzStats {
   std::vector<long> checks{}, fails{}; // per component

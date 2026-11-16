@@ -46,7 +46,7 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
     std::printf(
         "  fns: %zu | ssa: %zu instrs, %u phis | opt: %zu | destroyed: %zu\n"
         "  opt: iters %u | folds %u | copies %u | copyprop %u | cse %u | "
-        "canon %u+%u | brs %u | cbr== %u | dead-blk %u | splice %u | "
+        "canon %u+%u | brs %u | cbr== %u | cbr~ %u | dead-blk %u | splice %u | "
         "phi-degen %u | dce %u | hoist %u | INLINED %u | UNROLLED %u | "
         "REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | NOTCOMB %u | "
         "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
@@ -60,7 +60,8 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.folds, (unsigned)os.copies, (unsigned)os.copyprops,
         (unsigned)os.cses, (unsigned)os.canon_swaps, (unsigned)os.canon_cmps,
         (unsigned)os.brs_folded, (unsigned)os.cbr_same,
-        (unsigned)os.blocks_gone, (unsigned)os.splices, (unsigned)os.phi_degens,
+        (unsigned)os.cbr_reconv, (unsigned)os.blocks_gone,
+        (unsigned)os.splices, (unsigned)os.phi_degens,
         (unsigned)os.dce, (unsigned)os.hoisted, (unsigned)os.inlines,
         (unsigned)os.unrolls, (unsigned)os.reassocs, (unsigned)os.reassoc_gone,
         (unsigned)os.lcf_loops, (unsigned)os.lcf_sims, (unsigned)os.lcf_gensims,

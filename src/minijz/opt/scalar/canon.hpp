@@ -65,8 +65,7 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
   // CSE table in canonical order (`7*x` and `x*7` unify)
   auto key = [&](uint32_t v) -> uint64_t {
     return opt_ns::mixed_sort_key(nv, kc, kv,
-                                  (v == NONE) ? opt_ns::none_v
-                                              : (uintlen_t)v);
+                                  (v == NONE) ? opt_ns::none_v : (uintlen_t)v);
   };
   bool changed = false;
   for (uint32_t b = 0; b < fn.nblocks(); ++b)

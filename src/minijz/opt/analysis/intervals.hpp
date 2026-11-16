@@ -410,7 +410,8 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
     }
     // the fact the p->b edge carries: the pred's own comparison holds
     // on its taken arm
-    constexpr void refine_edge(uint32_t p, uint32_t b, std::vector<Iv> &edge) const {
+    constexpr void refine_edge(uint32_t p, uint32_t b,
+                               std::vector<Iv> &edge) const {
       const Instr &term = fn.code[fn.blocks[p].end - 1];
       if (term.k != K::Cbr)
         return;
@@ -431,7 +432,7 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
     // the phi rule: the phi's value is one of its args, per incoming
     // edge (an untouched pred's exit is bottom -- the hull's identity)
     constexpr void phi_join(uint32_t b, std::vector<Iv> &st, const Iv *exits,
-                  uint32_t) const {
+                            uint32_t) const {
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
         const Instr &I = fn.code[i];
         if (I.k != K::Phi)

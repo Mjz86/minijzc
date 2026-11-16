@@ -82,8 +82,8 @@
 
 // a random digraph: valid targets only (the CSR contract), self loops
 // and duplicate slots legal
-static std::vector<std::vector<ulen>> kzg_digraph(std::mt19937_64 &rng,
-                                                  ulen n, ulen deg) {
+static std::vector<std::vector<ulen>> kzg_digraph(std::mt19937_64 &rng, ulen n,
+                                                  ulen deg) {
   std::vector<std::vector<ulen>> rows(n);
   for (ulen u = 0; u < n; ++u) {
     const int k = int(kz_pick(rng, deg + 1));
@@ -118,11 +118,99 @@ static std::vector<std::vector<ulen>> kzg_dag(std::mt19937_64 &rng, ulen n,
   return rows;
 }
 
+// a random REDUCIBLE flow graph, by construction. The recipe keeps
+// the dominators exactly the tree ancestors that receive back arcs:
+//   * a spanning tree out of the root (the root reaches everything),
+//   * a set of MARKED nodes M -- the back-arc targets. A marked
+//     node h keeps h-dominates-everything-in-its-subtree as long as
+//     no arc enters subtree(h) from outside without passing h, so
+//   * back arcs only target marked strict tree ancestors, and
+//   * forward arcs a->b (b a tree descendant of a) only when NO
+//     marked node lies strictly between them -- the arc would
+//     otherwise enter that node's subtree from above and unseat its
+//     domination. Tree and forward arcs both run down the tree, so
+//     stripping the dominator back arcs leaves a DAG: reducible.
+// inject_cross asks for one ancestor-unrelated pair a->b, b->a: the
+// cycle a-b-a then owns no on-cycle dominator (neither can dominate
+// the other without being a tree ancestor), the irreducibility
+// witness. The second return says whether the pair was actually
+// placed (a path-shaped tree may offer no unrelated pair).
+static std::pair<std::vector<std::vector<ulen>>, bool>
+kzg_reducible(std::mt19937_64 &rng, ulen n, bool inject_cross) {
+  std::vector<ulen> par(n, kz_none());
+  for (ulen i = 1; i < n; ++i)
+    par[i] = kz_pick(rng, i);
+  std::vector<char> marked(n, 0);
+  for (ulen i = 0; i < n; ++i)
+    marked[i] = kz_chance(rng, 35) ? 1 : 0;
+  std::vector<std::vector<ulen>> rows(n);
+  for (ulen i = 1; i < n; ++i)
+    rows[par[i]].push_back(i);
+  const auto rand_strict_ancestor = [&](ulen v) noexcept {
+    // a random strict tree ancestor of v (kz_none(): a short hop)
+    if (par[v] == kz_none() || !kz_chance(rng, 60))
+      return kz_none();
+    ulen u = par[v];
+    while (par[u] != kz_none() && kz_chance(rng, 60))
+      u = par[u];
+    return u;
+  };
+  const ulen bck = kz_pick(rng, n + 1);
+  for (ulen k = 0; k < bck && n > 1; ++k) {
+    const ulen v = 1 + kz_pick(rng, n - 1);
+    const ulen h = rand_strict_ancestor(v);
+    if (h != kz_none() && marked[h])
+      rows[v].push_back(h); // back: to a MARKED strict tree ancestor
+  }
+  const ulen fwd = kz_pick(rng, n + 1);
+  for (ulen k = 0; k < fwd && n > 1; ++k) {
+    const ulen v = 1 + kz_pick(rng, n - 1);
+    const ulen a = rand_strict_ancestor(v);
+    if (a == kz_none())
+      continue;
+    // no marked node strictly between a and v (the arc must not
+    // enter any marked subtree from above)
+    bool blocked = false;
+    for (ulen z = par[v]; z != a && z != kz_none(); z = par[z])
+      if (marked[z])
+        blocked = true;
+    if (!blocked)
+      rows[a].push_back(v); // forward: down the tree, no marks crossed
+  }
+  if (kz_chance(rng, 20) && n) { // a self loop or two: always backward
+    for (ulen k = 0, c = 1 + kz_pick(rng, 2); k < c; ++k) {
+      const ulen u = kz_pick(rng, n);
+      rows[u].push_back(u);
+    }
+  }
+  bool witnessed = false;
+  if (inject_cross && n > 2) {
+    for (ulen tries = 0; tries < 12 && !witnessed; ++tries) {
+      const ulen a = 1 + kz_pick(rng, n - 1);
+      const ulen b = 1 + kz_pick(rng, n - 1);
+      if (a == b)
+        continue;
+      auto is_anc = [&](ulen x, ulen y) noexcept { // x ancestor of y?
+        for (ulen z = y; z != kz_none(); z = par[z])
+          if (z == x)
+            return true;
+        return false;
+      };
+      if (is_anc(a, b) || is_anc(b, a))
+        continue;
+      rows[a].push_back(b);
+      rows[b].push_back(a);
+      witnessed = true;
+    }
+  }
+  return {std::move(rows), witnessed};
+}
 struct KzgArc {
   ulen from{}, to{};
 };
 // the arc list in row-major order (the ids make_basic_forest assigns)
-static std::vector<KzgArc> kzg_arcs(const std::vector<std::vector<ulen>> &rows) {
+static std::vector<KzgArc>
+kzg_arcs(const std::vector<std::vector<ulen>> &rows) {
   std::vector<KzgArc> arcs{};
   for (ulen u = 0; u < rows.size(); ++u)
     for (ulen v : rows[u])
@@ -236,10 +324,10 @@ static void kzr_scc_classes(const std::vector<std::vector<ulen>> &succs,
 // the directed simple cycles as node walks, each enumerated once from
 // its smallest node (edge identities are the caller's business: for
 // weighted verdicts pair the walk with specific arcs)
-static void kzr_dfs_cycles_(
-    const std::vector<std::vector<ulen>> &succs, ulen s, ulen cur,
-    std::vector<char> &vis, std::vector<ulen> &walk,
-    std::vector<std::vector<ulen>> &out) {
+static void kzr_dfs_cycles_(const std::vector<std::vector<ulen>> &succs, ulen s,
+                            ulen cur, std::vector<char> &vis,
+                            std::vector<ulen> &walk,
+                            std::vector<std::vector<ulen>> &out) {
   for (ulen v : succs[cur]) {
     if (v >= succs.size())
       continue;
@@ -359,8 +447,7 @@ static void fz_invfam(std::mt19937_64 &rng, KzRec &R) {
   // one member check: rows in the fill order, payloads and the
   // bijection alongside (backward fills land DESCENDING, so the
   // payload at slot j is the reference's slot m-1-j)
-  auto check_member = [&](const char *what,
-                          const gns::treversal_result_t<V> &f,
+  auto check_member = [&](const char *what, const gns::treversal_result_t<V> &f,
                           const std::vector<ulen> *pay,
                           const std::vector<ulen> *bij, const auto &ref,
                           bool forward) {
@@ -395,12 +482,13 @@ static void fz_invfam(std::mt19937_64 &rng, KzRec &R) {
     auto [f0, b0] = gns::map_make_basic_inv_forest_edges_bijection<V>(sq);
     check_member("invfam: square backward plain+bij", f0, nullptr, &b0, ref,
                  false);
-    auto [f1, d1_] = gns::map_make_basic_inv_forest_edges_data<V, ulen>(sq, sqd);
+    auto [f1, d1_] =
+        gns::map_make_basic_inv_forest_edges_data<V, ulen>(sq, sqd);
     check_member("invfam: square backward data", f1, &d1_, nullptr, ref, false);
     auto [f2, o2] =
         gns::map_make_basic_inv_forest_edges_data_bijection<V, ulen>(sq, sqd);
-    check_member("invfam: square backward both", f2, &o2.first, &o2.second,
-                 ref, false);
+    check_member("invfam: square backward both", f2, &o2.first, &o2.second, ref,
+                 false);
     auto fb = gns::make_basic_inv_forest<V>(sq);
     check_member("invfam: square backward plain", fb, nullptr, nullptr, ref,
                  false);
@@ -416,8 +504,8 @@ static void fz_invfam(std::mt19937_64 &rng, KzRec &R) {
     auto [ff3, o3] =
         gns::map_make_basic_inv_forest_edges_data_bijection_forward<V, ulen>(
             sq, sqd);
-    check_member("invfam: square forward both", ff3, &o3.first, &o3.second,
-                 ref, true);
+    check_member("invfam: square forward both", ff3, &o3.first, &o3.second, ref,
+                 true);
     // the square/universe equivalences: same fill order, same answer
     auto ub = gns::make_basic_inv_forest_universe_backward<V>(sq, n);
     check_member("invfam: universe backward == square backward", ub, nullptr,
@@ -460,8 +548,7 @@ static void fz_invfam(std::mt19937_64 &rng, KzRec &R) {
     auto [f4, b4] =
         gns::map_make_basic_inv_forest_edges_bijection_universe_backward<V>(
             rows, uni);
-    check_member("invfam: universe backward bij", f4, nullptr, &b4, ref,
-                 false);
+    check_member("invfam: universe backward bij", f4, nullptr, &b4, ref, false);
     auto [f5, o5] =
         gns::map_make_basic_inv_forest_edges_data_bijection_universe<V, ulen>(
             rows, rwd, uni);
@@ -561,7 +648,8 @@ static void fz_seq(std::mt19937_64 &rng, KzRec &R) {
       eq = waves[u] == wave[u];
     R.ok(eq && wc == wcnt,
          "seq: DAG waves are the Kahn layers (1-based, all nodes)");
-    auto [topo, tc] = gns::calculate_acyclic_graph_topological_sort_components<V>(g);
+    auto [topo, tc] =
+        gns::calculate_acyclic_graph_topological_sort_components<V>(g);
     std::vector<char> seen(n, 0);
     bool perm = topo.size() == n;
     for (ulen i = 0; i < topo.size() && perm; ++i)
@@ -639,9 +727,8 @@ static void fz_seq(std::mt19937_64 &rng, KzRec &R) {
          "seq: the layout size and the wave count match");
     bool eq = seq.size() == n * 2 + nc;
     for (ulen u = 0; u < n && eq; ++u) {
-      const intlen_t want = self_seq[got[u]]
-                                ? -intlen_t(cwave[got[u]])
-                                : intlen_t(cwave[got[u]]);
+      const intlen_t want =
+          self_seq[got[u]] ? -intlen_t(cwave[got[u]]) : intlen_t(cwave[got[u]]);
       eq = seq[u] == want;
     }
     R.ok(eq, "seq: node waves are the comp's wave, negated when cyclic");
@@ -697,8 +784,8 @@ static void fz_dsu(std::mt19937_64 &rng, KzRec &R) {
     const ulen c = kz_pick(rng, n);
     bool roots_agree = true;
     for (ulen i = 0; i < n; ++i)
-      roots_agree = roots_agree &&
-                    ((label[i] == label[c]) == dsu.is_united(i, c));
+      roots_agree =
+          roots_agree && ((label[i] == label[c]) == dsu.is_united(i, c));
     R.ok(roots_agree, "dsu: the whole label state matches the labels");
   }
 }
@@ -835,8 +922,8 @@ static void fz_dij(std::mt19937_64 &rng, KzRec &R) {
   auto want = kzr_simple_path_min(succs, arcs, w, entry);
   auto g = gns::make_basic_forest<V>(succs);
   std::vector<uint32_t> w32(w.begin(), w.end());
-  auto [par, dist] = gns::calculate_shortest_positive_path_distanced<V>(
-      entry, g, w32);
+  auto [par, dist] =
+      gns::calculate_shortest_positive_path_distanced<V>(entry, g, w32);
   bool eq = true;
   for (ulen v = 0; v < n && eq; ++v) {
     const bool unwant = want[v] == 0x7fffffffffffffff;
@@ -1007,8 +1094,7 @@ static void fz_stcut(std::mt19937_64 &rng, KzRec &R) {
   auto g = gns::make_basic_forest<V>(succs);
   auto cut = gns::calculate_st_min_cut<V>(s, t, g, caps);
   R.ok(cut.weight == min_cut, "stcut: the weight is the minimum cut");
-  R.ok(cut.source_side.size() == n && cut.source_side[s] &&
-           !cut.source_side[t],
+  R.ok(cut.source_side.size() == n && cut.source_side[s] && !cut.source_side[t],
        "stcut: the side separates s from t");
   // the crossing arcs are exactly the cut edges, and they carry it all
   std::vector<ulen> want{};
@@ -1344,8 +1430,7 @@ static void fz_gh(std::mt19937_64 &rng, KzRec &R) {
   for (ulen u = 1; u < n && struct_ok; ++u)
     struct_ok = tree.parent[u] < u; // Gusfield's re-parents only lower
   R.ok(struct_ok, "gh: parent[i] < i (the Gusfield shape)");
-  R.ok(gns::gomory_hu_query<V>(tree, 0, 0) == 0,
-       "gh: the self query is zero");
+  R.ok(gns::gomory_hu_query<V>(tree, 0, 0) == 0, "gh: the self query is zero");
   for (ulen u = 0; u < n; ++u)
     for (ulen v = u + 1; v < n; ++v) {
       // the brute force u-v cut: sides containing u, not v
@@ -1406,8 +1491,8 @@ static void fz_mst(std::mt19937_64 &rng, KzRec &R) {
           if (!intree[u])
             continue;
           for (ulen ei : adj[u]) {
-            const ulen o = S.edges[ei].first == u ? S.edges[ei].second
-                                                  : S.edges[ei].first;
+            const ulen o =
+                S.edges[ei].first == u ? S.edges[ei].second : S.edges[ei].first;
             if (intree[o])
               continue;
             if (ew[ei] < best) {
@@ -1435,8 +1520,8 @@ static void fz_mst(std::mt19937_64 &rng, KzRec &R) {
       const ulen u = wl.back();
       wl.pop_back();
       for (ulen ei : adj[u]) {
-        const ulen o = S.edges[ei].first == u ? S.edges[ei].second
-                                              : S.edges[ei].first;
+        const ulen o =
+            S.edges[ei].first == u ? S.edges[ei].second : S.edges[ei].first;
         if (comp[o] == kz_none()) {
           comp[o] = ncomp;
           wl.push_back(o);
@@ -1446,43 +1531,42 @@ static void fz_mst(std::mt19937_64 &rng, KzRec &R) {
     ++ncomp;
   }
   auto g = S.forest();
-  auto check_one = [&](const char *what,
-                       const gns::minimum_spanning_forest_result_t<V,
-                                                                   uint32_t>
-                           &r) {
-    R.ok(r.total == want, what);
-    R.ok(r.edges.size() == n - ncomp,
-         "mst: the forest spans every component");
-    // distinct undirected edges, no self loops, acyclic, weights add up
-    bool ok = true;
-    std::vector<std::pair<ulen, ulen>> pairs{};
-    uint32_t sum = 0;
-    gns::disjoint_set_union_t<V, std::vector<uintlen_t>> dsu{};
-    dsu.parent_then_rank.assign(n, 0);
-    dsu.init(n);
-    for (ulen e : r.edges) {
-      ok = ok && e < S.edge_of_arc.size();
-      if (!ok)
-        break;
-      const ulen ei = S.edge_of_arc[e];
-      const auto [a, b] = S.edges[ei];
-      ok = ok && a != b; // self loops never enter
-      pairs.push_back({a < b ? a : b, a < b ? b : a});
-      sum += ew[ei];
-      dsu.find_and_unite_root(a, b);
-    }
-    std::sort(pairs.begin(), pairs.end());
-    for (ulen i = 1; i < pairs.size() && ok; ++i)
-      ok = pairs[i] != pairs[i - 1]; // each undirected edge once
-    R.ok(ok && sum == r.total, "mst: the edges are distinct and weigh in");
-    ulen joined = 0;
-    for (ulen e : r.edges) {
-      const ulen ei = S.edge_of_arc[e];
-      if (dsu.find_and_unite_root(S.edges[ei].first, S.edges[ei].second))
-        ++joined;
-    }
-    R.ok(joined == 0, "mst: the chosen edges close no cycle");
-  };
+  auto check_one =
+      [&](const char *what,
+          const gns::minimum_spanning_forest_result_t<V, uint32_t> &r) {
+        R.ok(r.total == want, what);
+        R.ok(r.edges.size() == n - ncomp,
+             "mst: the forest spans every component");
+        // distinct undirected edges, no self loops, acyclic, weights add up
+        bool ok = true;
+        std::vector<std::pair<ulen, ulen>> pairs{};
+        uint32_t sum = 0;
+        gns::disjoint_set_union_t<V, std::vector<uintlen_t>> dsu{};
+        dsu.parent_then_rank.assign(n, 0);
+        dsu.init(n);
+        for (ulen e : r.edges) {
+          ok = ok && e < S.edge_of_arc.size();
+          if (!ok)
+            break;
+          const ulen ei = S.edge_of_arc[e];
+          const auto [a, b] = S.edges[ei];
+          ok = ok && a != b; // self loops never enter
+          pairs.push_back({a < b ? a : b, a < b ? b : a});
+          sum += ew[ei];
+          dsu.find_and_unite_root(a, b);
+        }
+        std::sort(pairs.begin(), pairs.end());
+        for (ulen i = 1; i < pairs.size() && ok; ++i)
+          ok = pairs[i] != pairs[i - 1]; // each undirected edge once
+        R.ok(ok && sum == r.total, "mst: the edges are distinct and weigh in");
+        ulen joined = 0;
+        for (ulen e : r.edges) {
+          const ulen ei = S.edge_of_arc[e];
+          if (dsu.find_and_unite_root(S.edges[ei].first, S.edges[ei].second))
+            ++joined;
+        }
+        R.ok(joined == 0, "mst: the chosen edges close no cycle");
+      };
   check_one("mst: kruskal total is the unique minimum",
             gns::calculate_minimum_spanning_forest_kruskal<V>(g, arcw));
   check_one("mst: prim total is the unique minimum",
@@ -1602,10 +1686,10 @@ static void fz_blossom(std::mt19937_64 &rng, KzRec &R) {
 // ---------------------------------------------------------------------------
 // the undirected simple cycles as edge-index walks (each once), the
 // definitional co-cycle classes
-static void kzr_und_cycles_(
-    const std::vector<std::vector<std::pair<ulen, ulen>>> &inc, ulen s,
-    ulen cur, std::vector<char> &vis, std::vector<ulen> &walk,
-    std::vector<std::vector<ulen>> &out) {
+static void
+kzr_und_cycles_(const std::vector<std::vector<std::pair<ulen, ulen>>> &inc,
+                ulen s, ulen cur, std::vector<char> &vis,
+                std::vector<ulen> &walk, std::vector<std::vector<ulen>> &out) {
   // inc[u]: (other endpoint, edge index) -- self loops excluded by the
   // caller; a cycle closes when an edge back to s appears (that edge
   // is part of the cycle -- the walk carries it too)
@@ -1749,8 +1833,8 @@ static void fz_bic(std::mt19937_64 &rng, KzRec &R) {
       if (S.edges[ej].first == S.edges[ej].second)
         continue;
       const bool same_ref = cls[ei] == cls[ej];
-      const bool same_got =
-          bi.bcc_of_edge[a] == bi.bcc_of_edge[b] && bi.bcc_of_edge[a] != kz_none();
+      const bool same_got = bi.bcc_of_edge[a] == bi.bcc_of_edge[b] &&
+                            bi.bcc_of_edge[a] != kz_none();
       eq = same_ref == same_got;
     }
   }
@@ -1888,9 +1972,8 @@ static void fz_euler(std::mt19937_64 &rng, KzRec &R) {
     R.ok(path.ok == ((balanced || (starts == 1 && ends == 1)) && one_piece),
          "euler: the directed path verdict matches the conditions");
     // walk the tours the verdicts promised
-    auto check_tour = [&](const char *what,
-                          const gns::euler_result_t<V> &r, bool close,
-                          ulen end_want) {
+    auto check_tour = [&](const char *what, const gns::euler_result_t<V> &r,
+                          bool close, ulen end_want) {
       if (!r.ok) {
         R.ok(r.edges.empty(), what);
         return;
@@ -1934,8 +2017,8 @@ static void fz_euler(std::mt19937_64 &rng, KzRec &R) {
     for (ulen u = 0; u < n; ++u)
       if (outdeg[u] + 1 == indeg[u])
         end_want = u;
-    check_tour("euler: the directed circuit walks every arc once", circ,
-               true, kz_none());
+    check_tour("euler: the directed circuit walks every arc once", circ, true,
+               kz_none());
     check_tour("euler: the directed path walks every arc once", path, false,
                balanced ? (circ.ok ? circ.first_node : kz_none()) : end_want);
   }
@@ -2095,8 +2178,8 @@ static void fz_euler(std::mt19937_64 &rng, KzRec &R) {
     if (path.ok)
       R.ok(path.first_node == (odd == 2 ? odd_a : canon),
            "euler: the undirected path starts at an odd node");
-    check_tour("euler: the undirected circuit uses each edge once", circ,
-               true, kz_none());
+    check_tour("euler: the undirected circuit uses each edge once", circ, true,
+               kz_none());
     check_tour("euler: the undirected path uses each edge once", path, false,
                end_want);
   }
@@ -2222,7 +2305,7 @@ static ulen kzr_fas_brute_(const std::vector<std::vector<ulen>> &rows,
 }
 
 static void fz_rmas(std::mt19937_64 &rng, KzRec &R) {
-  const ulen n = kz_pick(rng, 8); // 0..7 nodes (the DP is 2^n)
+  const ulen n = kz_pick(rng, 8);      // 0..7 nodes (the DP is 2^n)
   auto succs = kzg_digraph(rng, n, 3); // small: the brute force is 2^m
   auto arcs = kzg_arcs(succs);
   const ulen m = arcs.size();
@@ -2254,8 +2337,8 @@ static void fz_rmas(std::mt19937_64 &rng, KzRec &R) {
       ok = got.order[i] < n &&
            std::count(got.order.begin(), got.order.end(), got.order[i]) == 1;
     for (ulen e = 0; e < m && ok; ++e)
-      if (!std::binary_search(got.removed_arcs.begin(),
-                              got.removed_arcs.end(), e))
+      if (!std::binary_search(got.removed_arcs.begin(), got.removed_arcs.end(),
+                              e))
         ok = pos[arcs[e].from] < pos[arcs[e].to];
     R.ok(ok, "rmas: the order is the survivors' topological order");
   }
@@ -2267,8 +2350,8 @@ static void fz_rmas(std::mt19937_64 &rng, KzRec &R) {
     R.ok(ulen(got.total_weight) == tw, "rmas: the total weight is the sum");
     std::vector<std::vector<ulen>> kept(n);
     for (ulen e = 0; e < m; ++e)
-      if (!std::binary_search(got.removed_arcs.begin(),
-                              got.removed_arcs.end(), e))
+      if (!std::binary_search(got.removed_arcs.begin(), got.removed_arcs.end(),
+                              e))
         kept[arcs[e].from].push_back(arcs[e].to);
     R.ok(kzr_is_dag_(kept), "rmas: the removal leaves a DAG");
   }
@@ -2285,6 +2368,93 @@ static void fz_rmas(std::mt19937_64 &rng, KzRec &R) {
     for (ulen u = 0; u < n && eq; ++u)
       eq = bool(cyc[u]) == bool(reach1[u][u]);
     R.ok(eq, "rmas: the cycle nodes are the >=1-arc diagonal");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 26. gns.rmasp: the minimum feedback arc set of a REDUCIBLE flow
+// graph -- the polynomial loop-cut walk (outermost first, the
+// obligation discounts), held against the exact 2^V sweep: same
+// weight, same certificates, and the irreducible witness reporting
+// itself empty.
+// ---------------------------------------------------------------------------
+static void fz_rmasp(std::mt19937_64 &rng, KzRec &R) {
+  const ulen n = 1 + kz_pick(rng, 7); // 1..8 nodes: the sweep rides along
+  auto [succs, cross] = kzg_reducible(rng, n, kz_chance(rng, 25));
+  auto arcs = kzg_arcs(succs);
+  const ulen m = arcs.size();
+  std::vector<ulen> w(m);
+  for (auto &x : w)
+    x = kz_pick(rng, 13); // zero weights live here too
+  auto g = gns::make_basic_forest<V>(succs);
+  auto got = gns::calculate_minimum_feedback_arc_set_reducible<V>(0, g, w);
+  if (cross) {
+    // the injected sibling pair owns a cycle with no on-cycle
+    // dominator: the contract check must refuse the input
+    R.ok(!got.reducible && got.removed_arcs.empty() && got.order.empty() &&
+             ulen(got.total_weight) == 0,
+         "rmasp: the irreducible witness reports itself, empty");
+    return;
+  }
+  R.ok(got.reducible, "rmasp: the structured graph passes the contract");
+  // the removed set: a strictly ascending arc subset; self loops gone
+  {
+    bool ok = true;
+    for (ulen i = 0; i < got.removed_arcs.size() && ok; ++i)
+      ok = got.removed_arcs[i] < m &&
+           (i == 0 || got.removed_arcs[i] > got.removed_arcs[i - 1]);
+    R.ok(ok, "rmasp: the removed set is a sorted arc subset");
+    ok = true;
+    for (ulen e = 0; e < m && ok; ++e)
+      if (arcs[e].from == arcs[e].to)
+        ok = std::binary_search(got.removed_arcs.begin(),
+                                got.removed_arcs.end(), e);
+    R.ok(ok, "rmasp: the self loops are all removed");
+  }
+  // the order: a permutation, topological over the survivors
+  {
+    std::vector<ulen> pos(n, kz_none());
+    bool ok = got.order.size() == n;
+    for (ulen i = 0; i < got.order.size() && ok; ++i) {
+      ok = got.order[i] < n && pos[got.order[i]] == kz_none();
+      if (ok)
+        pos[got.order[i]] = i;
+    }
+    R.ok(ok, "rmasp: the order is a permutation");
+    for (ulen e = 0; e < m && ok; ++e)
+      if (!std::binary_search(got.removed_arcs.begin(), got.removed_arcs.end(),
+                              e))
+        ok = pos[arcs[e].from] < pos[arcs[e].to];
+    R.ok(ok, "rmasp: the order is the survivors' topological order");
+  }
+  // the weight is the sum
+  {
+    ulen tw = 0;
+    for (ulen e : got.removed_arcs)
+      tw += w[e];
+    R.ok(ulen(got.total_weight) == tw, "rmasp: the total weight is the sum");
+  }
+  // THE WITNESS: the packing is a lower bound on every feedback arc
+  // set (the min-max theorem); when it meets the committed weight it
+  // certifies the minimum outright, and the exactness itself is the
+  // sweep differential below (the packing is a greedy innermost-first
+  // witness -- a bound, not always the tightest one)
+  R.ok(ulen(got.packing_weight) <= ulen(got.total_weight),
+       "rmasp: the packing bounds the answer from below");
+  // THE DIFFERENTIAL: the exact sweep's minimum, on every seed (the
+  // sizes keep 2^V the honest reference)
+  {
+    auto exact = gns::calculate_minimum_feedback_arc_set<V>(g, w);
+    R.ok(ulen(got.total_weight) == ulen(exact.total_weight),
+         "rmasp: the polynomial weight is the exact minimum");
+    // and the sweep's own answer stays a valid FAS here too (both
+    // oracles, each spelling the other's contract)
+    std::vector<std::vector<ulen>> kept(n);
+    for (ulen e = 0; e < m; ++e)
+      if (!std::binary_search(got.removed_arcs.begin(), got.removed_arcs.end(),
+                              e))
+        kept[arcs[e].from].push_back(arcs[e].to);
+    R.ok(kzr_is_dag_(kept), "rmasp: the removal leaves a DAG");
   }
 }
 
@@ -2347,15 +2517,13 @@ static void fz_meg(std::mt19937_64 &rng, KzRec &R) {
           continue;
         bool first = true;
         for (ulen f = 0; f < e && first; ++f)
-          first = !(arcs[f].from == arcs[e].from &&
-                    arcs[f].to == arcs[e].to);
+          first = !(arcs[f].from == arcs[e].from && arcs[f].to == arcs[e].to);
         if (first)
           want.push_back(e);
       }
       std::sort(want.begin(), want.end());
       R.ok(keep == want, "meg: on a DAG the answer is the exact TR");
-      R.ok(got.approx_scc_arcs == 0,
-           "meg: no approximation arcs on a DAG");
+      R.ok(got.approx_scc_arcs == 0, "meg: no approximation arcs on a DAG");
     }
   }
   // ---- the inter-component part is the condensation's TR size; the
@@ -2479,8 +2647,8 @@ static void fz_dist(std::mt19937_64 &rng, KzRec &R) {
   }
   // ---- Bellman-Ford
   {
-    auto bf = gns::calculate_shortest_path_maybe_negative<V>(entry,
-                                                             gns::make_basic_forest<V>(succs), w);
+    auto bf = gns::calculate_shortest_path_maybe_negative<V>(
+        entry, gns::make_basic_forest<V>(succs), w);
     R.ok(bf.has_negative_cycle == neg_reached,
          "dist: the negative-cycle verdict matches the enumeration");
     bool eq = bf.dist.size() == n;
@@ -2585,7 +2753,7 @@ static void fz_maxclosure(std::mt19937_64 &rng, KzRec &R) {
   std::vector<int64_t> w(n);
   for (auto &x : w)
     x = int64_t(kz_pick(rng, 17)) - 8; // signed: the lens needs both
-  int64_t best = 0; // the empty set is closed
+  int64_t best = 0;                    // the empty set is closed
   for (ulen bits = 0; bits < (ulen(1) << n); ++bits) {
     bool closed = true;
     for (ulen u = 0; u < n && closed; ++u)
@@ -2634,8 +2802,7 @@ static void fz_pathcover(std::mt19937_64 &rng, KzRec &R) {
   // take an unused head); the answer is the fullest reachable state.
   // Coded from the definition, never from the library's Hopcroft-Karp
   const ulen nmask = ulen(1) << n;
-  std::vector<std::vector<char>> reach(n + 1,
-                                       std::vector<char>(nmask, 0));
+  std::vector<std::vector<char>> reach(n + 1, std::vector<char>(nmask, 0));
   reach[0][0] = 1;
   for (ulen l = 0; l < n; ++l)
     for (ulen mask = 0; mask < nmask; ++mask)
@@ -2680,7 +2847,3 @@ static void fz_pathcover(std::mt19937_64 &rng, KzRec &R) {
   R.ok(ok && total == n && pc.path_count == pc.paths.size(),
        "pcover: disjoint, covering, real arcs, count agrees");
 }
-
-
-
-

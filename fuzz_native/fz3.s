@@ -128,9 +128,6 @@ main:
   # 8:10
   call mjz_input
   movq %rax, %rbx
-  testq %rbx, %rbx
-  jne .Lb97
-.Lb97:
   # 8:1
   movq $0, %rsi
   leaq .Lfmt(%rip), %rdi
@@ -140,15 +137,15 @@ main:
   call mjz_input
   movq %rax, %rbx
   testq %rbx, %rbx
-  je .Lb100
+  je .Lb98
   # 9:24
   movq $0, %rdi
   call mjz_len
   movq %rax, %rbx
   # 9:13
   testq %rbx, %rbx
-  je .Lb100
-.Lb101:
+  je .Lb98
+.Lb99:
   # 15:1
   movq $11, %rsi
   leaq .Lfmt(%rip), %rdi
@@ -185,25 +182,7 @@ main:
   # 37:6
   testq %r12, %r12
   je .Lb73
-  # 38:13
-  movq %rbx, %rdi
-  call mjz_len
-  movq %rax, %r13
-  # 38:23
-  movq %rbx, %rdi
-  call mjz_len
-  movq %rax, %r12
-  # 38:13
-  movq %r13, %rax
-  movq %r12, %rcx
-  cmpq %rcx, %rax
-  setl %dl
-  movzbq %dl, %r12
-  # 38:11
-  cmpq $1, %r12
-  jl .Lb83
-.Lb83:
-.Lb77:
+.Lb74:
   # 41:33
   movq %rbx, %rdi
   movq $1, %rsi
@@ -289,10 +268,10 @@ main:
   call mjz_store
   xorl %edi, %edi
   call exit
-.Lb100:
-  jmp .Lb101
+.Lb98:
+  jmp .Lb99
 .Lb73:
-  jmp .Lb77
+  jmp .Lb74
 .Lb87:
   jmp .Lb88
 mjz_trap:

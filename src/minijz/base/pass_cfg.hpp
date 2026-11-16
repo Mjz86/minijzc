@@ -50,7 +50,8 @@ struct PassCfg {
   bool regalloc{true};   // C/bytecode register allocation (coloring)
   // tier 0
   bool p_fold{true}, p_copyprop{true}, p_canon{true}, p_cse{true},
-      p_unreach{true}, p_splice{true}, p_dce{true}, p_sccp{true};
+      p_unreach{true}, p_splice{true}, p_dce{true}, p_sccp{true},
+      p_breq{true}; // tier 0: reconverging-transparent-arm Cbr -> Br
   bool p_gvn{true}; // tier 0+: value numbering (consts+phi+bin unification)
   // tier 1
   bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
@@ -91,7 +92,7 @@ struct PassCfg {
     level = lv;
     bool t0 = lv >= 1, t1 = lv >= 2, t2 = lv >= 3;
     p_fold = p_copyprop = p_canon = p_cse = p_unreach = p_splice = p_dce =
-        p_sccp = p_gvn = t0;
+        p_sccp = p_gvn = p_breq = t0;
     p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = p_ldelim =
         p_jthread = t1;
     p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv =
@@ -110,14 +111,14 @@ struct PassCfg {
 // (ported from the Branchedmain monolith: fuzz random pass configs need a
 // numeric apply + a description; the CLI keeps its string-based
 // set_named_pass, which covers the same set plus 'inline'.)
-inline constexpr uint32_t PASS_TOGGLE_COUNT = 33;
+inline constexpr uint32_t PASS_TOGGLE_COUNT = 34;
 inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
     "fold",   "copyprop", "canon",     "cse",      "unreach",  "splice",
     "dce",    "mem2reg",  "trapelim",  "licm",     "divmagic", "reassoc",
     "unroll", "lcf",      "constcall", "scctco",   "tailrec",  "cdfold",
     "ifconv", "inline",   "sccp",      "ldelim",   "callcse",  "deadargs",
     "fnspec", "icf",      "jthread",   "argpromo", "gvn",      "unswitch",
-    "lsimp",  "taildup",  "rotate"};
+    "lsimp",  "taildup",  "rotate",   "breq"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
   case 0:
@@ -219,6 +220,9 @@ constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   case 32:
     p.p_rotate = on;
     return true;
+  case 33:
+    p.p_breq = on;
+    return true;
   default:
     return false;
   }
@@ -236,7 +240,7 @@ static std::string describe_cfg(const PassCfg &p) {
       p.p_scctco,   p.p_tailrec,  p.p_cdfold,   p.p_ifconv,   p.do_inline,
       p.p_sccp,     p.p_ldelim,   p.p_callcse,  p.p_deadargs, p.p_fnspec,
       p.p_icf,      p.p_jthread,  p.p_argpromo, p.p_gvn,      p.p_unswitch,
-      p.p_lsimp,    p.p_taildup,  p.p_rotate};
+      p.p_lsimp,    p.p_taildup,  p.p_rotate,   p.p_breq};
   for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
     if (!states[i]) {
       if (!off.empty())
@@ -263,6 +267,7 @@ struct OptStats {
   uint32_t cses{};        // recomputations replaced by dominating defs
   uint32_t splices{};     // single-pred/succ block pairs merged
   uint32_t cbr_same{};    // Cbr with identical arms turned into Br
+  uint32_t cbr_reconv{};  // Cbr with reconverging transparent arms -> Br
   uint32_t phi_degens{}; // phis reduced to Copy/Const (dead pred / single pred)
   uint32_t canon_swaps{}; // commutative ops put in canonical operand order
   uint32_t canon_cmps{};  // >/>= comparisons rewritten to the </<= direction
