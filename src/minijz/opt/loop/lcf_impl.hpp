@@ -29,12 +29,14 @@
 // kc/kv from the LAST def (lcf requires ndefs==1) and carries no
 // uses/ndefs tables; loop_shape_of requires exactly ONE internal pred
 // (lcf tolerates several back-edges, using the last as the latch) and
-// derives no exit polarity. lcf keeps its own scans on purpose.
+// derives no exit polarity. lcf keeps its own POLICY gates (the counts
+// tests, the arm polarity) over the shared shape kernels.
 
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp" // the shape kernels (header preds, exits)
 #include "../linear/linform.hpp"
 #include "lcf_rt.hpp"     // LcfEvo + LcfRtIn + lcf_rt_fold
 #include "lcf_sim.hpp"    // LcfSimIn + lcf_sim_fold + the budgets
@@ -184,20 +186,17 @@ constexpr std::vector<char> lcf_inloop(const An &A, const LcfScan &S,
   return inL;
 }
 
+// the pred sweep is the GENERIC KERNEL (opt_ns::
+// calculate_header_preds); several back-edges are tolerated (the
+// LAST is the latch, as ever), the exactly-one-outside policy is
+// the pass's.
 constexpr bool lcf_unique_entry(Fn &fn, LcfLoop &L) {
-  uint32_t pre = NONE, latch = NONE, outside = 0;
-  for (uint32_t p : fn.preds[L.h]) {
-    if (L.inL[p])
-      latch = p; // several back-edges: the LAST is the latch (as ever)
-    else {
-      pre = p;
-      ++outside;
-    }
-  }
-  if (outside != 1 || pre == NONE || latch == NONE)
+  const opt_ns::header_preds_t hp =
+      opt_ns::calculate_header_preds(fn.preds[L.h], L.inL);
+  if (hp.n_out != 1 || hp.n_in == 0)
     return false;
-  L.pre = pre;
-  L.latch = latch;
+  L.pre = uint32_t(hp.pre);
+  L.latch = uint32_t(hp.latch);
   return true;
 }
 
@@ -215,30 +214,35 @@ constexpr bool lcf_loop_edges(Fn &fn, const An &A, const LcfScan &S,
 }
 
 // ---- shape phase 2: the unique exit (leaving ONLY from the header) -------
-constexpr bool lcf_block_exit_ok(Fn &fn, const LcfLoop &L, uint32_t b,
-                                 uint32_t &X) {
-  for (uint32_t s : {fn.succ0(b), fn.succ1(b)}) {
-    if (s == NONE)
-      continue;
-    if (!L.inL[s]) {
-      if (b != L.h)
-        return false; // an inner exit edge: the loop is not foldable
-      if (X == NONE)
-        X = s;
-      else if (X != s)
-        return false; // two different exits
-    }
-  }
-  return true;
-}
-
+// the edge sweep is the GENERIC KERNEL (opt_ns::collect_exit_edges:
+// every in-loop -> outside edge, nothing skipped, nothing
+// forbidden); the POLICY -- exits may leave ONLY from the header,
+// onto ONE consistent X -- is the pass's table read. The kernel's
+// degeneracy rule rejects exactly the both-arms-out headers
+// lcf_arms refuses a phase later, so the gate sequence is
+// unchanged.
 constexpr bool lcf_single_exit(Fn &fn, const LcfScan &S, LcfLoop &L) {
+  std::vector<std::vector<uintlen_t>> rows(S.nb);
+  for (uint32_t b = 0; b < S.nb; ++b) {
+    if (fn.succ0(b) != NONE)
+      rows[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      rows[b].push_back(fn.succ1(b));
+  }
+  std::vector<opt_ns::exit_edge_t> ex{};
+  if (!opt_ns::collect_exit_edges(rows, L.inL, opt_ns::none_v, opt_ns::none_v,
+                                  opt_ns::none_v, opt_ns::none_v, ex))
+    return false; // an inner both-arms-out cbr: not foldable
   uint32_t X = NONE;
-  bool bad = false;
-  for (uint32_t b = 0; b < S.nb && !bad; ++b)
-    if (L.inL[b])
-      bad = !lcf_block_exit_ok(fn, L, b, X);
-  if (bad || X == NONE)
+  for (const opt_ns::exit_edge_t &e : ex) {
+    if (e.from != L.h)
+      return false; // an inner exit edge: the loop is not foldable
+    if (X == NONE)
+      X = uint32_t(e.to);
+    else if (X != e.to)
+      return false; // two different exits
+  }
+  if (X == NONE)
     return false;
   L.X = X;
   return true;

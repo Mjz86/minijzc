@@ -122,17 +122,14 @@ constexpr CompShape compound_shape_of(const Fn &fn, const An &A,
   (void)A;
   const uint32_t nb = fn.nblocks(), nv = S.nv;
   CompShape cs{};
-  uint32_t outside = 0, inside = 0;
-  for (uint32_t p : fn.preds[h]) {
-    if (inL[p]) {
-      cs.latch = p;
-      ++inside;
-    } else {
-      cs.pre = p;
-      ++outside;
-    }
-  }
-  if (inside != 1 || outside != 1 || cs.pre == NONE)
+  // the pred sweep is the GENERIC KERNEL (opt_ns::
+  // calculate_header_preds); the compound shape needs the canonical
+  // counts (one latch, one preheader) -- policy, not the sweep.
+  const opt_ns::header_preds_t hp =
+      opt_ns::calculate_header_preds(fn.preds[h], inL);
+  cs.latch = uint32_t(hp.latch);
+  cs.pre = uint32_t(hp.pre);
+  if (hp.n_in != 1 || hp.n_out != 1)
     return cs;
   if (fn.blocks[h].begin == fn.blocks[h].end)
     return cs;

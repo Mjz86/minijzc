@@ -16,6 +16,7 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp" // the shape kernels (header preds)
 #include "../linear/linform.hpp"
 
 // ============================================================================
@@ -260,20 +261,16 @@ constexpr void cd_membership(const Fn &fn, const An &A, uint32_t h,
 // (multiple latches = multi-site self) keeps the loop. (The latch ends
 // with `br h` when a merge chain exists, or with the budget check
 // `cbr ? T : h` when the site block IS the latch; the exit classification
-// validates the trap edge either way.)
+// validates the trap edge either way.) The sweep is the GENERIC KERNEL
+// (opt_ns::calculate_header_preds); the strict counts are the pass's.
 constexpr bool cd_loop_edges(const Fn &fn, CdShape &S) {
-  for (uint32_t p : fn.preds[S.h]) {
-    if (S.inL[p]) {
-      if (S.L != NONE)
-        return false; // multiple latches (multi-site self)
-      S.L = p;
-    } else {
-      if (S.pre != NONE)
-        return false;
-      S.pre = p;
-    }
-  }
-  return S.pre != NONE && S.L != NONE;
+  const opt_ns::header_preds_t hp =
+      opt_ns::calculate_header_preds(fn.preds[S.h], S.inL);
+  if (hp.n_in != 1 || hp.n_out != 1)
+    return false; // multiple latches (multi-site self) / no preheader
+  S.pre = uint32_t(hp.pre);
+  S.L = uint32_t(hp.latch);
+  return true;
 }
 // the header phis (phis-first invariant: they lead the block), each with
 // its entry (preheader) and latch argument; nP + bH at least

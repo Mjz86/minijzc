@@ -102,7 +102,8 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
-#include "loop_shape.hpp" // HPhi (the shared header-phi record)
+#include "../opt_generic.hpp" // the shape kernels (header preds, exits)
+#include "loop_shape.hpp"     // HPhi (the shared header-phi record)
 
 // ---- the pass-wide scan (built once per opt_unroll call) ------------------
 struct UnrScan {
@@ -185,6 +186,8 @@ struct UnrLoop {
 
 // membership flags + preheader/latch. Several in-loop preds are
 // tolerated (the LAST is the latch); outside must be exactly one.
+// The pred sweep itself is the GENERIC KERNEL (opt_ns::
+// calculate_header_preds); the counts policy is the pass's.
 constexpr bool unr_loop_edges(Fn &fn, const An &A, UnrScan &S, uint32_t h,
                               UnrLoop &L) {
   auto row = A.loops.range()[h];
@@ -194,20 +197,13 @@ constexpr bool unr_loop_edges(Fn &fn, const An &A, UnrScan &S, uint32_t h,
   for (ulen x : row)
     L.inL[(uint32_t)x] = 1;
   L.inL[h] = 1;
-  uint32_t pre = NONE, latch = NONE, outside = 0;
-  for (uint32_t p : fn.preds[h]) {
-    if (L.inL[p])
-      latch = p;
-    else {
-      pre = p;
-      ++outside;
-    }
-  }
-  if (outside != 1 || pre == NONE || latch == NONE)
+  const opt_ns::header_preds_t hp =
+      opt_ns::calculate_header_preds(fn.preds[h], L.inL);
+  if (hp.n_out != 1 || hp.n_in == 0)
     return false; // no unique preheader, or no back edge
   L.h = h;
-  L.pre = pre;
-  L.latch = latch;
+  L.pre = uint32_t(hp.pre);
+  L.latch = uint32_t(hp.latch);
   return true;
 }
 
@@ -221,31 +217,36 @@ constexpr bool unr_header_term(Fn &fn, UnrLoop &L) {
 
 // the ONLY exit edge is the header's: every in-loop block's outside
 // successor must be the header's own edge to one consistent X (a
-// `break` anywhere else makes the loop not unrollable).
+// `break` anywhere else makes the loop not unrollable). The edge
+// sweep is the GENERIC KERNEL (opt_ns::collect_exit_edges: every
+// in-loop -> outside edge, nothing skipped, nothing forbidden);
+// the only-from-the-header / one-X policy is the pass's table
+// read. The kernel's degeneracy rule (all of a block's arms on ONE
+// outside target) rejects exactly the both-arms-out headers
+// unr_arms refuses a phase later, so the gate sequence is
+// unchanged.
 constexpr bool unr_single_exit(Fn &fn, UnrScan &S, UnrLoop &L) {
-  bool bad = false;
-  uint32_t X = NONE;
-  for (uint32_t b = 0; b < S.nb && !bad; ++b) {
-    if (!L.inL[b])
-      continue;
-    for (uint32_t s : {fn.succ0(b), fn.succ1(b)}) {
-      if (s == NONE)
-        continue;
-      if (!L.inL[s]) {
-        if (b != L.h) {
-          bad = true; // a break: not unrollable
-          break;
-        }
-        if (X == NONE)
-          X = s; // the header's exit target
-        else if (X != s) {
-          bad = true; // two different exits from the header
-          break;
-        }
-      }
-    }
+  std::vector<std::vector<uintlen_t>> rows(S.nb);
+  for (uint32_t b = 0; b < S.nb; ++b) {
+    if (fn.succ0(b) != NONE)
+      rows[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      rows[b].push_back(fn.succ1(b));
   }
-  if (bad || X == NONE)
+  std::vector<opt_ns::exit_edge_t> ex{};
+  if (!opt_ns::collect_exit_edges(rows, L.inL, opt_ns::none_v, opt_ns::none_v,
+                                  opt_ns::none_v, opt_ns::none_v, ex))
+    return false; // a both-arms-out cbr: not unrollable
+  uint32_t X = NONE;
+  for (const opt_ns::exit_edge_t &e : ex) {
+    if (e.from != L.h)
+      return false; // a break: not unrollable
+    if (X == NONE)
+      X = uint32_t(e.to); // the header's exit target
+    else if (X != e.to)
+      return false; // two different exits from the header
+  }
+  if (X == NONE)
     return false;
   L.X = X;
   return true;
