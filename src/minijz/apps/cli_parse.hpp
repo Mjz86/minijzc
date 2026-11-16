@@ -47,6 +47,9 @@ struct Cli {
   long fuzz_jobs{0};         // --fuzz-jobs=N: parallel fuzz workers
                              // (0 = auto: selftest serial, else cores)
   bool fuzz_random{false};   // --fuzz-cfg=random: random pass configs
+  long fuzz_kernels{0};        // --fuzz-kernels[=N]: component fuzzer
+  long fuzz_kernels_from{1};   // --fuzz-kernels-from=S (own seed space)
+  std::string fuzz_kernel_filter{}; // --fuzz-kernel=NAME (substring)
   std::string shrink_file{}; // --shrink=FILE: delta-debug a failing program
   bool demo{false}, selftest{false}, help{false};
   bool mjz_fuzz_dumps{false};
@@ -83,6 +86,19 @@ static void usage() {
       "                    watchdog names the in-flight seeds if a chunk\n"
       "                    stalls, so a pathological seed is identifiable\n"
       "                    instead of looking like a hang\n"
+      "  --fuzz-kernels[=N] component fuzz: every generic kernel (graph_ns\n"
+      "                    dominators/frontiers/placements, ssa_ns, opt_ns,\n"
+      "                    and the graph library's algorithms -- the inverse\n"
+      "                    family, SCC/topo, BFS/DFS/Dijkstra/A*, flow/cuts,\n"
+      "                    MST/matching, biconnectivity/Euler,\n"
+      "                    minimum-arc-set/distances)\n"
+      "                    on N random inputs vs independent references\n"
+      "                    (default 1000). Seeds are a SEPARATE space from\n"
+      "                    --fuzz: --fuzz-kernels-from=S, parallel with\n"
+      "                    --fuzz-jobs=N; --fuzz-kernel=NAME runs one\n"
+      "                    component (substring, e.g. ssa.rename); repro a\n"
+      "                    failure with --fuzz-kernels=1 --fuzz-kernels-\n"
+      "                    from=<seed> --fuzz-kernel=<name>\n"
       "  --shrink=FILE    delta-debug a failing program: greedily remove\n"
       "                    lines while the differential (all runners + native\n"
       "                    parity) still fails; writes FILE.small.mjz. Pair\n"
@@ -232,6 +248,16 @@ static bool parse_cli(int argc, char **argv, Cli &C) {
       C.fuzz_native = atol(v);
     else if (a == "--fuzz-cfg=random" || a == "--fuzz-random")
       C.fuzz_random = true;
+    else if (a == "--fuzz-kernels")
+      C.fuzz_kernels = 1000;
+    else if (const char *v = val("--fuzz-kernels="))
+      C.fuzz_kernels = atol(v);
+    else if (const char *v = val("--fuzz-kernels-from=")) {
+      C.fuzz_kernels_from = atol(v);
+      if (C.fuzz_kernels_from < 1)
+        C.fuzz_kernels_from = 1;
+    } else if (const char *v = val("--fuzz-kernel="))
+      C.fuzz_kernel_filter = v;
     else if (const char *v = val("--shrink="))
       C.shrink_file = v;
     else if (a == "--run")

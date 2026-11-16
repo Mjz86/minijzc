@@ -146,13 +146,14 @@ endif()
 # the compiler binary
 # ---------------------------------------------------------------------------
 if(MINIJZ_MULTI_CPP)
-  # 9 real TUs (vs the historical 8 header-only slices that each recompiled
-  # the world): the heavy pipeline code is compiled ONCE per binary — tu/main
-  # only parses options (light), everything else links through declarations.
+  # 10 real TUs (vs the historical 8 header-only slices that each
+  # recompiled the world): the heavy pipeline code is compiled ONCE per
+  # binary — tu/main only parses options (light), everything else links
+  # through declarations.
   add_executable(minijz
     src/tu/main.cpp src/tu/cli_app.cpp src/tu/debugger.cpp src/tu/demo.cpp
-    src/tu/shrink.cpp src/tu/cxtours.cpp src/tu/fuzz.cpp src/tu/prog.cpp
-    src/tu/backends.cpp)
+    src/tu/shrink.cpp src/tu/cxtours.cpp src/tu/fuzz.cpp
+    src/tu/fuzz_kernels.cpp src/tu/prog.cpp src/tu/backends.cpp)
   target_compile_definitions(minijz PRIVATE MJZ_MULTI_CPP)
 else()
   add_executable(minijz main.cpp)
@@ -247,6 +248,14 @@ endwhile()
 add_test(NAME fuzz_native_gate
   COMMAND minijz --fuzz=60 --fuzz-from=9001 --fuzz-native=8)
 set_tests_properties(fuzz_native_gate PROPERTIES TIMEOUT 900 LABELS fuzz)
+
+# the component fuzzer as its own gate: every generic kernel vs its
+# independent reference on a wide seed window (own seed space; parallel
+# with the same FUZZ_JOBS knob as the program fuzzer)
+add_test(NAME kernel_fuzz
+  COMMAND minijz --fuzz-kernels=2500 --fuzz-kernels-from=1
+          --fuzz-jobs=${FUZZ_JOBS})
+set_tests_properties(kernel_fuzz PROPERTIES TIMEOUT 900 LABELS fuzz)
 
 # selftest = demos + curated cx tours + fuzz(200)
 add_test(NAME selftest COMMAND minijz --selftest)

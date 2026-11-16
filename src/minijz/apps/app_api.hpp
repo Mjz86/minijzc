@@ -24,6 +24,9 @@ void run_fuzz(long n, const std::string &cc, long fuzz_native,
               const std::string &out_dir, long from, bool random_configs,
               bool mjz_fuzz_dumps, long jobs);
 long default_fuzz_jobs(bool selftest);
+// the component fuzzer (tu/fuzz_kernels.cpp): every generic kernel vs
+// independent references (seeds own their own space, --fuzz-kernels-from)
+void run_kernel_fuzz(long n, long from, long jobs, const std::string &filter);
 // the interactive debugger (tu/debugger.cpp)
 int run_debugger(const Cli &C, const std::string &src);
 // per-file compile report (defined with the CLI run layer)

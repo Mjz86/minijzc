@@ -11,8 +11,8 @@
 #include "../../minijz/base/native_run.hpp"
 
 int minijz_app_main(Cli C) {
-  bool have_action =
-      C.demo || C.selftest || C.fuzz > 0 || !C.shrink_file.empty();
+  bool have_action = C.demo || C.selftest || C.fuzz > 0 ||
+                     C.fuzz_kernels > 0 || !C.shrink_file.empty();
   std::string src{};
   std::string stem = "stdin";
   bool src_from_stdin = false; // stdin already consumed as the PROGRAM
@@ -74,6 +74,14 @@ int minijz_app_main(Cli C) {
     long jobs = C.fuzz_jobs > 0 ? C.fuzz_jobs : default_fuzz_jobs(C.selftest);
     run_fuzz(C.selftest ? 200 : C.fuzz, C.cc, C.fuzz_native, C.out_dir,
              C.fuzz_from, C.fuzz_random, C.mjz_fuzz_dumps, jobs);
+  }
+  // the component fuzzer: every generic kernel vs its reference, with
+  // its own seed space (no fixture coupling to the program fuzzer)
+  if (C.fuzz_kernels > 0 || C.selftest) {
+    long kjobs = C.fuzz_jobs > 0 ? C.fuzz_jobs
+                                 : (C.selftest ? 1 : default_fuzz_jobs(false));
+    run_kernel_fuzz(C.selftest ? 400 : C.fuzz_kernels, C.fuzz_kernels_from,
+                    kjobs, C.fuzz_kernel_filter);
   }
   if (have_action) {
     std::printf("\ntotal failures: %d (of %d checks)\n", g_fails, g_checks);

@@ -148,13 +148,279 @@ interference → `color_chordal_graph` (greedy in MCS order) → the
 spill slots for the rest. The optimality clause is what lets the
 register-audit table claim exactness.
 
-### 1.8 Reachability — `graph/reach.hpp`
-Textbook DFS/BFS flood, stated over CSR rows; `calculate_reachable_
-mask` is the kernel behind `opt/unreach.hpp` (see 3.6).
+### 1.8 Reachability — `graph/reach.hpp` (the structured engine) + `opt/cfg.hpp` (the plain mask)
+Textbook DFS/BFS flood, stated over CSR rows: `opt_ns::calculate_
+reachable_mask` (the kernel behind `opt/unreach.hpp`, see 3.6) is the
+plain form; `graph/reach.hpp` is the STRUCTURED engine —
+`reachability_checker_t` answers `may_reach(u, v)` / `can_reach(u, v)`
+queries with the compressed bitset rows and the tighten-forward
+incremental underpinning. Fuzzed as `opt.reach` and `gns.search`.
+
+### 1.9 The inverse universe family — `graph/csr.hpp`
+**How many ways are there to inverse a relation? SIXTEEN**, along
+three independent axes, and `graph/csr.hpp` ships every one:
+
+* the UNIVERSE axis — SQUARE (rows and entries share one index
+  space, node→node graphs) vs UNIVERSE (a bipartite relation; the
+  output universe is the ENTRY space, passed explicitly — phi
+  placement is variable rows over block entries);
+* the FILL ORDER axis — BACKWARD (the classic CSR transpose idiom:
+  counts become end offsets, the fill pre-decrements, entries land in
+  DESCENDING source-row order) vs FORWARD (begin offsets, cursors
+  walk forward, ASCENDING source-row order);
+* the PAYLOAD axis — PLAIN (just the transposed forest), DATA (each
+  entry's payload transposed alongside), BIJECTION (each target slot
+  records the linear index of the source entry it came from), BOTH.
+
+2 × 2 × 4 = 16 entry points (`make_basic_inv_forest`, the `map_..._
+edges_data` / `_bijection` / `_data_bijection` shapes, the `_forward`
+siblings, and the `_universe` variants). Two related-but-different
+inverses are deliberately NOT members: `range_bijective_inv`
+(`graph/base.hpp`) inverts a PERMUTATION of an index space, and
+`basic_forest_t::inv_transform*` re-expresses a forest under a
+permutation of its own nodes — both assume bijectivity, which a
+relation's transpose does not have. `graph/bijective.hpp` completes
+the permutation side (`make_view_vector_range`, `original_order_
+transform`, `optimize_transformer_ordering`, the `reorder_range_
+bijective_transform_*` pair). Fuzzed as `gns.invfam` against the
+definitional transpose (per-row entry lists, payloads, linear source
+indices) over every universe and fill order.
+
+### 1.10 Search & interval structure — `graph/search.hpp`
+**Paper.** Tarjan, *Depth-First Search and Linear Graph Algorithms*,
+SIAM J. Comput. 1(2), 1972 (the interval structure of a DFS forest).
+
+**What was added to implement it.** `calculate_depth_first_intervals`
+(discovery/finish times, edge classification by interval containment:
+tree/forward/back/cross), `calculate_dominance_intervals_given_
+dominators_and_forest`, and the unreducible-union walk — the raw
+material every order-sensitive consumer (SCC, biconnectivity,
+reachability) starts from. Fuzzed as `gns.search` against plain BFS and
+plain DFS in row order (times, parents, edge classes).
+
+### 1.11 Dijkstra / A* / Johnson reweighting — `graph/dijkstra.hpp`
+**Papers.** Edsger W. Dijkstra, *A Note on Two Problems in Connexion
+with Graphs*, Numerische Mathematik 1, 1959; Peter Hart, Nils
+Nilsson, Bertram Raphael, *A Formal Basis for the Heuristic
+Determination of Minimum Cost Paths*, IEEE TSSC 4(2), 1968;
+Donald B. Johnson, *Efficient Algorithms for Shortest Paths in
+Sparse Networks*, J. ACM 24(1), 1977 (the reweighting trick).
+
+**What was added to implement it.** The priority-queue relaxation
+over CSR rows with `distance_inf`/reweight entry edges, and the A*
+shell over a consistent heuristic. Fuzzed as `gns.dij` against the
+min weight of a SIMPLE path (Held–Karp over node masks — no
+relaxation anywhere) and A* under three consistent heuristics.
+
+### 1.12 Distances — `graph/distances.hpp`
+**Papers.** Richard Bellman, *On a Routing Problem*, Quarterly of
+Applied Mathematics 16(1), 1958; Lester R. Ford Jr., *Network Flow
+Theory*, RAND P-923, 1956; Edward F. Moore, *The Shortest Path
+Through a Maze*, Harvard 1959 (the queue variant used); for the
+all-pairs statement, Stephen Warshall, *A Theorem on Boolean
+Matrices*, J. ACM 9(1), 1962.
+
+**What was added to implement it.** `bellman_ford_result_t` (with
+negative-cycle reporting), the DAG topo relaxation, all-pairs, and
+eccentricity (BFS from every node). Fuzzed as `gns.dist` against
+Held–Karp simple-path minima, negative-cycle poison by enumeration,
+an independent topo relaxation, and BFS eccentricity.
+
+### 1.13 Union-find — `graph/dsu.hpp`
+**Paper.** Bernard A. Galler & Michael J. Fischer, *An Improved
+Equivalence Algorithm*, C. ACM 7(5), 1964; Robert Tarjan, *Efficiency
+of a Good But Not Linear Set Union Algorithm*, J. ACM 22(2), 1975
+(the rank/union-by-rank bound).
+
+**What was added to implement it.** `disjoint_set_union_t` with union
+by rank and path compression over the id space (`graph/dsu.hpp`),
+generic over the client's payloads. Fuzzed as `gns.dsu` against naive
+labels under a random op stream.
+
+### 1.14 Maximum flow — `graph/flow.hpp`
+**Papers.** Yefim Dinitz, *Dinitz' Algorithm: The Original Version
+and Even Faster*, LNCS 3895, 2006 (the 1970 blocking-flow algorithm,
+with dynamic trees); Jack Edmonds & Richard M. Karp, *Theoretical
+Improvements in Algorithmic Efficiency for Network Flow Problems*,
+J. ACM 19(2), 1972 (the shortest-augmenting-path bound).
+
+**What was added to implement it.** Dinic's algorithm over the CSR
+arc rows: the level graph, blocking flow, and the residual as a
+first-class `residual_graph_t` (twin arcs, capacities, flows per
+INPUT arc id). THE MIN-COST FLOW rides the same residual:
+successive shortest paths, one SPFA (queue-based Bellman–Ford)
+shortest path per augmentation — the twin arcs carry negated costs,
+which the queue-based relaxation absorbs. Fuzzed as `gns.flow` and
+`gns.mcf` against the 2^(n-2) s–t cut enumeration, the saturated-cut
+certificate (complementary slackness), and conservation + capacity +
+the no-negative-residual-cycle optimality certificate (Bellman–Ford
+over the rebuilt residual).
+
+### 1.15 The cut family — `graph/cut.hpp`
+**Papers.** Mechthild Stoer & Frank Wagner, *A Simple Min-Cut
+Algorithm*, J. ACM 44(4), 1997; Ralph E. Gomory & Tien C. Hu,
+*Multi-Terminal Network Flows*, SIAM J. Applied Math. 9(4), 1961;
+Jean-Claude Picard, *Maximal Closure of a Graph and Applications to
+Combinatorial Programming*, Math. Programming Studies 5, 1976 (the
+closure→flow reduction); Robert P. Dilworth, *A Decomposition
+Theorem for Partially Ordered Sets*, Annals of Mathematics 51(1),
+1950 (the chain-cover dual of the path cover count).
+
+**What was added to implement it.** Five components, one header:
+* `calculate_global_min_cut` — Stoer–Wagner minimum cuts (undirected,
+  the s–t-free global minimum), plus the DIRECTED global cut (every
+  crossing arc counts);
+* `calculate_gomory_hu_tree` — the Gomory–Hu tree: n−1 max-flow
+  calls, every-pair min cut read off the tree; the fuzzer asks every
+  pair;
+* `calculate_max_cut` — EXACT by subset enumeration for the small,
+  and the greedy/local-search answer with its own certificate for
+  the large;
+* `calculate_maximum_weight_closure` — Picard's reduction: the
+  successor-closed vertex set of maximum summed weight, as one
+  min-cut on an s–t network (the project-selection problem; the
+  answer is sum(w+) − mincut, and the source side IS a heaviest
+  closure); the fuzzer enumerates every closed subset (the
+  definition) and checks the returned set closed, summing, never
+  below the empty set;
+* `calculate_minimum_path_cover_dag` — the minimum vertex-disjoint
+  path cover of a DAG by Dilworth's count: a bipartite matching
+  (split-graph, Hopcroft–Karp) whose size is n − cover; the fuzzer
+  walks the returned paths (disjoint, covering, every hop a real
+  arc).
+Fuzzed as `gns.gcut`, `gns.dgcut`, `gns.gh`, `gns.maxcut`,
+`gns.closure`, `gns.pcover` (plus `gns.stcut` for the s–t family).
+
+### 1.16 Spanning forests — `graph/mst.hpp`
+**Papers.** Joseph B. Kruskal, *On the Shortest Spanning Subtree of
+a Graph and the Method of Reproducible Tests*, Proc. AMS 7(1), 1956;
+Robert C. Prim, *Shortest Connection Networks and Some
+Generalizations*, Bell System Tech. J. 36(6), 1957 (Jarník 1930);
+Otakar Borůvka, *O jistém problému minimálním*, Práce mor.
+přírodověd. spol. 3, 1926.
+
+**What was added to implement it.** All three classical algorithms
+over the pair-represented edge list — Kruskal (sort + DSU), Prim
+(heap), Borůvka (scan) — which MUST agree on the total (the unique
+minimum when weights are distinct; the fuzzer runs an independent
+Prim and requires all three to match). Fuzzed as `gns.mst`.
+
+### 1.17 Matching — `graph/matching.hpp`
+**Papers.** Harold W. Kuhn, *The Hungarian Method for the Assignment
+Problem*, Naval Research Logistics Quarterly 2(1–2), 1955 (bipartite
+augmenting paths); John E. Hopcroft & Richard M. Karp, *An n^{5/2}
+Algorithm for Maximum Matchings in Bipartite Graphs*, SIAM J.
+Comput. 2(4), 1973; Dénes König, *Gráfok és mátrixok*, Mat. Fiz.
+Lapok 38, 1931 (the duality: max matching = min vertex cover in
+bipartite graphs); Jack Edmonds, *Paths, Trees, and Flowers*, Can.
+J. Math. 17, 1965 (blossoms — the general-graph matching).
+
+**What was added to implement it.** `bipartite_matching_result_t`
+(Kuhn's augmenting paths AND Hopcroft–Karp's phases — two engines,
+the fuzzer requires one answer) with the König vertex cover and the
+cover-validity check; `maximum_matching_result_t` — Edmonds'
+blossom algorithm for general graphs (blossom contraction/expansion
+over the CSR rows), fuzzed against bitmask DP; and the split-graph
+path-cover consumer (1.15). Fuzzed as `gns.match` and
+`gns.blossom`.
+
+### 1.18 Biconnectivity & k-cores — `graph/biconnect.hpp`
+**Papers.** Robert E. Tarjan, *A Note on Finding the Bridges of a
+Graph*, Information Processing Letters 2(6), 1974 (bridges and
+articulation points by DFS lowpoint); Stephen B. Seidman, *Network
+Structure and Minimum Degree*, Social Networks 5(3), 1983
+(k-cores); David W. Matula & Leland L. Beck, *Smallest-Last Ordering
+and Clustering and Graph Coloring Algorithms*, J. ACM 30(3), 1983
+(the degeneracy order).
+
+**What was added to implement it.** `biconnect_result_t`: bridges,
+articulation points, and the per-EDGE biconnected component classes
+(`bcc_of_edge`) — the twin-arc case (two arcs of one undirected edge
+belong to the same BCC, self loops their own) is pinned by the
+fuzzer against simple-cycle enumeration (the definitional co-cycle
+classes) and removal tests for bridges/articulation. k-cores: the
+per-k iterative removal, fuzzed against the definitional peel.
+Fuzzed as `gns.bic` and `gns.kcore`.
+
+### 1.19 Euler tours — `graph/euler.hpp`
+**Papers.** Carl Hierholzer & Chr. Wiener, *Ueber die Möglichkeit,
+einen Linienzug ohne Wiederholung und ohne Unterbrechung zu
+umfahren*, Mathematische Annalen 6, 1873.
+
+**What was added to implement it.** The degree/piece conditions
+re-derived per connected component, then the tour itself walked
+(consecutive arcs, each EDGE exactly once — the pair representation
+— with the promised endpoints); one-piece and multi-piece answers,
+open and closed. Fuzzed as `gns.euler`.
+
+### 1.20 Topological orders — `graph/sequence.hpp`
+**Paper.** Arthur B. Kahn, *Topological Sorting of Large Networks*,
+C. ACM 5(11), 1962.
+
+**What was added to implement it.** Kahn's waves over the CSR rows
+(and the condensation for cyclic inputs): wave indices, the queue
+order, the self-sequential sign (a one-node SCC is sequential iff it
+has no self loop), and the topo permutation. Fuzzed as `gns.seq`
+against waves and queue order re-coded from the definition.
+
+### 1.21 The minimum-arc-set family — `graph/rmas.hpp`
+**Papers.** Alfred V. Aho, Michael R. Garey, Jeffrey D. Ullman, *The
+Transitive Reduction of a Directed Graph*, SIAM J. Comput. 1(2),
+1972 (the unique DAG reduction); the minimum equivalent graph's
+in-component exactness vs its NP-hardness: Michael R. Garey &
+David S. Johnson, *Computers and Intractability*, 1979 (GT14);
+for the reducible special case: Vijaya Ramachandran, *Finding a
+Minimum Feedback Arc Set in Reducible Flow Graphs*, J. Algorithms
+9(3), 1988; the feedback arc set problem itself: Richard M. Karp,
+*Reducibility among Combinatorial Problems*, 1972.
+
+**What was added to implement it.** Four components, one header:
+* THE WEIGHTED MINIMUM FEEDBACK ARC SET — the exact answer (the
+  cheapest arc subset whose removal leaves a DAG) by the Held–Karp
+  sweep over the vertex subsets: f[S] = the least BACKWARD weight
+  among the orders of S (a self loop is backward under every order,
+  so it rides along outright); 2^V words, the exact answer for the
+  small and dense — a loop nest, a hot CFG — and the library SAYS so
+  instead of a polynomial pretending (the Ramachandran reducible
+  special case is noted, not reproduced: the sweep is exact on EVERY
+  graph, reducible ones included, and the survivors' topological
+  order rides home as the certificate). This answers the weighted
+  reducible-graph question directly: given the cyclic weighted
+  graph, the removal set that leaves a DAG is exact here, with the
+  order certificate in the result;
+* THE TRANSITIVE REDUCTION of a DAG — the unique minimum arc set
+  with the same reachability (Aho–Garey–Ullman), successors swept in
+  topological order, an arc surviving iff its head is not yet
+  covered; parallel arcs collapse to the first;
+* THE MINIMUM EQUIVALENT ARC SET of a general digraph — exact
+  between SCCs (the condensation's transitive reduction, one
+  original arc per condensed arc), a DOCUMENTED 2-approximation
+  inside each SCC (in-tree ∪ out-tree to the lowest-id member:
+  2(|S|−1) arcs worst case); the exact MEG is NP-hard there and the
+  library says so;
+* CYCLE NODES — the nodes on some cycle (SCC size > 1 or a self
+  loop), the DAG-contract checker every client ends up writing.
+Fuzzed as `gns.rmas` (subset enumeration for the minimum, Kahn for
+the FAS-ness, the order certificate), `gns.tr` (the length-≥2-path
+redundancy rule), and `gns.meg` (reachability preservation + the
+exact-on-DAGs guarantee + the 2(n−1) honesty bound).
+
+### 1.22 Transitive closure — `graph/reach.hpp` / `graph/cut.hpp`
+**Paper.** Stephen Warshall, *A Theorem on Boolean Matrices*, J. ACM
+9(1), 1962 (the in-place row-or sweep).
+
+**What was added to implement it.** The reachability closure stated
+over CSR rows (the square bitset-free form: `calculate_reachable_
+mask` per source, the all-pairs form in `distances.hpp`), and the
+selection-theory consumer in `cut.hpp`: the maximum-weight closure's
+closed-set check is successor-closure under exactly this relation.
+Fuzzed as `gns.closure` (every closed subset enumerated —
+successor-closed IS the definition — with the maximum summed weight)
+alongside the per-source masks in `gns.search`/`gns.dist`.
 
 ---
 
-## 2. ssa_ns — SSA construction (`src/minijz/ir/ssa_generic.hpp`)
+## 2. ssa_ns — SSA construction (kernels: `mjz_lib/mjz_lib/graph/ssa.hpp`; the IR policy wrapper: `src/minijz/ir/ssa_generic.hpp`)
 
 **Paper.** Cytron, Ferrante, Rosen, Wegman, Zadeck, *Efficiently
 Computing Static Single Assignment Form and the Control Dependence
@@ -235,7 +501,7 @@ indices, the 2048-slot budget) are policy and live in the pass.
 
 ---
 
-## 3. opt_ns — the optimization kernels (`src/minijz/opt/opt_generic.hpp`)
+## 3. opt_ns — the optimization kernels (one header per kernel family under `mjz_lib/mjz_lib/opt/`, aggregated by `opt/alllib.hpp`; `src/minijz/opt/opt_generic.hpp` remains the thin include adapter)
 
 ### 3.1 mark_ns — dead-code elimination (`mark_ns::calculate_live_sites`)
 **Reference.** Mark-sweep reachability over the def/use bipartite
@@ -611,12 +877,28 @@ extracting them would just move the policy around):
 Every kernel conversion in this arc was gated by the repo's standing
 battery: `scripts/parity_diff.sh` (the committed corpus, 146 runs,
 byte-identical), `scripts/fuzz_parity.sh` (old-vs-new differential
-fuzz windows, identical modulo timing), the selftest (207 checks,
+fuzz windows, identical modulo timing), the selftest (208 checks,
 every optimizer stat line byte-identical), and the unit tests
 (6,476 checks — the kernels pinned standalone, including the
 policy-free/placement-wrapper DISAGREEMENT cases). The rule: the
 kernel may reorganize the computation, but the pass outputs may not
 move a byte.
+
+The component fuzzer (`--fuzz-kernels`, `src/minijz/apps/fuzz_base.hpp`
++ `fuzz_kernels.hpp` + `fuzz_graphs.hpp`) then hammers every generic
+component — 55 of them, the 30 opt/ssa/CFG kernels and the 25 graph
+ones — against references coded from the DEFINITION, never from the
+library's source; each component draws its own RNG stream per seed,
+so `--fuzz-kernel=NAME --fuzz-kernels-from=S` reproduces a failure
+exactly. The standing window is 30,000 seeds (40,721,027 checks,
+0 failures at the time of writing), and widening that window past
+the historical 1,200 found and fixed two latent kernel bugs (the vn
+reference re-keying and the sccp engine's unenforced monotone
+descent — both documented at their sites). The full ctest battery
+(45 tests: 7 constexpr proofs, the fuzz shards, the native C+asm
+parity gate, the debugger sessions, the bug-repro corpus, the
+header self-containment and include-portability gates) runs green
+end to end.
 
 ## 6. Index of papers
 
@@ -643,3 +925,20 @@ move a byte.
 | 19 | Granlund & Montgomery, *Division by Invariant Integers using Multiplication*, PLDI 1994; Warren, *Hacker's Delight* ch. 10 | divmagic |
 | 20 | Steele, *Debunking the "Expensive Procedure Call" Myth*, 1977 | tailrec, scctco |
 | 21 | McCarthy, *Recursive Functions of Symbolic Expressions...*, 1960 | mark_ns (mark-sweep heritage) |
+| 22 | Galler & Fischer, *An Improved Equivalence Algorithm*, C. ACM 1964; Tarjan, *Efficiency of a Good But Not Linear Set Union Algorithm*, J. ACM 1975 | dsu.hpp |
+| 23 | Dinitz, *Dinitz' Algorithm: The Original Version and Even Faster*, 2006; Edmonds & Karp, J. ACM 1972 | flow.hpp (Dinic, max flow) |
+| 24 | Stoer & Wagner, *A Simple Min-Cut Algorithm*, J. ACM 1997 | cut.hpp (global min cut) |
+| 25 | Gomory & Hu, *Multi-Terminal Network Flows*, SIAM J. Appl. Math. 1961 | cut.hpp (Gomory–Hu tree) |
+| 26 | Picard, *Maximal Closure of a Graph...*, Math. Programming Studies 1976 | cut.hpp (maximum-weight closure) |
+| 27 | Dilworth, *A Decomposition Theorem for Partially Ordered Sets*, Annals of Math. 1950 | matching.hpp (min path cover of a DAG) |
+| 28 | Kuhn, *The Hungarian Method...*, 1955; Hopcroft & Karp, SIAM J. Comput. 1973; König, *Gráfok és mátrixok*, 1931 | matching.hpp (bipartite) |
+| 29 | Edmonds, *Paths, Trees, and Flowers*, Can. J. Math. 1965 | matching.hpp (blossoms) |
+| 30 | Kruskal, Proc. AMS 1956; Prim, BSTJ 1957 (Jarník 1930); Borůvka, 1926 | mst.hpp |
+| 31 | Tarjan, *A Note on Finding the Bridges of a Graph*, IPL 1974 | biconnect.hpp |
+| 32 | Seidman, *Network Structure and Minimum Degree*, 1983; Matula & Beck, J. ACM 1983 | biconnect.hpp (k-cores) |
+| 33 | Hierholzer & Wiener, *Ueber die Möglichkeit...*, Math. Annalen 1873 | euler.hpp |
+| 34 | Kahn, *Topological Sorting of Large Networks*, C. ACM 1962 | sequence.hpp |
+| 35 | Bellman 1958; Ford 1956; Moore 1959; Warshall, J. ACM 1962 | distances.hpp, reach.hpp |
+| 36 | Dijkstra, Numerische Mathematik 1959; Hart, Nilsson & Raphael, IEEE TSSC 1968; Johnson, J. ACM 1977 | dijkstra.hpp |
+| 37 | Aho, Garey & Ullman, *The Transitive Reduction of a Directed Graph*, SIAM J. Comput. 1972 | rmas.hpp (transitive reduction) |
+| 38 | Ramachandran, *Finding a Minimum Feedback Arc Set in Reducible Flow Graphs*, J. Algorithms 1988; Karp, *Reducibility among Combinatorial Problems*, 1972 | rmas.hpp (weighted FAS — exact by Held–Karp sweep, the reducible special case noted) |

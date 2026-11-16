@@ -9,6 +9,18 @@
 #include "../prog/runners.hpp"
 #include "../runtime/astrun.hpp" // run_ast (the oracle)
 
+// the tours are constexpr exactly where they can be: the single-TU
+// (header-only) build compiles() in a constant expression, the
+// multi-TU build links it from tu/prog.cpp -- there the tours run at
+// runtime only, and the plain linkage keeps -Winvalid-constexpr quiet
+// (the static_asserts below only ever compile in the single-TU build,
+// which is where constexpr_check.cpp lives)
+#ifdef MJZ_MULTI_CPP
+#define MJZ_CX_TOUR_FN
+#else
+#define MJZ_CX_TOUR_FN constexpr
+#endif
+
 // ============================================================================
 // 16. constexpr pipeline — the whole compiler runs at compile time
 // ============================================================================
@@ -21,7 +33,7 @@
 // forms + divmagic + input(); cx_tour (branchy unrolling + short-circuit)
 // runs in the same battery at RUNTIME via cx_pipeline()/--selftest.
 
-constexpr bool cx_tour() { // branches, unrolling, short-circuit, folding
+MJZ_CX_TOUR_FN bool cx_tour() { // branches, unrolling, short-circuit, folding
   constexpr std::string_view src =
       "let s = 0;\n"
       "let i = 1;\n"
@@ -51,7 +63,7 @@ constexpr bool cx_tour() { // branches, unrolling, short-circuit, folding
          oracle.out[3] == 42;                             // folded
 }
 
-constexpr bool cx_arrays() { // arena, lifting, len, handle-chained 2-D
+MJZ_CX_TOUR_FN bool cx_arrays() { // arena, lifting, len, handle-chained 2-D
   constexpr std::string_view src =
       "let a = array(4);\n"
       "let i = 0;\n"
@@ -90,7 +102,7 @@ constexpr bool cx_arrays() { // arena, lifting, len, handle-chained 2-D
          oracle.out[2] == 42;                             // m[0][1]+2
 }
 
-constexpr bool cx_fns() { // inlining, recursion, const-call evaluation
+MJZ_CX_TOUR_FN bool cx_fns() { // inlining, recursion, const-call evaluation
   constexpr std::string_view src =
       "fn add2(a, b) { return a + b; }\n"
       "fn fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }\n"
@@ -117,7 +129,7 @@ constexpr bool cx_fns() { // inlining, recursion, const-call evaluation
          oracle.out[3] == 3628800;                        // const-called fact
 }
 
-constexpr bool cx_series() { // unroll, closed forms, divmagic, input()
+MJZ_CX_TOUR_FN bool cx_series() { // unroll, closed forms, divmagic, input()
   constexpr std::string_view src =
       "let x = input();\n"
       "let y = input();\n"
@@ -155,7 +167,7 @@ constexpr bool cx_series() { // unroll, closed forms, divmagic, input()
 // runtime entry: the whole battery in one process (--selftest)
 
 // (regression checks for the 2026-11 bug-hunt, kept as compile-time proofs)
-constexpr bool cx_rings() { // the bug-3 repro family through the DEFAULT engine
+MJZ_CX_TOUR_FN bool cx_rings() { // the bug-3 repro family through the DEFAULT engine
   constexpr std::string_view src =
       "fn fa(n) { if (n == 0) { return 0; } if (n % 4 == 1) { return fa(n / "
       "4); } return fb(n / 4); }\n"
@@ -178,7 +190,7 @@ constexpr bool cx_rings() { // the bug-3 repro family through the DEFAULT engine
   RunOut t = run_prog(fns_of(P, 1), 1000000, {});
   return t.out.size() == 3 && t.out[0] == 1 && t.out[1] == 1 && t.out[2] == 1;
 }
-constexpr bool cx_notcanon() { // comparison negation at the equality points
+MJZ_CX_TOUR_FN bool cx_notcanon() { // comparison negation at the equality points
   constexpr std::string_view src =
       "let z = 0;\n"
       "print !(!(0 < 0));\n" // bug4 class: NOT(a>=b) must be a<b, not a<=b
@@ -206,7 +218,7 @@ constexpr bool cx_notcanon() { // comparison negation at the equality points
          oracle.out[8] == 0 && oracle.out[9] == 1;
 }
 
-constexpr bool cx_bkpt() { // the breakpoint statement: invisible + durable
+MJZ_CX_TOUR_FN bool cx_bkpt() { // the breakpoint statement: invisible + durable
   // observed values (scalar + array + param) survive the whole -O3
   // pipeline: DCE roots, mem2reg keeps observed arrays in the arena, the
   // loop's breakpoints survive unrolling, and every runner treats them as
@@ -261,7 +273,7 @@ constexpr bool cx_bkpt() { // the breakpoint statement: invisible + durable
   return bc_bkpts == bkpts;
 }
 
-constexpr bool cx_pipeline() {
+MJZ_CX_TOUR_FN bool cx_pipeline() {
   return cx_tour() && cx_arrays() && cx_fns() && cx_series();
 }
 // The whole pipeline — including SSA destruction and the bytecode VM — is

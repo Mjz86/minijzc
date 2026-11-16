@@ -3,7 +3,9 @@
 // audit (the allocator's read-only second consumer). All compiled exactly
 // once; the rest of the program sees the light emit_c.hpp/emit_x64.hpp/
 // regaudit.hpp.
+#ifndef MJZ_MULTI_CPP
 #define MJZ_MULTI_CPP
+#endif
 #include "../minijz/back/emit_c_impl.hpp"
 #include "../minijz/back/emit_x64_impl.hpp"
 #include "../minijz/back/regaudit_impl.hpp"

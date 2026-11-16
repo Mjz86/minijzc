@@ -534,8 +534,8 @@ constexpr void td_emit_bphis(Fn &fn, TdCtx &X) {
                       .dst = d,
                       .a = td_arg_of(X, S.proutes[0], di),
                       .b2 = td_arg_of(X, S.proutes[1], di),
-                      .t = S.preds[0],
-                      .f = S.preds[1],
+                      .t = uint32_t(S.preds[0]),
+                      .f = uint32_t(S.preds[1]),
                       .c = (int64_t)fn.base_of(X.defv[di])});
     }
     if (!phis.empty()) // prepend (W may keep phis of its own below)
