@@ -37,6 +37,7 @@
 #include "../../ir/instr.hpp"
 #include "../analysis/alias.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9d4. LOAD ELIMINATION
 // ------------------------------------------------------ For handles that
@@ -87,127 +88,134 @@ constexpr bool opt_ldelim(Fn &fn, const An &A, OptStats &os) {
       kc[I.dst] = 1;
       kv[I.dst] = I.c;
     }
-  struct Ent {
-    uint32_t alloc{};
-    uint8_t ckey{}; // 1: key is the const `c'; 0: key is vreg `v'
-    uint32_t v{};
-    val_t c{};
-    uint32_t val{};    // the value vreg a later same-slot Load yields
-    bool from_store{}; // statistics: forwarded store vs CSE'd load
-    uint32_t seq{};    // creation order (scope truncation by watermark)
-  };
-  std::vector<Ent> table;
-  uint32_t seq_ctr = 0;
-  // a Store kills: everything, if through an obscure handle; else within
-  // its alloc: the exact key, every vreg-keyed entry (they may name the
-  // stored slot), and every const key equal to the stored index constant
-  auto kill_for_store = [&](uint32_t alloc, uint8_t ckey, val_t c) {
-    size_t w = 0;
-    for (size_t r = 0; r < table.size(); ++r) {
-      const Ent &e = table[r];
-      bool dead = false;
-      if (e.alloc == alloc) {
-        if (ckey)
-          dead = (e.ckey ? e.c == c : true);
-        else
-          dead = true; // vreg index may equal any key's value
+  // ---- the event stream (the wrapper's half of the kernel contract):
+  // per block, in program order, which sites the dominator-scoped
+  // table must kill / query / re-record, and which blocks drop the
+  // table on entry (joins: the memory state merges -- the mask is an
+  // INPUT, because a phi-placed model like mem2reg's would pass
+  // all-zero). The table mechanics -- first-match lookup, the
+  // seq-watermark scope truncation (entries die by "created inside
+  // this subtree", never by resize(mark): a deep join drop empties
+  // positions ancestor frames still reference) -- are the GENERIC
+  // KERNEL (opt_ns::mem_ns::run_dom_scoped_table).
+  const uint32_t nb = fn.nblocks();
+  std::vector<std::vector<opt_ns::mem_event_t>> evs(nb);
+  std::vector<uint32_t> load_at{}; // load-event order -> instr index
+  std::vector<char> drop_at(nb, 0);
+  for (uint32_t b = 0; b < nb; ++b) {
+    drop_at[b] = fn.preds[b].size() > 1;
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+      const Instr &I = fn.code[i];
+      if (I.k == K::Store) {
+        const bool single = I.a != NONE && I.a < nv && AI.single[I.a] != NONE;
+        if (!single) { // may write ANY slot
+          evs[b].push_back({.kind = opt_ns::mem_clear_v});
+          continue;
+        }
+        const uint8_t ck = (I.b2 != NONE && I.b2 < nv && kc[I.b2]) ? 1 : 0;
+        const val_t cv = ck ? kv[I.b2] : 0;
+        evs[b].push_back({.kind = opt_ns::mem_store_v,
+                          .group = AI.single[I.a],
+                          .key_tag = ck,
+                          .key_a = (I.b2 != NONE && I.b2 < nv)
+                                       ? (uintlen_t)I.b2
+                                       : opt_ns::none_v,
+                          .key_b = (uintlen_t)(int64_t)cv,
+                          .val = (I.c2 != NONE && I.c2 < nv)
+                                     ? (uintlen_t)I.c2
+                                     : opt_ns::none_v});
+      } else if (I.k == K::Load) {
+        const bool single = I.a != NONE && I.a < nv && AI.single[I.a] != NONE;
+        if (!single)
+          continue; // reads any slot: no kill, no key
+        if (I.dst == NONE || I.dst >= nv)
+          continue;
+        const uint8_t ck = (I.b2 != NONE && I.b2 < nv && kc[I.b2]) ? 1 : 0;
+        const val_t cv = ck ? kv[I.b2] : 0;
+        evs[b].push_back({.kind = opt_ns::mem_load_v,
+                          .group = AI.single[I.a],
+                          .key_tag = ck,
+                          .key_a = (I.b2 != NONE && I.b2 < nv)
+                                       ? (uintlen_t)I.b2
+                                       : opt_ns::none_v,
+                          .key_b = (uintlen_t)(int64_t)cv,
+                          .val = I.dst});
+        load_at.push_back(i);
+      } else if (I.k == K::Call) {
+        if (!I.args.empty())
+          evs[b].push_back({.kind = opt_ns::mem_clear_v});
       }
-      if (!dead)
-        table[w++] = e;
     }
-    table.resize(w);
+  }
+  // the kill rule (the memory model, stated once as a predicate): a
+  // store through THIS allocation kills the exact const key when
+  // const-keyed, every vreg-keyed entry of the allocation otherwise
+  // (they may name the stored slot); a vreg-indexed store may equal
+  // any key's value, so it kills the allocation's every entry
+  auto may_kill = [](uintlen_t eg, uintlen_t etag, uintlen_t, uintlen_t ekb,
+                     const opt_ns::mem_event_t &ev) {
+    if (eg != ev.group)
+      return false;
+    if (ev.key_tag == 0)
+      return true; // vreg index may equal any key's value
+    if (etag == 0)
+      return true; // a vreg-keyed entry may name the stored const
+    return ekb == ev.key_b;
   };
-  auto push_ent = [&](Ent e) {
-    e.seq = ++seq_ctr;
-    table.push_back(e);
-  };
-  auto find_exact = [&](uint32_t alloc, uint8_t ckey, uint32_t v, val_t c,
-                        uint32_t &val, bool &from_store) -> bool {
-    for (const Ent &e : table)
-      if (e.alloc == alloc && e.ckey == ckey && (ckey ? e.c == c : e.v == v)) {
-        val = e.val;
-        from_store = e.from_store;
-        return true;
-      }
-    return false;
-  };
+  const std::vector<opt_ns::mem_hit_t> hits =
+      opt_ns::run_dom_scoped_table<V>(A.dom_tree, evs, drop_at, evs, may_kill);
+  // ---- the replay: forward every hit load to the remembered value
+  // (its nt guard dropped -- the dominating store trapped first if it
+  // was out of bounds), then let tier-0 copyprop/dce finish. The
+  // walk repeats the kernel's DFS order (hits are in event order =
+  // dominator preorder), pairing each hit with its load instr.
   bool changed = false;
-  auto rows = A.dom_tree.range();
-  struct Fr {
-    uint32_t b, ci, w; // w: seq watermark at entry
-  };
-  std::vector<Fr> st;
-  st.push_back({0, 0, seq_ctr});
-  while (!st.empty()) {
-    uint32_t b = st.back().b;
-    uint32_t ci = st.back().ci;
-    uint32_t w = st.back().w;
-    if (ci == 0) { // entering the block: scan its instrs once
-      if (fn.preds[b].size() > 1)
-        table.clear(); // join: memory state merges, drop everything
-      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-        Instr &I = fn.code[i];
-        if (I.k == K::Store) {
-          bool single = I.a != NONE && I.a < nv && AI.single[I.a] != NONE;
-          if (!single) {
-            table.clear(); // may write ANY slot
+  {
+    uintlen_t k = 0;
+    auto rows = A.dom_tree.range();
+    struct Fr {
+      uint32_t b, ci;
+    };
+    std::vector<Fr> st;
+    st.push_back({0, 0});
+    while (!st.empty()) {
+      const uint32_t b = st.back().b;
+      const uint32_t ci = st.back().ci;
+      if (ci == 0) {
+        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+          const Instr &I = fn.code[i];
+          const bool single_load = I.k == K::Load && I.a != NONE &&
+                                   I.a < nv && AI.single[I.a] != NONE &&
+                                   I.dst != NONE && I.dst < nv;
+          if (!single_load)
             continue;
-          }
-          uint8_t ck = (I.b2 != NONE && I.b2 < nv && kc[I.b2]) ? 1 : 0;
-          val_t cv = ck ? kv[I.b2] : 0;
-          kill_for_store(AI.single[I.a], ck, cv);
-          if (I.c2 != NONE && I.c2 < nv)
-            push_ent({AI.single[I.a], ck, I.b2, cv, I.c2, true, 0});
-        } else if (I.k == K::Load) {
-          bool single = I.a != NONE && I.a < nv && AI.single[I.a] != NONE;
-          if (!single)
-            continue; // reads any slot: no kill, no key
-          if (I.dst == NONE || I.dst >= nv)
-            continue;
-          uint8_t ck = (I.b2 != NONE && I.b2 < nv && kc[I.b2]) ? 1 : 0;
-          val_t cv = ck ? kv[I.b2] : 0;
-          uint32_t val = NONE;
-          bool from_store = false;
-          if (find_exact(AI.single[I.a], ck, I.b2, cv, val, from_store) &&
-              val != I.dst) {
-            // forward: the dominating def of `val' already produced (or
-            // holds) this slot's value
-            I.k = K::Copy;
-            I.a = val;
-            I.b2 = NONE;
-            I.nt = false;
-            if (from_store)
+          if (k >= hits.size())
+            break;
+          const opt_ns::mem_hit_t &h = hits[k++];
+          if (h.found && h.val != opt_ns::none_v && (uint32_t)h.val != I.dst) {
+            // forward: the dominating def of `val' already produced
+            // (or holds) this slot's value
+            Instr &W = fn.code[i];
+            W.k = K::Copy;
+            W.a = (uint32_t)h.val;
+            W.b2 = NONE;
+            W.nt = false;
+            if (h.from_store)
               os.ld_fwds++;
             else
               os.ld_cses++;
             changed = true;
           }
-          // the slot's current value is now THIS dst (a copy of the
-          // dominating value after a forward): later same-slot loads CSE
-          // against it
-          push_ent({AI.single[I.a], ck, I.b2, cv, I.dst, false, 0});
-        } else if (I.k == K::Call) {
-          if (!I.args.empty())
-            table.clear();
         }
       }
+      auto ch = rows[b];
+      if (ci < (uint32_t)ch.size()) {
+        st.back().ci = ci + 1;
+        st.push_back({(uint32_t)ch[ci], 0});
+        continue;
+      }
+      st.pop_back();
     }
-    auto ch = rows[b];
-    if (ci < (uint32_t)ch.size()) {
-      st.back().ci = ci + 1;
-      uint32_t nb = (uint32_t)ch[ci];
-      st.push_back({nb, 0, seq_ctr});
-      continue;
-    }
-    // leaving b: drop everything created inside its subtree (seq > w)
-    {
-      size_t wi = 0;
-      for (size_t r = 0; r < table.size(); ++r)
-        if (table[r].seq <= w)
-          table[wi++] = table[r];
-      table.resize(wi);
-    }
-    st.pop_back();
   }
   return changed;
 }

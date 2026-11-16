@@ -2061,6 +2061,301 @@ UT(saw_rot_header, "rotate: the header ends in Br, not the test");
   }
 }
 
+// ---- 18. the second kernel wave (mjz::opt_ns, opt/opt_generic.hpp):
+// loop-shape CFG math, the supplier-routing fixpoint, the alias
+// identity fixpoint, the dominator-scoped memory table, the interval
+// lattice + the abstract-interpretation driver, the mixed sort key,
+// the region leak scan, the interprocedural liveness fixpoint, class
+// refinement -- with the N-ary cases the 2-arg IR cannot spell.
+{
+  using opt_ns::none_v;
+
+  // 18a. header-pred classification + the loop shape
+  {
+    std::vector<char> inL{0, 1, 1, 0};
+    auto hp = opt_ns::calculate_header_preds(
+        std::vector<uintlen_t>{0, 1, 2}, inL);
+    UT(hp.n_in == 2 && hp.n_out == 1 && hp.latch == 2 && hp.pre == 0,
+       "header preds: last inside is the latch, last outside the pre");
+    auto sh = opt_ns::calculate_loop_shape(std::vector<uintlen_t>{0, 1},
+                                           inL, 3, 1);
+    UT(sh.ok && sh.pre == 0 && sh.latch == 1 && sh.body == 1 && sh.X == 3,
+       "loop shape: one arm stays (body), one leaves (X)");
+    UT(!opt_ns::calculate_loop_shape(std::vector<uintlen_t>{0, 1}, inL, 3, 3)
+            .ok,
+       "loop shape: both arms out is not test-first");
+    UT(!opt_ns::calculate_loop_shape(std::vector<uintlen_t>{0, 1, 1}, inL, 3, 1)
+            .ok,
+       "loop shape: two in-preds is not single-latch");
+  }
+
+  // 18b. the exit-edge inventory
+  {
+    // blocks 0,1,2 in-loop; 3,4 outside; b1 exits to 3 and 4
+    std::vector<char> inL{1, 1, 1, 0, 0};
+    std::vector<std::vector<uintlen_t>> succs{
+        {1}, {3, 4}, {0}, {}, {}};
+    std::vector<opt_ns::exit_edge_t> ex{};
+    UT(opt_ns::collect_exit_edges(succs, inL, none_v, none_v, none_v, none_v,
+                                  ex),
+       "exits: collected");
+    UT(ex.size() == 2 && ex[0].from == 1 && ex[0].to == 3 && ex[1].to == 4,
+       "exits: both of b1's out-edges, slot order");
+    ex.clear();
+    UT(opt_ns::collect_exit_edges(succs, inL, 1, 3, none_v, none_v, ex) &&
+           ex.size() == 1 && ex[0].from == 1 && ex[0].to == 4,
+       "exits: the primary edge (1,3) is skipped, the other stays");
+    ex.clear();
+    UT(!opt_ns::collect_exit_edges(succs, inL, none_v, none_v, 3, none_v, ex),
+       "exits: an edge targeting the forbidden block bails");
+    ex.clear();
+    std::vector<std::vector<uintlen_t>> degen{{1}, {4, 4}, {0}, {}, {}};
+    UT(!opt_ns::collect_exit_edges(degen, inL, none_v, none_v, none_v, none_v,
+                                   ex),
+       "exits: every arm on one outside target is degenerate");
+  }
+
+  // 18c. the supplier-routing fixpoint (taildup's mini SSA), incl.
+  // a THREE-pred born phi the 2-arg IR cannot spell
+  {
+    // 0 entry; 1,2 dead (the duplicated tail's preds); 3 = U0, 4 = U1;
+    // 5 = the re-merge of {3,4}; 6 = the dead tail T (preds {1,2})
+    std::vector<std::vector<uintlen_t>> preds{
+        {}, {0}, {0}, {1}, {2}, {3, 4}, {1, 2}};
+    std::vector<char> dead{0, 1, 1, 0, 0, 0, 1};
+    std::vector<char> dom0{0, 0, 0, 1, 0, 0, 0}; // U0=3 dominates 3 only
+    std::vector<char> dom1{0, 0, 0, 0, 1, 0, 0}; // U1=4 dominates 4 only
+    auto R = opt_ns::calculate_supplier_routes(preds, dead, dom0, dom1, 2);
+    UT(R.route[1] == opt_ns::route_dead_v && R.route[6] == opt_ns::route_dead_v,
+       "route: the dead blocks stay dead");
+    UT(R.route[3] == 0 && R.route[4] == 1,
+       "route: a block under one source reads it outright");
+    UT(R.route[5] == 2 && R.sites.size() == 1 && R.sites[0].W == 5,
+       "route: the 2-pred re-merge births a phi there");
+    UT(R.sites[0].preds.size() == 2 && R.sites[0].proutes[0] == 0 &&
+           R.sites[0].proutes[1] == 1,
+       "route: the born site records its preds' routes");
+    // the arity bound as a PARAMETER: a 3-pred join of routes {0,0,1}
+    // births an N-ary phi under bound 3, is unroutable under bound 2
+    std::vector<std::vector<uintlen_t>> preds3{
+        {}, {0}, {0}, {0}, {1, 2, 3}};
+    std::vector<char> d3(5, 0);
+    std::vector<char> m0{0, 1, 1, 0, 0}; // U0 dominates 1,2
+    std::vector<char> m1{0, 0, 0, 1, 0}; // U1 dominates 3
+    auto R3 = opt_ns::calculate_supplier_routes(preds3, d3, m0, m1, 3);
+    UT(R3.route[4] == 2 && R3.sites.size() == 1 &&
+           R3.sites[0].preds.size() == 3,
+       "route: a 3-pred join with arity bound 3 births an N-ary phi");
+    auto R2 = opt_ns::calculate_supplier_routes(preds3, d3, m0, m1, 2);
+    UT(R2.route[4] == opt_ns::route_dead_v,
+       "route: the same join under arity bound 2 is unroutable (the IR's "
+       "policy, not the kernel's)");
+    // the need closure: one read through site 0 needs both sources
+    std::vector<std::pair<uintlen_t, uintlen_t>> reads{{2, 7}};
+    std::vector<std::vector<char>> need{};
+    std::vector<std::vector<uintlen_t>> bvals{};
+    opt_ns::calculate_route_needs(2, 8, R.sites, reads, need, bvals);
+    UT(need[0][7] && need[1][7] && !need[0][0] && bvals[0].size() == 1 &&
+           bvals[0][0] == 7,
+       "needs: a read through the born site needs both suppliers");
+  }
+
+  // 18d. the alias identity fixpoint (N-ary phi agreement)
+  {
+    std::vector<uintlen_t> single(8, none_v);
+    single[0] = 5; // the seed: v0 names allocation 5
+    std::vector<opt_ns::alias_def_t> defs{
+        {.var = 1, .kind = opt_ns::alias_copy_v, .src = 0},
+        {.var = 2, .kind = opt_ns::alias_copy_v, .src = 1},
+        {.var = 3, .kind = opt_ns::alias_phi_v, .args = {0, 1, 2}}, // 3-ary!
+        {.var = 4, .kind = opt_ns::alias_phi_v, .args = {0, 1, 6}},
+        {.var = 5, .kind = opt_ns::alias_phi_v, .args = {0, none_v}},
+        {.var = 6, .kind = opt_ns::alias_other_v},
+        {.var = 7, .kind = opt_ns::alias_phi_v, .args = {none_v, none_v}}};
+    opt_ns::resolve_single_ids<V>(defs, single, 8, 64);
+    UT(single[1] == 5 && single[2] == 5,
+       "alias: the copy chain resolves to the seed id");
+    UT(single[3] == 5,
+       "alias: the N-ary phi(a,a,a) agrees -- single (arity 3)");
+    UT(single[4] == none_v,
+       "alias: the phi over an obscure arg is obscure");
+    UT(single[5] == none_v && single[7] == none_v,
+       "alias: an absent arg is obscure (the conservative rule)");
+  }
+
+  // 18e. the dominator-scoped memory table (watermark scoping + kill)
+  {
+    // dom chain 0 -> 1 -> 2 (the kernel takes the CSR forest)
+    std::vector<std::vector<ulen>> dom_rows{{1}, {2}, {}};
+    auto dom = gns::make_basic_forest<V>(dom_rows);
+    std::vector<std::vector<opt_ns::mem_event_t>> evs(3);
+    evs[0].push_back({.kind = opt_ns::mem_store_v,
+                      .group = 0,
+                      .key_tag = 1,
+                      .key_b = 3,
+                      .val = 10});
+    evs[1].push_back(
+        {.kind = opt_ns::mem_load_v, .group = 0, .key_tag = 1, .key_b = 3,
+         .val = 20}); // hits the store, then records (20, from_load)
+    evs[2].push_back(
+        {.kind = opt_ns::mem_load_v, .group = 0, .key_tag = 1, .key_b = 3,
+         .val = 30}); // b1's entry died with b1's subtree: hits the STORE
+    std::vector<char> drop{0, 0, 0};
+    auto may_kill = [](uintlen_t eg, uintlen_t, uintlen_t, uintlen_t ekb,
+                       const opt_ns::mem_event_t &ev) {
+      return eg == ev.group && ev.key_tag != 0 && ekb == ev.key_b;
+    };
+    auto hits = opt_ns::run_dom_scoped_table<V>(dom, evs, drop, evs, may_kill);
+    UT(hits.size() == 2 && hits[0].found && hits[0].val == 10 &&
+           hits[0].from_store,
+       "mem: the load forwards the dominating store");
+    UT(hits[1].found && hits[1].val == 10 && hits[1].from_store,
+       "mem: a sibling subtree's entries died by the seq watermark");
+    // the kill rule + a join drop
+    std::vector<std::vector<opt_ns::mem_event_t>> evs2(3);
+    evs2[0].push_back({.kind = opt_ns::mem_store_v,
+                       .group = 0,
+                       .key_tag = 1,
+                       .key_b = 3,
+                       .val = 10});
+    evs2[1].push_back({.kind = opt_ns::mem_store_v,
+                       .group = 0,
+                       .key_tag = 1,
+                       .key_b = 3,
+                       .val = 11});
+    evs2[2].push_back(
+        {.kind = opt_ns::mem_load_v, .group = 0, .key_tag = 1, .key_b = 3,
+         .val = 30});
+    std::vector<char> drop2{0, 0, 1}; // block 2 is a join: table drops
+    auto hits2 =
+        opt_ns::run_dom_scoped_table<V>(dom, evs2, drop2, evs2, may_kill);
+    UT(!hits2[0].found,
+       "mem: the join drop empties the table before the load");
+    auto hits3 = opt_ns::run_dom_scoped_table<V>(dom, evs2, drop, evs2,
+                                                 may_kill);
+    UT(hits3[0].found && hits3[0].val == 11 && hits3[0].from_store,
+       "mem: the second store kills the first (same slot)");
+  }
+
+  // 18f. the interval lattice
+  {
+    using opt_ns::iv_ns::iv_t;
+    UT(opt_ns::iv_ns::iv_join(iv_t{0, 0, true}, iv_t{2, 5, false}).lo == 2,
+       "iv: hull with bottom is the identity");
+    iv_t old{0, 10, false};
+    opt_ns::iv_ns::iv_narrow(old, iv_t{5, 20, false});
+    UT(old.lo == 5 && old.hi == 10, "iv: narrowing intersects");
+    opt_ns::iv_ns::iv_narrow(old, iv_t{50, 60, false});
+    UT(old.lo == 5 && old.hi == 10,
+       "iv: an empty intersection keeps the old sound state");
+    UT(opt_ns::iv_ns::iv_excludes_zero(iv_t{1, 5, false}) &&
+           !opt_ns::iv_ns::iv_excludes_zero(iv_t{-1, 5, false}),
+       "iv: the divisor trap predicates");
+  }
+
+  // 18g. the abstract-interpretation driver: a counter widened at the
+  // header only, then narrowed -- [5,5] grows to [5, MAX] and stays
+  {
+    struct CB {
+      void entry_top(std::vector<opt_ns::iv_ns::iv_t> &st) const {
+        for (auto &x : st)
+          x = {INT64_MIN, INT64_MAX, false};
+      }
+      void refine_edge(uintlen_t, uintlen_t,
+                       std::vector<opt_ns::iv_ns::iv_t> &) const {}
+      void phi_join(uintlen_t, std::vector<opt_ns::iv_ns::iv_t> &,
+                    const opt_ns::iv_ns::iv_t *, uintlen_t) const {}
+      void transfer(uintlen_t b, std::vector<opt_ns::iv_ns::iv_t> &st) const {
+        if (b == 0) {
+          st[0] = {5, 5, false}; // the constant seed
+          return;
+        }
+        // the loop body: x = x + 1 (saturating), nothing known about x1
+        st[0].hi = (st[0].hi == INT64_MAX) ? INT64_MAX : st[0].hi + 1;
+      }
+    };
+    // 0 -> 1, 1 -> 1 (the self-loop header is its own latch)
+    std::vector<std::vector<uintlen_t>> preds{{}, {0, 1}};
+    std::vector<char> widen_at{0, 1};
+    auto R = opt_ns::ai_ns::solve_forward<V>(2, 1, preds, widen_at, 0, 4, 8, 3,
+                                             CB{});
+    UT(R.converged, "ai: the counter loop converges under header widening");
+    UT(R.entry[1].lo == 5 && R.entry[1].hi == INT64_MAX,
+       "ai: [5,5] widened to [5,MAX] at the header");
+  }
+
+  // 18h. the mixed sort key (canon/vn's orderable tag)
+  {
+    std::vector<char> kc{0, 1, 0};
+    std::vector<val_t> kv{0, 7, 0};
+    UT(opt_ns::mixed_sort_key(3, kc, kv, none_v) == 0,
+       "key: an absent operand is 0");
+    UT(opt_ns::mixed_sort_key(3, kc, kv, 1) ==
+           ((uint64_t(1) << 63) ^ uint64_t(7)),
+       "key: a known const keys by VALUE after the tag bit");
+    UT(opt_ns::mixed_sort_key(3, kc, kv, 2) == 2,
+       "key: a var keys by its id");
+    UT(opt_ns::mixed_sort_key(3, kc, kv, 1) > opt_ns::mixed_sort_key(3, kc, kv, 2),
+       "key: consts order after every var");
+  }
+
+  // 18i. the region leak scan
+  {
+    std::vector<uintlen_t> def_site{4, 5, none_v}; // v0@4, v1@5, v2 none
+    std::vector<std::vector<uintlen_t>> args{{},
+                                             {},
+                                             {},
+                                             {},
+                                             {0},
+                                             {0, 1},
+                                             {0},
+                                             {2}};
+    UT(opt_ns::region_uses_escape(def_site, args, 4, 6),
+       "leak: a use at 6 of the v0 defined at 4 escapes");
+    UT(!opt_ns::region_uses_escape(def_site, args, 4, 7),
+       "leak: uses inside [4,7) are fine");
+    UT(!opt_ns::region_uses_escape(def_site, args, 0, 4),
+       "leak: v2 has no def site -- nothing to leak");
+  }
+
+  // 18j. the interprocedural liveness fixpoint
+  {
+    std::vector<char> eligible{1, 1};
+    std::vector<std::vector<char>> alive{{1, 0}, {0, 1}};
+    std::vector<std::vector<std::vector<opt_ns::soft_edge_t>>> softs{
+        {{}, {{1, 1}}}, {{}, {}}};
+    opt_ns::calculate_live_params(eligible, softs, alive);
+    UT(alive[0][1],
+       "ipa: g0's param 1 is live -- it feeds g1's LIVE param 1");
+    std::vector<std::vector<char>> alive2{{1, 0}, {0, 0}};
+    std::vector<std::vector<std::vector<opt_ns::soft_edge_t>>> softs2{
+        {{}, {{1, 1}}}, {{}, {}}};
+    opt_ns::calculate_live_params(eligible, softs2, alive2);
+    UT(!alive2[0][1] && !alive2[1][1],
+       "ipa: a dead forwarded-to param keeps the forwarder dead");
+    std::vector<char> inelig{1, 0};
+    std::vector<std::vector<char>> alive3{{1, 0}, {0, 0}};
+    std::vector<std::vector<std::vector<opt_ns::soft_edge_t>>> softs3{
+        {{}, {{1, 0}}}, {{}, {}}};
+    opt_ns::calculate_live_params(inelig, softs3, alive3);
+    UT(alive3[0][1],
+       "ipa: forwarding into a NON-candidate is live (it can never die)");
+  }
+
+  // 18k. class refinement over serial keys
+  {
+    std::vector<std::vector<uint64_t>> keys{{1}, {1}, {2}};
+    std::vector<char> cand{1, 1, 1};
+    std::vector<uintlen_t> rep{0, 1, 2};
+    bool ch = opt_ns::refine_by_keys(keys.data(), cand, rep);
+    UT(ch && rep[0] == 0 && rep[1] == 0 && rep[2] == 2,
+       "equi: equal keys merge into the first candidate's class");
+    UT(!opt_ns::refine_by_keys(keys.data(), cand, rep),
+       "equi: the verified fixpoint round changes nothing");
+  }
+}
+
+
 std::printf("unit tests: %d checks, %d failures\n", ut_checks, ut_fails);
 return ut_fails ? 1 : 0;
 }

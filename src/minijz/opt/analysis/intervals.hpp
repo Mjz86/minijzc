@@ -31,10 +31,10 @@
 //
 // DOWNSTREAM: the driver shares one Ranges between trapelim and
 // jthread (ifconv runs its own); iv_decide serves both consumers.
-
 #include "../../../minijz/ir/instr.hpp"
 #include "../../../minijz/opt/analysis/alias.hpp"
 #include "../../../minijz/opt/analysis/an.hpp"
+#include "../../../minijz/opt/opt_generic.hpp"
 
 // ============================================================================
 // 9d3b. VALUE RANGE ANALYSIS (signed intervals + branch refinement)
@@ -57,20 +57,22 @@
 //     If no fixpoint is reached at all, every state falls back to TOP
 //     (sound over-approximation, no proofs). The result is always a sound
 //     over-approximation of the reachable values.
-struct Iv {
-  val_t lo{INT64_MIN}, hi{INT64_MAX};
-  bool bot{}; // empty interval: unreachable program point
-};
-constexpr bool iv_eq(const Iv &a, const Iv &b) {
-  return a.bot == b.bot && a.lo == b.lo && a.hi == b.hi;
-}
-constexpr Iv iv_hull(const Iv &a, const Iv &b) { // join (may-analysis)
-  if (a.bot)
-    return b;
-  if (b.bot)
-    return a;
-  return {a.lo < b.lo ? a.lo : b.lo, a.hi > b.hi ? a.hi : b.hi, false};
-}
+//
+// THE LATTICE + THE DRIVER ARE THE GENERIC KERNELS (opt/opt_generic.hpp):
+//   * opt_ns::iv_ns -- the interval lattice (the hull join, the narrowing
+//     meet, equality, the trap-safety predicates): pure int64 math, no
+//     op vocabulary. Iv below IS that lattice type.
+//   * opt_ns::ai_ns::solve_forward -- the abstract-interpretation driver:
+//     plain rounds growing up from bottom, widening at the CLIENT'S
+//     chosen points only (the loop-headers mask -- the Cousot
+//     discipline; widening everywhere re-inflates refined states and
+//     can poison a counter's lo to MIN forever), then narrowing rounds
+//     intersecting back down, the give-up reported so this wrapper can
+//     fall back to sound TOP. What stays HERE (the semantics, per the
+//     sccp transfer precedent): iv_bin/iv_transfer (they speak the
+//     compiler's op ids), the edge fact (iv_refine over the pred's
+//     comparison), the phi rule, and the patience caps.
+using Iv = opt_ns::iv_ns::iv_t;
 constexpr uint64_t u64_abs(val_t v) { // |v| saturating at 2^63
   uint64_t u = (uint64_t)v;
   return (u >> 63) ? (uint64_t)0 - u : u;
@@ -297,13 +299,11 @@ constexpr bool iv_decide(B b, const Iv &x, const Iv &y, val_t &out) {
   }
   return false;
 }
-
 struct Ranges {
   bool ok{};
   uint32_t nb{}, nv{};
   std::vector<Iv> entry{}; // per block: nv intervals at block entry
 };
-
 // Apply instr i's definition to state st (phis are pre-substituted by the
 // caller via the block-entry phi rule; they are skipped here).
 constexpr void iv_transfer(const Fn &fn, uint32_t i, uint32_t nv,
@@ -338,6 +338,10 @@ constexpr void iv_transfer(const Fn &fn, uint32_t i, uint32_t nv,
   }
 }
 
+// ---- the driver call: the fixpoint is opt_ns::ai_ns::solve_forward;
+// this gather states the IR (the comparison behind each branch, the
+// phi rule's keyed args, the per-block transfers) as callbacks and
+// reads back the entry table + the convergence flag
 constexpr Ranges range_analyze(const Fn &fn, const An &A) {
   Ranges RA{};
   RA.nb = fn.nblocks();
@@ -379,10 +383,6 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
       return d;
     return NONE;
   };
-  std::vector<Iv> entry((size_t)nb * nv, Iv{0, 0, true}); // bottom: grow up
-  std::vector<Iv> exit_((size_t)nb * nv, Iv{0, 0, true});
-  std::vector<char> touched(nb, 0);
-  std::vector<Iv> st(nv), edge(nv);
   // Patience before header-widening kicks in, and after it. Both capped:
   // phi args read the UNREFINED pred exits, so a loop-carried counter that
   // creeps +-1 per round (e.g. the scctco frame guard, or any i = i-1
@@ -393,208 +393,80 @@ constexpr Ranges range_analyze(const Fn &fn, const An &A) {
   // trade precision for time on pathological shapes.
   const uint32_t plain = (4 * nb + 16) > 64 ? 64 : (4 * nb + 16);
   const uint32_t widened_cap = (4 * nb + 16) > 64 ? 64 : (4 * nb + 16);
-  bool widening = false;
-  uint32_t round = 0;
-  bool converged = false;
-  for (;;) {
-    bool changed = false;
-    for (uint32_t b = 0; b < nb; ++b) {
-      // ---- entry = hull over incoming (refined) pred exits + phi rule
-      for (uint32_t v = 0; v < nv; ++v)
-        st[v] = {0, 0, true};
-      bool any_pred = false;
-      for (uint32_t p : fn.preds[b]) {
-        if (p >= nb || !touched[p])
-          continue;
-        any_pred = true;
-        // refined exit of p along the edge p -> b
-        for (uint32_t v = 0; v < nv; ++v)
-          edge[v] = exit_[(size_t)p * nv + v];
-        const Instr &term = fn.code[fn.blocks[p].end - 1];
-        if (term.k == K::Cbr) {
-          uint32_t d = is_cmp_def(term.a);
-          if (d != NONE) {
-            const Instr &D = fn.code[d];
-            Iv x = (D.a != NONE && D.a < nv) ? edge[D.a]
-                                             : Iv{INT64_MIN, INT64_MAX, false};
-            Iv y = (D.b2 != NONE && D.b2 < nv)
-                       ? edge[D.b2]
-                       : Iv{INT64_MIN, INT64_MAX, false};
-            bool taken = (term.t == b);
-            iv_refine(x, y, D.b, taken);
-            if (D.a != NONE && D.a < nv)
-              edge[D.a] = x;
-            if (D.b2 != NONE && D.b2 < nv)
-              edge[D.b2] = y;
-          }
+  // the widening points: LOOP HEADERS ONLY (the mask the driver takes;
+  // the header test is this analysis's policy, not the driver's)
+  std::vector<char> widen_at(nb, 0);
+  for (uint32_t b = 0; b < nb && b < A.n; ++b)
+    widen_at[b] = (A.inner[b] == b);
+  // the callbacks: everything that knows the IR
+  struct CB {
+    const Fn &fn;
+    uint32_t nb, nv;
+    const decltype(is_cmp_def) &cmp;
+    // the entry block enters top (params included)
+    constexpr void entry_top(std::vector<Iv> &st) const {
+      for (uint32_t v = 0; v < st.size(); ++v)
+        st[v] = {INT64_MIN, INT64_MAX, false};
+    }
+    // the fact the p->b edge carries: the pred's own comparison holds
+    // on its taken arm
+    constexpr void refine_edge(uint32_t p, uint32_t b, std::vector<Iv> &edge) const {
+      const Instr &term = fn.code[fn.blocks[p].end - 1];
+      if (term.k != K::Cbr)
+        return;
+      const uint32_t d = cmp(term.a);
+      if (d == NONE)
+        return;
+      const Instr &D = fn.code[d];
+      Iv x = (D.a != NONE && D.a < nv) ? edge[D.a]
+                                       : Iv{INT64_MIN, INT64_MAX, false};
+      Iv y = (D.b2 != NONE && D.b2 < nv) ? edge[D.b2]
+                                         : Iv{INT64_MIN, INT64_MAX, false};
+      iv_refine(x, y, D.b, term.t == b);
+      if (D.a != NONE && D.a < nv)
+        edge[D.a] = x;
+      if (D.b2 != NONE && D.b2 < nv)
+        edge[D.b2] = y;
+    }
+    // the phi rule: the phi's value is one of its args, per incoming
+    // edge (an untouched pred's exit is bottom -- the hull's identity)
+    constexpr void phi_join(uint32_t b, std::vector<Iv> &st, const Iv *exits,
+                  uint32_t) const {
+      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+        const Instr &I = fn.code[i];
+        if (I.k != K::Phi)
+          break;
+        Iv acc{0, 0, true};
+        for (uint32_t p : fn.preds[b]) {
+          if (p >= nb)
+            continue;
+          uint32_t arg = NONE;
+          if (I.t == p && I.a != NONE)
+            arg = I.a;
+          else if (I.f == p && I.b2 != NONE)
+            arg = I.b2;
+          if (arg != NONE && arg < nv)
+            acc = opt_ns::iv_ns::iv_join(acc, exits[(size_t)p * nv + arg]);
         }
-        for (uint32_t v = 0; v < nv; ++v)
-          st[v] = iv_hull(st[v], edge[v]);
+        st[I.dst] = acc;
       }
-      if (!any_pred && b != 0) { // unreachable: keep bottom
-        for (uint32_t v = 0; v < nv; ++v)
-          st[v] = {0, 0, true};
-      }
-      if (b == 0) { // entry: everything top (params included)
-        for (uint32_t v = 0; v < nv; ++v)
-          st[v] = {INT64_MIN, INT64_MAX, false};
-      } else {
-        // phi rule: the phi's value is one of its args, per incoming edge
-        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-          const Instr &I = fn.code[i];
-          if (I.k != K::Phi)
-            break;
-          Iv acc{0, 0, true};
-          for (uint32_t p : fn.preds[b]) {
-            if (p >= nb || !touched[p])
-              continue;
-            uint32_t arg = NONE;
-            if (I.t == p && I.a != NONE)
-              arg = I.a;
-            else if (I.f == p && I.b2 != NONE)
-              arg = I.b2;
-            if (arg != NONE && arg < nv)
-              acc = iv_hull(acc, exit_[(size_t)p * nv + arg]);
-          }
-          st[I.dst] = acc;
-        }
-      }
-      // ---- convergence bookkeeping
-      {
-        bool diff = false;
-        for (uint32_t v = 0; v < nv; ++v)
-          if (!iv_eq(st[v], entry[(size_t)b * nv + v])) {
-            diff = true;
-            break;
-          }
-        if (diff) {
-          // WIDEN AT LOOP HEADERS ONLY (Cousot discipline). Widening at
-          // every block re-inflates refined body states (e.g. a body entry
-          // [0,999] "grew" from [0,31] only because the header widened),
-          // and the re-widened [0,MAX] feeds i+1 -> overflow -> TOP into
-          // the phi, poisoning the lo side to MIN forever (+1 per round,
-          // never converging). Non-header blocks keep the joined value and
-          // descend freely.
-          if (widening && b < A.n && A.inner[b] == b) { // widen growing sides
-            for (uint32_t v = 0; v < nv; ++v) {
-              Iv &old = entry[(size_t)b * nv + v];
-              if (st[v].bot)
-                continue;
-              if (st[v].lo < old.lo)
-                st[v].lo = INT64_MIN;
-              if (st[v].hi > old.hi)
-                st[v].hi = INT64_MAX;
-              if (st[v].lo > st[v].hi)
-                st[v] = old; // paranoia
-            }
-          }
-          for (uint32_t v = 0; v < nv; ++v)
-            entry[(size_t)b * nv + v] = st[v];
-          changed = true;
-        }
-      }
-      // ---- transfer through the block
-      for (uint32_t v = 0; v < nv; ++v)
-        st[v] = entry[(size_t)b * nv + v];
+    }
+    // the block body's transfers
+    constexpr void transfer(uint32_t b, std::vector<Iv> &st) const {
       for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
         iv_transfer(fn, i, nv, st);
-      for (uint32_t v = 0; v < nv; ++v)
-        exit_[(size_t)b * nv + v] = st[v];
-      touched[b] = 1;
     }
-    if (!changed) {
-      converged = true;
-      break;
-    }
-    ++round;
-    if (!widening && round >= plain)
-      widening = true;
-    if (widening && round >= plain + widened_cap)
-      break; // give up (below)
-  }
-  if (!converged) {
+  };
+  const CB cb{fn, nb, nv, is_cmp_def};
+  const opt_ns::ai_ns::ai_result_t<V> R = opt_ns::ai_ns::solve_forward<V>(
+      nb, nv, fn.preds, widen_at, 0, plain, widened_cap, 3, cb);
+  if (!R.converged) {
     // no fixpoint (pathological CFG): every claim would rest on an
     // under-approximation, so fall back to the trivially sound TOP
-    entry.assign((size_t)nb * nv, Iv{INT64_MIN, INT64_MAX, false});
-    RA.entry = std::move(entry);
+    std::vector<Iv> top((size_t)nb * nv, Iv{INT64_MIN, INT64_MAX, false});
+    RA.entry = std::move(top);
     return RA;
   }
-  // ---- narrowing: re-run transfers and intersect with the widened state
-  for (uint32_t n = 0; n < 3; ++n) {
-    for (uint32_t b = 0; b < nb; ++b) {
-      for (uint32_t v = 0; v < nv; ++v)
-        st[v] = {0, 0, true};
-      bool any_pred = false;
-      for (uint32_t p : fn.preds[b]) {
-        if (p >= nb || !touched[p])
-          continue;
-        any_pred = true;
-        for (uint32_t v = 0; v < nv; ++v)
-          edge[v] = exit_[(size_t)p * nv + v];
-        const Instr &term = fn.code[fn.blocks[p].end - 1];
-        if (term.k == K::Cbr) {
-          uint32_t d = is_cmp_def(term.a);
-          if (d != NONE) {
-            const Instr &D = fn.code[d];
-            Iv x = (D.a != NONE && D.a < nv) ? edge[D.a]
-                                             : Iv{INT64_MIN, INT64_MAX, false};
-            Iv y = (D.b2 != NONE && D.b2 < nv)
-                       ? edge[D.b2]
-                       : Iv{INT64_MIN, INT64_MAX, false};
-            iv_refine(x, y, D.b, term.t == b);
-            if (D.a != NONE && D.a < nv)
-              edge[D.a] = x;
-            if (D.b2 != NONE && D.b2 < nv)
-              edge[D.b2] = y;
-          }
-        }
-        for (uint32_t v = 0; v < nv; ++v)
-          st[v] = iv_hull(st[v], edge[v]);
-      }
-      (void)any_pred;
-      if (b == 0)
-        for (uint32_t v = 0; v < nv; ++v)
-          st[v] = {INT64_MIN, INT64_MAX, false};
-      else
-        for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-          const Instr &I = fn.code[i];
-          if (I.k != K::Phi)
-            break;
-          Iv acc{0, 0, true};
-          for (uint32_t p : fn.preds[b]) {
-            if (p >= nb || !touched[p])
-              continue;
-            uint32_t arg = NONE;
-            if (I.t == p && I.a != NONE)
-              arg = I.a;
-            else if (I.f == p && I.b2 != NONE)
-              arg = I.b2;
-            if (arg != NONE && arg < nv)
-              acc = iv_hull(acc, exit_[(size_t)p * nv + arg]);
-          }
-          st[I.dst] = acc;
-        }
-      // intersect with the previous (sound) approximation
-      for (uint32_t v = 0; v < nv; ++v) {
-        Iv &old = entry[(size_t)b * nv + v];
-        if (st[v].bot || old.bot)
-          continue;
-        val_t lo = st[v].lo > old.lo ? st[v].lo : old.lo;
-        val_t hi = st[v].hi < old.hi ? st[v].hi : old.hi;
-        if (lo <= hi)
-          old = {lo, hi, false};
-      }
-      for (uint32_t v = 0; v < nv; ++v)
-        st[v] = entry[(size_t)b * nv + v];
-      for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
-        iv_transfer(fn, i, nv, st);
-      for (uint32_t v = 0; v < nv; ++v)
-        exit_[(size_t)b * nv + v] = st[v];
-    }
-  }
-  RA.entry = std::move(entry);
+  RA.entry = std::move(R.entry);
   return RA;
 }
-
-// --- 9d3c. trap elimination
-// ----------------------------------------------------

@@ -35,6 +35,7 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9a4. canonicalization
 // ---------------------------------------------------- Puts every pure Bin into
@@ -57,12 +58,15 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
       kc[I.dst] = 1;
       kv[I.dst] = I.c;
     }
+  // the orderable operand tag is the GENERIC KERNEL (opt_ns::
+  // mixed_sort_key): absent -> 0, known const -> (1<<63)^value,
+  // else the vreg id -- the SAME tag discipline vn keys bin
+  // operands with, so a canonical instruction always enters the
+  // CSE table in canonical order (`7*x` and `x*7` unify)
   auto key = [&](uint32_t v) -> uint64_t {
-    if (v == NONE)
-      return 0;
-    if (v < nv && kc[v])
-      return ((uint64_t)1 << 63) ^ (uint64_t)kv[v];
-    return (uint64_t)v;
+    return opt_ns::mixed_sort_key(nv, kc, kv,
+                                  (v == NONE) ? opt_ns::none_v
+                                              : (uintlen_t)v);
   };
   bool changed = false;
   for (uint32_t b = 0; b < fn.nblocks(); ++b)

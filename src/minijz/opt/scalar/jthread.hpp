@@ -6,6 +6,7 @@
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
 #include "../analysis/intervals.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9b3. JUMP THREADING -------------------------------------------------
 // A branch edge into an "elbow" block -- a block that is nothing but phis,
@@ -61,6 +62,25 @@ constexpr bool opt_jthread(Fn &fn, const An &A, const Ranges &RA,
         raw[v]++;
     if (I.dst != NONE && I.dst < nv)
       defi[I.dst] = i;
+  }
+  // the tables for the generic leak scan (opt_ns::region_uses_escape):
+  // per-var def site + per-site operand rows, stated once for the pass
+  const uint32_t n0 = (uint32_t)fn.code.size();
+  std::vector<uintlen_t> def_site(nv, opt_ns::none_v);
+  std::vector<std::vector<uintlen_t>> args_of(n0);
+  for (uint32_t i = 0; i < n0; ++i) {
+    const Instr &I = fn.code[i];
+    auto push = [&](uint32_t v) {
+      if (v != NONE && v < nv)
+        args_of[i].push_back(v);
+    };
+    push(I.a);
+    push(I.b2);
+    push(I.c2);
+    for (uint32_t v : I.args)
+      push(v);
+    if (I.dst != NONE && I.dst < nv)
+      def_site[I.dst] = i;
   }
   // the single-use, single-def comparison behind a Cbr condition (the same
   // predicate range_analyze uses for its branch refinement)
@@ -201,27 +221,11 @@ constexpr bool opt_jthread(Fn &fn, const An &A, const Ranges &RA,
         }
       if (already_pred)
         continue; // phi-value ambiguity on the existing edge
-      // ---- outside-use check: elbow defs must die with the elbow ---------
-      bool leak = false;
-      for (uint32_t i = 0; i < fn.code.size() && !leak; ++i) {
-        if (i >= bb && i < be)
-          continue; // uses inside the elbow are fine
-        const Instr &I = fn.code[i];
-        auto chk = [&](uint32_t v) {
-          if (v == NONE || v >= nv)
-            return;
-          const uint32_t di = defi[v];
-          if (di != NONE && di >= bb && di < be)
-            leak = true;
-        };
-        chk(I.a);
-        chk(I.b2);
-        chk(I.c2);
-        for (uint32_t v : I.args)
-          chk(v);
-      }
-      if (leak)
-        continue;
+      // ---- outside-use check: elbow defs must die with the elbow
+      // (the leak scan is the GENERIC KERNEL over the pass-entry
+      // tables; the region is [bb, be), the elbow's code window) ----
+      if (opt_ns::region_uses_escape(def_site, args_of, bb, be))
+        continue; // an elbow-local def read outside: skip
       ths.push_back({a, slot, tgt});
     }
   }

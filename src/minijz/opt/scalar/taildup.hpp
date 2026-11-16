@@ -83,8 +83,7 @@ constexpr bool opt_taildup(Fn &fn, const An &A, OptStats &os) {
     if (!td_succs_ok(fn, X))
       continue; // a continuation is not T-private / opens with a phi
     td_escape_inventory(fn, X); // defv + the per-copy slots
-    td_route_seed(A, X);        // the dominance seeding
-    td_route_fixpoint(fn, X);   // chains, merges, the born sites
+    td_route_seed(A, X);        // the routing fixpoint (the kernel)
     if (!td_outside_uses_ok(fn, X))
       continue; // a T-defined value read where no supplier phi may live
     td_commit(fn, X, os); // validated: the commit never fails

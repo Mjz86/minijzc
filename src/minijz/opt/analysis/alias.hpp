@@ -33,6 +33,7 @@
 // trapelim reruns alias_analyze for its Load/Store bounds proofs.
 
 #include "../../ir/instr.hpp"
+#include "../opt_generic.hpp"
 
 // ============================================================================
 // 9d3. HANDLE ALIAS ANALYSIS (allocation-identity + value ranges)
@@ -45,7 +46,12 @@
 //    single[v] = NONE otherwise ("obscure": constants, arithmetic results,
 //                     loads, params, input(), call results, mixed phis --
 //                     the value may name ANY array, or no array at all).
-// Two program-wide gates are derived from this (see prog_handle_gates):
+// The copy/phi fixpoint is the GENERIC KERNEL (opt_ns::alias_ns::
+// resolve_single_ids, opt/opt_generic.hpp): this wrapper seeds the
+// allocations, states each def in code order (Copy -> inherit, Phi ->
+// ALL-args-agree, N-ary), and passes the compiler's historical patience
+// cap (64 rounds) as policy. Two program-wide gates are derived from this
+// (see prog_handle_gates):
 //   lift_ok   -- no Load/Store anywhere reads through an obscure handle.
 //                Otherwise a runtime value could observe the stale arena
 //                contents of a promoted (mem2reg'd) array, so promotion is
@@ -69,38 +75,48 @@ constexpr AliasInfo alias_analyze(const Fn &fn) {
   AI.single.assign(nv, NONE);
   if (!nv)
     return AI;
+  // the seed pass (the wrapper's half of the contract): every Alloc
+  // dst names exactly its own allocation
   for (const Instr &I : fn.code)
     if (I.k == K::Alloc && I.dst != NONE && I.dst < nv)
       AI.single[I.dst] = AI.nallocs++;
-  // Copies and Phis reference each other (loop phis), so iterate to a
-  // fixpoint. Each vreg has ONE def, so single[v] is a pure function of its
-  // def instr; the loop just resolves the reference chains. Transitions are
-  // monotone NONE->id (an id, once assigned, is stable), so this terminates.
-  bool grew = true;
-  for (uint32_t guard = 0; grew && guard < 64; ++guard) {
-    grew = false;
-    for (const Instr &I : fn.code) {
-      if (I.dst == NONE || I.dst >= nv)
-        continue;
-      if (I.k == K::Copy) {
-        if (I.a != NONE && I.a < nv && AI.single[I.dst] != AI.single[I.a]) {
-          AI.single[I.dst] = AI.single[I.a];
-          grew = true;
-        }
-      } else if (I.k == K::Phi) {
-        // single iff BOTH args exist, are that same single, and are not
-        // obscure; an undef (NONE) arg is treated as obscure (conservative)
-        bool ok = I.a != NONE && I.a < nv && AI.single[I.a] != NONE &&
-                  I.b2 != NONE && I.b2 < nv &&
-                  AI.single[I.b2] == AI.single[I.a];
-        uint32_t want = ok ? AI.single[I.a] : NONE;
-        if (AI.single[I.dst] != want) {
-          AI.single[I.dst] = want;
-          grew = true;
-        }
-      }
+  // the def records in CODE ORDER (the kernel's fixpoint scans this
+  // list; Copies and Phis reference each other -- loop phis -- so the
+  // reference chains need the rounds)
+  std::vector<opt_ns::alias_def_t> defs{};
+  defs.reserve(fn.code.size());
+  for (const Instr &I : fn.code) {
+    if (I.dst == NONE || I.dst >= nv)
+      continue;
+    if (I.k == K::Copy) {
+      defs.push_back({.var = I.dst,
+                      .kind = opt_ns::alias_copy_v,
+                      .src = (I.a != NONE && I.a < nv) ? I.a
+                                                       : opt_ns::none_v});
+    } else if (I.k == K::Phi) {
+      // the 2-slot phi args as an N-ary row (an absent arg is obscure
+      // to the kernel, exactly the old conservative rule)
+      std::vector<uintlen_t> args{};
+      args.reserve(2);
+      args.push_back((I.a != NONE && I.a < nv) ? (uintlen_t)I.a
+                                                : opt_ns::none_v);
+      args.push_back((I.b2 != NONE && I.b2 < nv) ? (uintlen_t)I.b2
+                                                  : opt_ns::none_v);
+      defs.push_back(
+          {.var = I.dst, .kind = opt_ns::alias_phi_v, .args = std::move(args)});
     }
   }
+  // the kernel: one def per vreg makes single[v] a pure function of
+  // its def instr; transitions are monotone NONE->id (an id, once
+  // assigned, is stable), so the rounds terminate. 64 = the
+  // compiler's historical patience, kept as policy.
+  std::vector<uintlen_t> single64(nv);
+  for (uint32_t v = 0; v < nv; ++v)
+    single64[v] = AI.single[v] == NONE ? opt_ns::none_v : AI.single[v];
+  opt_ns::resolve_single_ids<V>(defs, single64, nv, 64);
+  for (uint32_t v = 0; v < nv; ++v)
+    AI.single[v] =
+        (single64[v] == opt_ns::none_v) ? NONE : (uint32_t)single64[v];
   return AI;
 }
 

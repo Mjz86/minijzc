@@ -72,9 +72,13 @@ constexpr bool opt_trapelim(Fn &fn, const An &A, OptStats &os,
         fn.code[defi[I.a]].k == K::Const && I.dst != NONE && I.dst < nv &&
         AI.single[I.dst] != NONE && fn.code[defi[I.a]].c >= 0)
       alen[AI.single[I.dst]] = fn.code[defi[I.a]].c;
-  auto nz = [](const Iv &i) { return i.bot || i.hi < 0 || i.lo > 0; };
-  auto nm1 = [](const Iv &i) { return i.bot || i.hi < -1 || i.lo > -1; };
-  auto nmin = [](const Iv &i) { return i.bot || i.lo > INT64_MIN; };
+  // the trap-safety predicates are the interval LATTICE's (opt_ns::
+  // iv_ns -- the kernel layer): a sound over-approximation answers
+  // them. Div/Mod trap only on divisor 0 or INT64_MIN / -1; a Load/
+  // Store traps only on a bad handle or an out-of-range index.
+  auto nz = [](const Iv &i) { return opt_ns::iv_ns::iv_excludes_zero(i); };
+  auto nm1 = [](const Iv &i) { return opt_ns::iv_ns::iv_excludes_minus1(i); };
+  auto nmin = [](const Iv &i) { return opt_ns::iv_ns::iv_excludes_min(i); };
   // range-proved comparison folding: comparisons never trap, so an outcome
   // the intervals already decide is a constant. (the decision itself lives
   // in intervals.hpp as iv_decide -- jthread reuses it per-edge.)

@@ -954,4 +954,768 @@ MJZ_CX_FN uintlen_t calculate_trivial_phi_pick(uintlen_t dst,
   return pick;
 }
 
+// ---------------------------------------------------------------------------
+// shape_ns: natural-loop shape as pure CFG math
+// ---------------------------------------------------------------------------
+// THE CONTRACT. classify_header_preds: one sweep over a header's
+// pred row against the loop mask -- the LAST inside pred is the
+// latch candidate, the LAST outside one the preheader candidate,
+// with the counts (the "exactly one of each" test is the caller's
+// loop-shape policy). calculate_loop_shape: the canonical test-
+// first shape -- unique in-pred (latch), unique out-pred (pre),
+// and a TWO-ARM branch with exactly one arm staying (body) and
+// one leaving (X); the terminator KIND check stays with the
+// client (which instr ends a block is IR knowledge; the arms and
+// their in/out classification are CFG math). collect_exit_edges:
+// every in-loop -> outside edge except the client's primary edge,
+// with the degeneracy rule (two VALID slots on the same outside
+// target = a both-arms-out branch -- bypass threading cannot
+// represent per-arm values) and the forbidden-target paranoia as
+// parameters. Every restructuring pass (unroll / lcf / unswitch /
+// rotate / lsimp) asks these three questions; none of them may
+// assume the binary terminator -- the row shapes are the client's.
+struct header_preds_t {
+  uintlen_t pre{none_v}, latch{none_v};
+  uintlen_t n_in{}, n_out{};
+};
+MJZ_CX_FN header_preds_t calculate_header_preds(const auto &pred_row,
+                                                const auto &in_loop) noexcept {
+  header_preds_t r{};
+  for (const auto &pp : pred_row) {
+    const uintlen_t p = uintlen_t(pp);
+    if (p < in_loop.size() && in_loop[p]) {
+      r.latch = p;
+      ++r.n_in;
+    } else {
+      r.pre = p;
+      ++r.n_out;
+    }
+  }
+  return r;
+}
+struct loop_shape_t {
+  uintlen_t pre{none_v}, latch{none_v}, body{none_v}, X{none_v};
+  bool ok{};
+};
+// arm0/arm1: the header branch's two VALID targets (slot order).
+MJZ_CX_FN loop_shape_t calculate_loop_shape(const auto &pred_row,
+                                            const auto &in_loop,
+                                            uintlen_t arm0,
+                                            uintlen_t arm1) noexcept {
+  loop_shape_t sh{};
+  const header_preds_t hp = calculate_header_preds(pred_row, in_loop);
+  if (hp.n_in != 1 || hp.n_out != 1)
+    return sh;
+  sh.pre = hp.pre;
+  sh.latch = hp.latch;
+  const uintlen_t nb = uintlen_t(in_loop.size());
+  const bool v0 = arm0 < nb, v1 = arm1 < nb;
+  const bool in0 = v0 && in_loop[arm0], in1 = v1 && in_loop[arm1];
+  if (in0 && !in1 && v1) {
+    sh.body = arm0;
+    sh.X = arm1;
+  } else if (in1 && !in0 && v0) {
+    sh.body = arm1;
+    sh.X = arm0;
+  } else
+    return sh;
+  sh.ok = true;
+  return sh;
+}
+struct exit_edge_t {
+  uintlen_t from{}, to{};
+};
+// Every in-loop -> outside edge except (skip_from -> skip_to).
+// Returns false on the degeneracy (two valid slots, same outside
+// target) or a forbidden target (forbid0/forbid1, none_v = none):
+// the caller discards the partial list either way.
+MJZ_CX_FN bool collect_exit_edges(const auto &succs_rows, const auto &in_loop,
+                                  uintlen_t skip_from, uintlen_t skip_to,
+                                  uintlen_t forbid0, uintlen_t forbid1,
+                                  std::vector<exit_edge_t> &out) noexcept {
+  const uintlen_t nb = uintlen_t(succs_rows.size());
+  for (uintlen_t b = 0; b < nb; ++b) {
+    if (!(b < in_loop.size() && in_loop[b]))
+      continue;
+    const auto &row = succs_rows[b];
+    uintlen_t valid = 0, distinct = 0;
+    uintlen_t first = none_v;
+    for (const auto &ss : row) {
+      const uintlen_t s = uintlen_t(ss);
+      if (s == none_v || s >= nb)
+        continue;
+      ++valid;
+      if (first == none_v) {
+        first = s;
+        distinct = 1;
+      } else if (s != first)
+        distinct = 2;
+    }
+    if (valid >= 2 && distinct == 1 && first < in_loop.size() &&
+        !in_loop[first])
+      return false; // every arm on ONE outside target: degenerate
+    for (const auto &ss : row) {
+      const uintlen_t s = uintlen_t(ss);
+      if (s == none_v || s >= nb || in_loop[s])
+        continue;
+      if (b == skip_from && s == skip_to)
+        continue; // the edge the caller replaces outright
+      out.push_back({.from = b, .to = s});
+      if (s == forbid0 || s == forbid1)
+        return false; // would tangle the versioned preds; paranoia
+    }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// route_ns: the supplier-routing fixpoint (tail duplication's mini
+// SSA construction), generic over arity
+// ---------------------------------------------------------------------------
+// THE CONTRACT. Two SOURCE regions (0 and 1) supply a value; every
+// block reads it from SOME supplier: the source that dominates it,
+// or a phi BORN at a join of routes. Inputs: pred rows (RAW, any
+// arity), the blocks that are DEAD to the routing (the duplicated
+// tail and its preds -- client policy), a dominance mask per
+// source (a block dominated by exactly one source reads it
+// outright), and MAX_JOIN_ARITY -- the phi arity the client's IR
+// can spell (the 2-arg IR passes 2; an N-ary-phi IR passes its
+// own bound; the founding rule: the kernel never assumes two).
+// The fixpoint (rounds capped at nb+1, in-place visibility within
+// a round, no-progress break, trailing sweep pending -> dead for
+// cycles) resolves, per block: a pending pred blocks it; no
+// preds / a dead pred / more preds than the arity bound -> dead
+// (no phi possible there); one pred or all preds on ONE route ->
+// inherit it; else a phi is BORN at the join (site id 2+k, pred
+// order preserved). OUTPUT: route[b] = route_dead_v | 0 | 1 |
+// 2+site, and the born sites (block, pred list, pred routes) in
+// creation order -- the order the client must mint their phis.
+inline constexpr uintlen_t route_pending_v = uintlen_t(-2);
+inline constexpr uintlen_t route_dead_v = none_v;
+inline constexpr uintlen_t route_born_base_v = 2;
+struct route_site_t {
+  uintlen_t W{};
+  std::vector<uintlen_t> preds{};  // the join's preds, row order
+  std::vector<uintlen_t> proutes{}; // their routes at birth
+};
+struct route_plan_t {
+  std::vector<uintlen_t> route{};
+  std::vector<route_site_t> sites{};
+};
+MJZ_CX_FN route_plan_t calculate_supplier_routes(
+    const auto &preds, const auto &dead_blocks, const auto &dom0,
+    const auto &dom1, uintlen_t max_join_arity) noexcept {
+  route_plan_t R{};
+  const uintlen_t nb = uintlen_t(preds.size());
+  R.route.assign(nb, route_pending_v);
+  for (uintlen_t b = 0; b < nb; ++b) {
+    if (b < dead_blocks.size() && dead_blocks[b]) {
+      R.route[b] = route_dead_v;
+      continue;
+    }
+    const bool d0 = b < dom0.size() && dom0[b];
+    const bool d1 = b < dom1.size() && dom1[b];
+    if (d0 && !d1)
+      R.route[b] = 0;
+    else if (d1 && !d0)
+      R.route[b] = 1;
+  }
+  auto step = [&](uintlen_t b) noexcept { // true = progressed
+    if (R.route[b] != route_pending_v)
+      return false;
+    const auto &ps = preds[b];
+    bool any_pending = false, any_dead = false;
+    for (const auto &pp : ps) {
+      const uintlen_t p = uintlen_t(pp);
+      if (p >= nb || R.route[p] == route_dead_v)
+        any_dead = true; // out-of-range pred: dead to the routing
+      else if (R.route[p] == route_pending_v)
+        any_pending = true;
+    }
+    if (any_pending)
+      return false; // wait for the pred's round
+    if (ps.empty() || any_dead || ps.size() > max_join_arity) {
+      R.route[b] = route_dead_v;
+      return true;
+    }
+    bool all_same = true;
+    for (uintlen_t k = 1; k < uintlen_t(ps.size()); ++k)
+      all_same &= R.route[uintlen_t(ps[0])] == R.route[uintlen_t(ps[k])];
+    if (uintlen_t(ps.size()) == 1 || all_same) {
+      R.route[b] = R.route[uintlen_t(ps[0])];
+      return true;
+    }
+    route_site_t S{};
+    S.W = b;
+    for (const auto &pp : ps) {
+      S.preds.push_back(uintlen_t(pp));
+      S.proutes.push_back(R.route[uintlen_t(pp)]);
+    }
+    R.route[b] = route_born_base_v + uintlen_t(R.sites.size());
+    R.sites.push_back(std::move(S));
+    return true;
+  };
+  for (uintlen_t round = 0; round <= nb; ++round) {
+    bool progressed = false;
+    for (uintlen_t b = 0; b < nb; ++b)
+      progressed |= step(b);
+    if (!progressed)
+      break;
+  }
+  for (uintlen_t b = 0; b < nb; ++b)
+    if (R.route[b] == route_pending_v)
+      R.route[b] = route_dead_v; // cycles among unresolved blocks
+  return R;
+}
+// THE NEED CLOSURE. Given the born sites and the list of (route,
+// value) READS the client's use scan found, compute which values
+// each SOURCE must carry (need[src][val]) and which values each
+// born site must merge (bvals[site], first-appearance order). The
+// walk is a DFS over the born-site DAG: reading through a born
+// site needs its preds' suppliers, recursively -- pushed in pred
+// order so the LAST pred's closure is processed first (the
+// original 2-pred emission order, generalized).
+MJZ_CX_FN void calculate_route_needs(
+    uintlen_t n_sources, uintlen_t n_vals, const auto &sites,
+    const auto &reads, std::vector<std::vector<char>> &need,
+    std::vector<std::vector<uintlen_t>> &bvals) noexcept {
+  need.assign(n_sources, std::vector<char>(n_vals, 0));
+  bvals.assign(sites.size(), {});
+  for (const auto &rr : reads) {
+    const uintlen_t r = uintlen_t(rr.first);
+    const uintlen_t di = uintlen_t(rr.second);
+    std::vector<uintlen_t> stack{r};
+    while (!stack.empty()) {
+      const uintlen_t x = stack.back();
+      stack.pop_back();
+      if (x < n_sources) {
+        need[x][di] = 1;
+        continue;
+      }
+      const uintlen_t k = x - route_born_base_v;
+      if (k >= sites.size())
+        continue;
+      bool have = false;
+      for (const auto &vv : bvals[k])
+        have |= (vv == di);
+      if (!have)
+        bvals[k].push_back(di);
+      for (const auto &pr : sites[k].proutes)
+        stack.push_back(pr);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// alias_ns: allocation-identity resolution (the copy/phi fixpoint)
+// ---------------------------------------------------------------------------
+// THE CONTRACT. Per var, the client states its def in CODE ORDER:
+// kind alias_copy_v (single[dst] := single[src]), alias_phi_v
+// (single iff EVERY arg is a valid var whose single is the SAME
+// non-none id -- N-ary: all args must agree; an absent arg is
+// obscure), or alias_other_v (leave as seeded). single[] arrives
+// PRE-SEEDED (the allocations; the wrapper's Alloc pass) and is
+// resolved in place: rounds over the record list (max_rounds is
+// the client's patience cap -- the compiler's historical 64,
+// kept as policy), each transition sets grew. The values are
+// client ids (allocation sites, handle classes, whatever the
+// "proves exactly one X" question is about).
+inline constexpr uintlen_t alias_other_v = 0;
+inline constexpr uintlen_t alias_copy_v = 1;
+inline constexpr uintlen_t alias_phi_v = 2;
+struct alias_def_t {
+  uintlen_t var{};
+  uintlen_t kind{alias_other_v};
+  uintlen_t src{};                  // copy source (copy only)
+  std::vector<uintlen_t> args{};    // phi args, raw (phi only)
+};
+template <version_t version_v>
+MJZ_CX_FN void resolve_single_ids(const std::vector<alias_def_t> &defs,
+                                  std::vector<uintlen_t> &single,
+                                  uintlen_t n_vars,
+                                  uintlen_t max_rounds) noexcept {
+  bool grew = true;
+  for (uintlen_t guard = 0; grew && guard < max_rounds; ++guard) {
+    grew = false;
+    for (const alias_def_t &d : defs) {
+      if (d.var >= n_vars)
+        continue;
+      if (d.kind == alias_copy_v) {
+        if (d.src < n_vars && single[d.var] != single[d.src]) {
+          single[d.var] = single[d.src];
+          grew = true;
+        }
+      } else if (d.kind == alias_phi_v) {
+        // single iff EVERY arg is a valid var, none obscure, and
+        // all carry the SAME id (an absent arg is obscure)
+        bool ok = !d.args.empty();
+        uintlen_t want = none_v;
+        for (uintlen_t k = 0; k < d.args.size() && ok; ++k) {
+          const uintlen_t a = d.args[k];
+          if (a >= n_vars || single[a] == none_v) {
+            ok = false;
+            break;
+          }
+          if (k == 0)
+            want = single[a];
+          else
+            ok &= (single[a] == want);
+        }
+        want = ok ? want : none_v;
+        if (single[d.var] != want) {
+          single[d.var] = want;
+          grew = true;
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// mem_ns: the dominator-scoped forwarding table (load elimination)
+// ---------------------------------------------------------------------------
+// THE CONTRACT. A table of ENTRIES (group, key-tag, key payload,
+// value, from_store) lives along the dominator path: entering a
+// child watermarks the creation sequence, leaving truncates every
+// entry created inside the subtree (seq > watermark -- positions
+// would regrow garbage after a deep join drop emptied them, so
+// scope death goes by creation order, never by resize(mark)).
+// The client supplies, per block, an EVENT list in program order:
+//   mem_store_v  -- kill every entry the MAY_KILL predicate names
+//                   (the memory model: which remembered writes a
+//                   new store can overwrite -- policy), then push
+//                   the written slot (val none_v = kill only)
+//   mem_load_v   -- first-match lookup on (group, key), the hit
+//                   recorded for the client's rewrite, then the
+//                   slot re-recorded as holding THIS value
+//   mem_clear_v  -- the model lost track (obscure store, a call
+//                   with handles): drop everything
+// DROP_AT[b] names the blocks whose ENTRY state the client cannot
+// treat as the dominator's continuation (joins: the memory state
+// merges, a sibling arm's stores are invisible but invalidate the
+// ancestor's "last write" claim) -- a mask INPUT, because a
+// different memory model (phi-placed, like mem2reg) would pass
+// all-zero. OUTPUT: one hit record per load event, in event order.
+inline constexpr uintlen_t mem_store_v = 0;
+inline constexpr uintlen_t mem_load_v = 1;
+inline constexpr uintlen_t mem_clear_v = 2;
+struct mem_event_t {
+  uintlen_t kind{mem_load_v};
+  uintlen_t group{};     // the allocation / slot-space id
+  uintlen_t key_tag{};   // client key tag (const-ness, ...)
+  uintlen_t key_a{};     // key payload A (the vreg key)
+  uintlen_t key_b{};     // key payload B (the const value)
+  uintlen_t val{none_v}; // store: the written value; load: the dst
+};
+struct mem_hit_t {
+  bool found{};
+  uintlen_t val{};
+  bool from_store{};
+};
+template <version_t version_v, class MayKill>
+MJZ_CX_FN std::vector<mem_hit_t> run_dom_scoped_table(
+    const auto &dominator_tree, const auto &sites_of_block,
+    const auto &drop_at, const auto &events_of_block,
+    const MayKill &may_kill) noexcept {
+  struct ent_t {
+    uintlen_t group{}, key_tag{}, key_a{}, key_b{}, val{};
+    bool from_store{};
+    uintlen_t seq{};
+  };
+  std::vector<ent_t> table;
+  uintlen_t seq_ctr = 0;
+  auto push_ent = [&](ent_t e) noexcept {
+    e.seq = ++seq_ctr;
+    table.push_back(e);
+  };
+  std::vector<mem_hit_t> hits{};
+  auto rows = dominator_tree.range();
+  const uintlen_t nb = uintlen_t(std::ranges::size(rows));
+  struct frame_t {
+    uintlen_t b, child_idx, w;
+  };
+  std::vector<frame_t> st;
+  st.push_back({0, 0, seq_ctr});
+  while (!st.empty()) {
+    frame_t &fr = st.back();
+    const uintlen_t b = fr.b;
+    if (fr.child_idx == 0) { // entering: scan the block's events once
+      if (b < drop_at.size() && drop_at[b])
+        table.clear(); // join: the memory state merges
+      for (const auto &ee : events_of_block[b]) {
+        const mem_event_t &ev = ee;
+        if (ev.kind == mem_store_v) {
+          size_t w = 0;
+          for (size_t r = 0; r < table.size(); ++r)
+            if (!may_kill(table[r].group, table[r].key_tag, table[r].key_a,
+                          table[r].key_b, ev))
+              table[w++] = table[r];
+          table.resize(w);
+          if (ev.val != none_v)
+            push_ent({.group = ev.group,
+                      .key_tag = ev.key_tag,
+                      .key_a = ev.key_a,
+                      .key_b = ev.key_b,
+                      .val = ev.val,
+                      .from_store = true});
+        } else if (ev.kind == mem_load_v) {
+          mem_hit_t h{};
+          for (const ent_t &e : table)
+            if (e.group == ev.group && e.key_tag == ev.key_tag &&
+                (ev.key_tag ? e.key_b == ev.key_b : e.key_a == ev.key_a)) {
+              h = {.found = true, .val = e.val, .from_store = e.from_store};
+              break;
+            }
+          hits.push_back(h);
+          push_ent({.group = ev.group,
+                    .key_tag = ev.key_tag,
+                    .key_a = ev.key_a,
+                    .key_b = ev.key_b,
+                    .val = ev.val,
+                    .from_store = false});
+        } else if (ev.kind == mem_clear_v) {
+          table.clear();
+        }
+      }
+    }
+    auto ch = rows[b];
+    if (fr.child_idx < uintlen_t(std::ranges::size(ch))) {
+      const uintlen_t next = uintlen_t(ch[fr.child_idx++]);
+      st.push_back({next, 0, seq_ctr});
+      continue;
+    }
+    // leaving b: drop everything created inside its subtree
+    {
+      size_t wi = 0;
+      for (size_t r = 0; r < table.size(); ++r)
+        if (table[r].seq <= fr.w)
+          table[wi++] = table[r];
+      table.resize(wi);
+    }
+    st.pop_back();
+  }
+  return hits;
+}
+
+// ---------------------------------------------------------------------------
+// iv_ns / ai_ns: the interval lattice + the forward abstract-
+// interpretation driver (range analysis)
+// ---------------------------------------------------------------------------
+// THE SPLIT (the sccp precedent: propagation is the algorithm,
+// semantics is policy). iv_ns is the INTERVAL LATTICE -- pure
+// int64 math, no op vocabulary: hull (the join), equality, the
+// narrowing meet, and the trap-safety predicates. The TRANSFERS
+// (what Add does to intervals, what a taken comparison refines)
+// stay with the client -- they speak the compiler's op ids.
+// ai_ns::solve_forward is the DRIVER: plain rounds growing up
+// from bottom, then WIDENING at the client's chosen points only
+// (the Cousot discipline -- widening everywhere re-inflates
+// refined states), then NARROWING rounds intersecting back down;
+// a no-fixpoint give-up is reported and the client falls back to
+// sound TOP. Callbacks (per the std::sort-comparator rule):
+//   entry_top(st)              -- the entry block's initial state
+//   refine_edge(p, b, st)      -- the fact the p->b edge carries
+//   phi_join(b, st, exits, nv) -- the phi rule (exits = the pred
+//                                exit table, read at p*nv+v)
+//   transfer(b, st)            -- walk b's body through st
+// The visit order (blocks ascending, preds in row order, rounds
+// capped by the client's patience) is the driver's; the states
+// are a pure function of that order, which is what keeps the
+// rewrite byte-identical when the driver moves into the kernel.
+namespace iv_ns {
+struct iv_t {
+  int64_t lo{INT64_MIN}, hi{INT64_MAX};
+  bool bot{}; // empty: unreachable program point
+};
+MJZ_CX_FN bool iv_equal(const iv_t &a, const iv_t &b) noexcept {
+  return a.bot == b.bot && a.lo == b.lo && a.hi == b.hi;
+}
+MJZ_CX_FN iv_t iv_join(const iv_t &a, const iv_t &b) noexcept { // hull
+  if (a.bot)
+    return b;
+  if (b.bot)
+    return a;
+  return {a.lo < b.lo ? a.lo : b.lo, a.hi > b.hi ? a.hi : b.hi, false};
+}
+// narrowing meet: the tighter of two sound approximations, kept
+// only when it is still non-empty (bot is "unreachable", not
+// "contradiction": the original skips bot operands untouched)
+MJZ_CX_FN void iv_narrow(iv_t &old, const iv_t &st) noexcept {
+  if (st.bot || old.bot)
+    return;
+  const int64_t lo = st.lo > old.lo ? st.lo : old.lo;
+  const int64_t hi = st.hi < old.hi ? st.hi : old.hi;
+  if (lo <= hi)
+    old = {lo, hi, false};
+}
+// trap-safety predicates (a sound over-approximation answers
+// them): divisor excludes 0 / excludes -1, dividend excludes MIN
+MJZ_CX_FN bool iv_excludes_zero(const iv_t &i) noexcept {
+  return i.bot || i.hi < 0 || i.lo > 0;
+}
+MJZ_CX_FN bool iv_excludes_minus1(const iv_t &i) noexcept {
+  return i.bot || i.hi < -1 || i.lo > -1;
+}
+MJZ_CX_FN bool iv_excludes_min(const iv_t &i) noexcept {
+  return i.bot || i.lo > INT64_MIN;
+}
+} // namespace iv_ns
+
+namespace ai_ns {
+template <version_t version_v> struct ai_result_t {
+  std::vector<iv_ns::iv_t> entry{}; // nb * nv, block-entry states
+  bool converged{};
+};
+// preds: raw pred rows; widen_at: the widening points (loop
+// headers); entry_block: the start (its state = entry_top);
+// plain_cap / widen_cap / narrow_rounds: the client's patience.
+template <version_t version_v, class CB>
+MJZ_CX_FN ai_result_t<version_v>
+solve_forward(uintlen_t nb, uintlen_t nv, const auto &preds,
+              const auto &widen_at, uintlen_t entry_block,
+              uintlen_t plain_cap, uintlen_t widen_cap,
+              uintlen_t narrow_rounds, const CB &cb) noexcept {
+  ai_result_t<version_v> R{};
+  if (!nb || !nv)
+    return R;
+  std::vector<iv_ns::iv_t> entry((size_t)nb * nv, iv_ns::iv_t{0, 0, true});
+  std::vector<iv_ns::iv_t> exit_((size_t)nb * nv, iv_ns::iv_t{0, 0, true});
+  std::vector<char> touched(nb, 0);
+  std::vector<iv_ns::iv_t> st(nv), edge(nv);
+  bool widening = false;
+  uintlen_t round = 0;
+  bool converged = false;
+  for (;;) {
+    bool changed = false;
+    for (uintlen_t b = 0; b < nb; ++b) {
+      // ---- entry = hull over incoming (refined) pred exits + phi rule
+      for (uintlen_t v = 0; v < nv; ++v)
+        st[v] = {0, 0, true};
+      bool any_pred = false;
+      for (const auto &pp : preds[b]) {
+        const uintlen_t p = uintlen_t(pp);
+        if (p >= nb || !touched[p])
+          continue;
+        any_pred = true;
+        for (uintlen_t v = 0; v < nv; ++v)
+          edge[v] = exit_[(size_t)p * nv + v];
+        cb.refine_edge(p, b, edge); // the fact the edge carries
+        for (uintlen_t v = 0; v < nv; ++v)
+          st[v] = iv_ns::iv_join(st[v], edge[v]);
+      }
+      if (!any_pred && b != entry_block) // unreachable: keep bottom
+        for (uintlen_t v = 0; v < nv; ++v)
+          st[v] = {0, 0, true};
+      if (b == entry_block)
+        cb.entry_top(st);
+      else
+        cb.phi_join(b, st, exit_.data(), nv);
+      // ---- convergence bookkeeping (+ widening at the chosen points)
+      {
+        bool diff = false;
+        for (uintlen_t v = 0; v < nv; ++v)
+          if (!iv_ns::iv_equal(st[v], entry[(size_t)b * nv + v])) {
+            diff = true;
+            break;
+          }
+        if (diff) {
+          if (widening && b < widen_at.size() && widen_at[b]) {
+            for (uintlen_t v = 0; v < nv; ++v) {
+              iv_ns::iv_t &old = entry[(size_t)b * nv + v];
+              if (st[v].bot)
+                continue;
+              if (st[v].lo < old.lo)
+                st[v].lo = INT64_MIN; // grow the growing sides
+              if (st[v].hi > old.hi)
+                st[v].hi = INT64_MAX;
+              if (st[v].lo > st[v].hi)
+                st[v] = old; // paranoia
+            }
+          }
+          for (uintlen_t v = 0; v < nv; ++v)
+            entry[(size_t)b * nv + v] = st[v];
+          changed = true;
+        }
+      }
+      // ---- transfer through the block
+      for (uintlen_t v = 0; v < nv; ++v)
+        st[v] = entry[(size_t)b * nv + v];
+      cb.transfer(b, st);
+      for (uintlen_t v = 0; v < nv; ++v)
+        exit_[(size_t)b * nv + v] = st[v];
+      touched[b] = 1;
+    }
+    if (!changed) {
+      converged = true;
+      break;
+    }
+    ++round;
+    if (!widening && round >= plain_cap)
+      widening = true;
+    if (widening && round >= plain_cap + widen_cap)
+      break; // give up: the caller falls back to sound TOP
+  }
+  if (converged) {
+    // ---- narrowing: re-transfer and intersect with the widened state
+    for (uintlen_t n = 0; n < narrow_rounds; ++n) {
+      for (uintlen_t b = 0; b < nb; ++b) {
+        for (uintlen_t v = 0; v < nv; ++v)
+          st[v] = {0, 0, true};
+        for (const auto &pp : preds[b]) {
+          const uintlen_t p = uintlen_t(pp);
+          if (p >= nb || !touched[p])
+            continue;
+          for (uintlen_t v = 0; v < nv; ++v)
+            edge[v] = exit_[(size_t)p * nv + v];
+          cb.refine_edge(p, b, edge);
+          for (uintlen_t v = 0; v < nv; ++v)
+            st[v] = iv_ns::iv_join(st[v], edge[v]);
+        }
+        if (b == entry_block)
+          cb.entry_top(st);
+        else
+          cb.phi_join(b, st, exit_.data(), nv);
+        for (uintlen_t v = 0; v < nv; ++v)
+          iv_ns::iv_narrow(entry[(size_t)b * nv + v], st[v]);
+        for (uintlen_t v = 0; v < nv; ++v)
+          st[v] = entry[(size_t)b * nv + v];
+        cb.transfer(b, st);
+        for (uintlen_t v = 0; v < nv; ++v)
+          exit_[(size_t)b * nv + v] = st[v];
+      }
+    }
+  }
+  R.entry = std::move(entry);
+  R.converged = converged;
+  return R;
+}
+} // namespace ai_ns
+
+// ---------------------------------------------------------------------------
+// vn_ns::mixed_sort_key: the orderable operand tag canon shares
+// ---------------------------------------------------------------------------
+// The mixed var/value key the canonicalizer orders commutative
+// operands by (and the SAME tag discipline vn keys bin operands
+// with): absent -> 0, a known const -> (1<<63) ^ value (so
+// constants sort after every var id, by value), else the var id.
+// One canonical shape per equivalence class is what makes CSE
+// hit -- the key is the algorithm, the ops it orders are policy.
+MJZ_CX_FN uint64_t mixed_sort_key(uintlen_t n_vars, const auto &const_mask,
+                                  const auto &const_val,
+                                  uintlen_t v) noexcept {
+  if (v == none_v)
+    return 0;
+  if (v < n_vars && const_mask[v])
+    return (uint64_t(1) << 63) ^ uint64_t(const_val[v]);
+  return uint64_t(v);
+}
+
+// ---------------------------------------------------------------------------
+// cfg_ns::region_uses_escape: does anything OUTSIDE the region
+// read a value defined INSIDE it?
+// ---------------------------------------------------------------------------
+// def_site_of_var[v] = the site defining v (none_v when none);
+// args_of_site[s] = site s's operand vars, ANY order. A use at a
+// site outside [lo, hi) of a var whose def site is inside [lo,
+// hi) escapes: the value would not exist on a path that skips
+// the region. jthread's elbow-leak scan, stated for any IR --
+// the FIRST scan of the walk is order-free (a boolean OR).
+MJZ_CX_FN bool region_uses_escape(const auto &def_site_of_var,
+                                  const auto &args_of_site, uintlen_t lo,
+                                  uintlen_t hi) noexcept {
+  const uintlen_t n_sites = uintlen_t(std::ranges::size(args_of_site));
+  const uintlen_t n_vars = uintlen_t(std::ranges::size(def_site_of_var));
+  for (uintlen_t s = 0; s < n_sites; ++s) {
+    if (lo <= s && s < hi)
+      continue; // uses inside the region are fine
+    for (const auto &vv : args_of_site[s]) {
+      const uintlen_t v = uintlen_t(vv);
+      if (v >= n_vars)
+        continue;
+      const uintlen_t d = uintlen_t(def_site_of_var[v]);
+      if (d != none_v && lo <= d && d < hi)
+        return true; // a region-local def read outside
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// ipa_ns::calculate_live_params: the interprocedural liveness
+// fixpoint (dead arguments)
+// ---------------------------------------------------------------------------
+// alive[g][p] starts from the HARD roots (operands, observed
+// values, surviving base vars -- client policy) and grows through
+// the SOFT edges: param p of g forwarded as argument q of a call
+// to h is alive once h's q is alive (or h is not a candidate, so
+// its params can never die). The least fixpoint -- alive only
+// grows -- is unique regardless of visit order; the scan order
+// (g ascending, p ascending, softs in record order) is kept
+// anyway so the fixpoint after any bounded patience is the
+// compiler's historical one.
+struct soft_edge_t {
+  uintlen_t h{}, q{}; // forwarded to (fn h, argument q)
+};
+MJZ_CX_FN void calculate_live_params(
+    const auto &eligible, const auto &softs,
+    std::vector<std::vector<char>> &alive) noexcept {
+  const uintlen_t n = uintlen_t(eligible.size());
+  for (bool ch = true; ch;) {
+    ch = false;
+    for (uintlen_t g = 0; g < n; ++g) {
+      if (!(g < eligible.size() && eligible[g]))
+        continue;
+      for (uintlen_t p = 0; p < alive[g].size(); ++p) {
+        if (alive[g][p])
+          continue;
+        for (const soft_edge_t &s : softs[g][p]) {
+          if (!(s.h < eligible.size() && eligible[s.h]) ||
+              (s.q < alive[s.h].size() && alive[s.h][s.q])) {
+            alive[g][p] = 1; // feeds a LIVE param (or a non-candidate)
+            ch = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// equi_ns::refine_by_keys: class refinement over serial keys
+// (identical-code folding)
+// ---------------------------------------------------------------------------
+// One refinement round: every candidate joins the class of the
+// FIRST candidate with an equal key (rep-of-first-equal), changed
+// reported against the previous map. The caller seeds with
+// wildcarded keys, then re-serializes with the CURRENT
+// representatives until a round changes nothing (the verified
+// fixpoint the fold commits at) or the round cap declines. The
+// keys are opaque -- what "identical" means is the client's
+// serialization policy; the grouping is the algorithm.
+MJZ_CX_FN bool refine_by_keys(const std::vector<uint64_t> *keys,
+                              const auto &cand,
+                              std::vector<uintlen_t> &rep) noexcept {
+  const uintlen_t n = uintlen_t(rep.size());
+  std::vector<uintlen_t> nrep(n);
+  for (uintlen_t f = 0; f < n; ++f)
+    nrep[f] = f;
+  bool changed = false;
+  for (uintlen_t f = 0; f < n; ++f) {
+    if (!(f < cand.size() && cand[f]))
+      continue;
+    for (uintlen_t g = 0; g < f; ++g) { // first candidate, equal key
+      if (!(g < cand.size() && cand[g]))
+        continue;
+      if (keys[g] == keys[f]) {
+        nrep[f] = nrep[g];
+        break;
+      }
+    }
+    changed |= (nrep[f] != rep[f]);
+  }
+  rep = std::move(nrep);
+  return changed;
+}
+
 }; // namespace mjz::opt_ns

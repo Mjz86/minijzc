@@ -34,6 +34,7 @@
 //   sweep, which deletes the folded duplicates.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9e6. IDENTICAL CODE FOLDING (interprocedural) ---------------------
 // Functions with structurally identical bodies (identical instructions,
@@ -127,32 +128,11 @@ constexpr void icf_serialize(const Fn &G, uint32_t self, CM &&cm,
   }
 }
 
-// one refinement round: keys[k] are precomputed; group candidates by
-// first-equal-key; returns the new representative map
-constexpr bool icf_group(const std::vector<uint64_t> *keys,
-                         const std::vector<char> &cand,
-                         std::vector<uint32_t> &rep) {
-  const uint32_t n = (uint32_t)rep.size();
-  std::vector<uint32_t> nrep(n);
-  for (uint32_t f = 0; f < n; ++f)
-    nrep[f] = f;
-  bool changed = false;
-  for (uint32_t f = 0; f < n; ++f) {
-    if (!cand[f])
-      continue;
-    for (uint32_t g = 0; g < f; ++g) { // first candidate with an equal key
-      if (!cand[g])
-        continue;
-      if (keys[g] == keys[f]) {
-        nrep[f] = nrep[g];
-        break;
-      }
-    }
-    changed |= (nrep[f] != rep[f]);
-  }
-  rep = std::move(nrep);
-  return changed;
-}
+// ONE refinement round is the GENERIC KERNEL (opt_ns::equi_ns::
+// refine_by_keys, opt/opt_generic.hpp): every candidate joins the
+// class of the FIRST candidate with an equal key, changed reported
+// against the previous map. The seeding, the serialization policy
+// (what "identical" means) and the round cap stay here.
 
 constexpr bool opt_icf(std::vector<Fn> &fns, std::vector<OptStats> &ostats) {
   const uint32_t n = (uint32_t)fns.size();
@@ -173,7 +153,7 @@ constexpr bool opt_icf(std::vector<Fn> &fns, std::vector<OptStats> &ostats) {
     cand[f] = depth ? 0 : 1;
   }
   // ---- seeding: wildcard callees ------------------------------------------
-  std::vector<uint32_t> rep(n);
+  std::vector<uintlen_t> rep(n);
   for (uint32_t f = 0; f < n; ++f)
     rep[f] = f;
   {
@@ -181,7 +161,7 @@ constexpr bool opt_icf(std::vector<Fn> &fns, std::vector<OptStats> &ostats) {
     for (uint32_t f = 0; f < n; ++f)
       icf_serialize(
           fns[f], f, [](uint32_t) { return ICF_WILD; }, keys[f]);
-    (void)icf_group(keys.data(), cand, rep);
+    (void)opt_ns::refine_by_keys(keys.data(), cand, rep);
   }
   // ---- refinement: concrete representatives, split on divergence ---------
   for (int round = 0; round < 8; ++round) {
@@ -197,7 +177,7 @@ constexpr bool opt_icf(std::vector<Fn> &fns, std::vector<OptStats> &ostats) {
             return (uint64_t)rep[c]; // callee -> its class representative
           },
           keys[f]);
-    bool changed = icf_group(keys.data(), cand, rep);
+    bool changed = opt_ns::refine_by_keys(keys.data(), cand, rep);
     if (!changed)
       break; // verified fixpoint
     if (round == 7)

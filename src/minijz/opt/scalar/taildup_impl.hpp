@@ -193,6 +193,7 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // the growth cap: the body duplicates into BOTH preds (2x) before
 // tier-0 folding shrinks it — keep the per-candidate growth <= 12
@@ -211,15 +212,15 @@ struct TdCtx {
   std::vector<uint32_t> phi_dst{}, phi_a{}, phi_b{}; // keyed (P0,P1)
   std::vector<uint32_t> defv{};                      // T-defined value ids
   std::vector<uint32_t> local0{}, local1{};          // per-copy value (P0/P1)
-  std::vector<int> route{}; // block -> where it reads T-defs from
-  struct Site {
-    uint32_t W, p0, p1;
-    int r0, r1; // the preds' supplier routes
-  };
-  std::vector<Site> bsites{};                 // the born-phi re-merge sites
+  // the routing table + the born-phi re-merge sites: THE GENERIC
+  // KERNEL'S tables (opt_ns::route_ns::calculate_supplier_routes --
+  // the supplier fixpoint as pure CFG math, max_join_arity = 2 this
+  // IR's phi arity; an N-ary IR would pass its own bound)
+  std::vector<uintlen_t> route{}; // block -> where it reads T-defs from
+  std::vector<opt_ns::route_site_t> bsites{}; // the born-phi sites
   std::vector<char> isdef{};                  // vreg -> defined by T
-  std::vector<char> need0{}, need1{};         // defv read via U0/U1's phi
-  std::vector<std::vector<uint32_t>> bvals{}; // per site: defv idxs
+  std::vector<std::vector<char>> need{};      // [source][defv] read via U's phi
+  std::vector<std::vector<uintlen_t>> bvals{}; // per site: defv idxs
   bool bad{};                                // the outside-use scan's bail flag
   std::vector<uint32_t> uphi0{}, uphi1{};    // routing phis per defv
   std::vector<std::vector<uint32_t>> bphi{}; // born phis per site
@@ -372,127 +373,57 @@ constexpr void td_escape_inventory(const Fn &fn, TdCtx &X) {
     }
 }
 
-// ---- route: the supplier fixpoint ------------------------------------------
-// seed: T and its preds are dead to the routing; a block dominated
-// by exactly one continuation reads its phi (both -> unresolved, the
-// pred fixpoint below decides; neither -> unresolved too)
+// ---- route: the supplier fixpoint (THE GENERIC KERNEL) -------------------
+// opt_ns::route_ns::calculate_supplier_routes: seed = the dead blocks
+// (T and its preds) + the two continuations' dominance masks; the
+// step (single-pred chains inherit, same-supplier merges inherit,
+// different-supplier joins get a phi BORN there -- one frontier
+// level per round, the round cap nb+1, cycles sweep to dead) is
+// pure CFG math over the pred rows. What stayed here: NOTHING --
+// the arity bound (2, this IR's phi slots) is the only policy in
+// the call.
 constexpr void td_route_seed(const An &A, TdCtx &X) {
-  X.route.assign(X.nb, -2);
-  X.bsites.clear();
+  std::vector<char> dead(X.nb, 0), dom0(X.nb, 0), dom1(X.nb, 0);
+  dead[X.T] = 1;
+  dead[X.P0] = 1;
+  dead[X.P1] = 1;
   for (uint32_t b = 0; b < X.nb; ++b) {
-    if (b == X.T || b == X.P0 || b == X.P1) {
-      X.route[b] = -1;
-      continue;
-    }
-    const bool d0 = (X.U0 != NONE) && A.dominates(X.U0, b);
-    const bool d1 = (X.U1 != NONE) && A.dominates(X.U1, b);
-    if (d0 && !d1)
-      X.route[b] = 0;
-    else if (d1 && !d0)
-      X.route[b] = 1;
+    dom0[b] = (X.U0 != NONE) && A.dominates(X.U0, b);
+    dom1[b] = (X.U1 != NONE) && A.dominates(X.U1, b);
   }
+  const opt_ns::route_plan_t plan = opt_ns::calculate_supplier_routes(
+      X.fn.preds, dead, dom0, dom1, 2);
+  X.route = std::move(plan.route);
+  X.bsites = std::move(plan.sites);
 }
 
-// a fresh phi is born at the re-merge, one arg per pred
-constexpr void td_born_site(TdCtx &X, uint32_t b,
-                            const std::vector<uint32_t> &ps) {
-  const int r0 = X.route[ps[0]], r1 = X.route[ps[1]];
-  X.bsites.push_back({b, ps[0], ps[1], r0, r1});
-  X.route[b] = (int)(2 + X.bsites.size() - 1);
-}
-
-// one block's route resolution; true = progressed this block
-constexpr bool td_route_step(const Fn &fn, TdCtx &X, uint32_t b) {
-  if (X.route[b] != -2)
-    return false;
-  const std::vector<uint32_t> &ps = fn.preds[b];
-  bool any_unres = false, any_dead = false;
-  for (uint32_t p : ps) {
-    if (X.route[p] == -2)
-      any_unres = true;
-    else if (X.route[p] < 0)
-      any_dead = true;
-  }
-  if (any_unres)
-    return false; // wait for the pred's round
-  if (ps.empty() || any_dead || ps.size() > 2) {
-    X.route[b] = -1; // entry / dead-fed / >2 preds: no phi possible
-    return true;
-  }
-  if (ps.size() == 1) { // single-pred chain: the pred's supplier
-    X.route[b] = X.route[ps[0]];
-    return true;
-  }
-  if (X.route[ps[0]] == X.route[ps[1]]) { // both arms, one supplier
-    X.route[b] = X.route[ps[0]];
-    return true;
-  }
-  td_born_site(X, b, ps);
-  return true;
-}
-
-constexpr void td_route_fixpoint(const Fn &fn, TdCtx &X) {
-  for (uint32_t round = 0; round <= X.nb; ++round) {
-    bool progressed = false;
-    for (uint32_t b = 0; b < X.nb; ++b)
-      progressed |= td_route_step(fn, X, b);
-    if (!progressed)
-      break;
-  }
-  for (int &r : X.route)
-    if (r == -2)
-      r = -1; // cycles among unresolved blocks: unroutable
-}
-
-// ---- uses: the outside-use scan --------------------------------------------
-// walk a supplier route: mark the uphis / born phis it reads (a born
-// phi's args read its preds' suppliers, recursively down to U0/U1's)
-constexpr void td_mark_need(TdCtx &X, int r, uint32_t di) {
-  std::vector<int> stack{r};
-  while (!stack.empty()) {
-    const int x = stack.back();
-    stack.pop_back();
-    if (x == 0) {
-      X.need0[di] = 1;
-      continue;
-    }
-    if (x == 1) {
-      X.need1[di] = 1;
-      continue;
-    }
-    const size_t k = (size_t)(x - 2);
-    if (std::find(X.bvals[k].begin(), X.bvals[k].end(), di) == X.bvals[k].end())
-      X.bvals[k].push_back(di);
-    stack.push_back(X.bsites[k].r0);
-    stack.push_back(X.bsites[k].r1);
-  }
-}
-
-// one operand check: a plain use reads where ITS block reads from; a
-// phi arg reads where the KEYED PRED reads from (the value holds at
-// its end). An unroutable read sets bad (the candidate bails)
+// ---- uses: the outside-use scan (the reads feed the kernel's
+// need closure) --------------------------------------------------------
+// The scan is the wrapper's half (which fields are operands, how a
+// phi arg keys to its pred); the closure itself is opt_ns::
+// route_ns::calculate_route_needs -- which values each continuation
+// and each born site must merge, first-appearance order
 constexpr void td_check_use(TdCtx &X, uint32_t v, uint32_t key_pred, bool isphi,
-                            uint32_t b) {
+                            uint32_t b,
+                            std::vector<std::pair<uintlen_t, uintlen_t>> &reads) {
   if (v == NONE || v >= X.nv || !X.isdef[v] || X.bad)
     return;
-  const int r = X.route[isphi ? key_pred : b];
-  if (r < 0) {
+  const uintlen_t r = X.route[isphi ? key_pred : b];
+  if (r == opt_ns::route_dead_v) {
     X.bad = true;
     return;
   }
   const size_t di =
       (size_t)(std::find(X.defv.begin(), X.defv.end(), v) - X.defv.begin());
-  td_mark_need(X, r, (uint32_t)di);
+  reads.push_back({r, (uintlen_t)di});
 }
 
 constexpr bool td_outside_uses_ok(const Fn &fn, TdCtx &X) {
   X.isdef.assign(X.nv, 0);
   for (uint32_t v : X.defv)
     X.isdef[v] = 1;
-  X.need0.assign(X.defv.size(), 0);
-  X.need1.assign(X.defv.size(), 0);
-  X.bvals.assign(X.bsites.size(), {});
   X.bad = false;
+  std::vector<std::pair<uintlen_t, uintlen_t>> reads{};
   for (uint32_t b = 0; b < X.nb && !X.bad; ++b) {
     if (b == X.T || b == X.P0 || b == X.P1)
       continue;
@@ -500,18 +431,24 @@ constexpr bool td_outside_uses_ok(const Fn &fn, TdCtx &X) {
       const Instr &I = fn.code[i];
       const bool isphi = (I.k == K::Phi);
       if (isphi) { // arg a keyed pred t, arg b2 keyed pred f
-        td_check_use(X, I.a, I.t, isphi, b);
-        td_check_use(X, I.b2, I.f, isphi, b);
+        td_check_use(X, I.a, I.t, isphi, b, reads);
+        td_check_use(X, I.b2, I.f, isphi, b, reads);
       } else {
-        td_check_use(X, I.a, NONE, isphi, b);
-        td_check_use(X, I.b2, NONE, isphi, b);
-        td_check_use(X, I.c2, NONE, isphi, b);
+        td_check_use(X, I.a, NONE, isphi, b, reads);
+        td_check_use(X, I.b2, NONE, isphi, b, reads);
+        td_check_use(X, I.c2, NONE, isphi, b, reads);
         for (uint32_t av : I.args)
-          td_check_use(X, av, NONE, isphi, b);
+          td_check_use(X, av, NONE, isphi, b, reads);
       }
     }
   }
-  return !X.bad;
+  if (X.bad)
+    return false;
+  // the kernel: need[source][defv] + bvals[site] in first-appearance
+  // order (the born-phi emission order the commit keys on)
+  opt_ns::calculate_route_needs(2, (uintlen_t)X.defv.size(), X.bsites,
+                                reads, X.need, X.bvals);
+  return true;
 }
 
 // ---- commit ----------------------------------------------------------------
@@ -546,9 +483,11 @@ constexpr void td_prepend_phis(Fn &fn, uint32_t B,
 
 // the (r,di) -> phi-dst lookup shared by the born phis' args and the
 // rewire's assignment (0 = U0's phi, 1 = U1's, 2+k = site k's)
-constexpr uint32_t td_arg_of(const TdCtx &X, int r, uint32_t di) {
+constexpr uint32_t td_arg_of(const TdCtx &X, uintlen_t r, uint32_t di) {
   return (r == 0) ? X.uphi0[di]
-                  : ((r == 1) ? X.uphi1[di] : X.bphi[(size_t)(r - 2)][di]);
+                  : ((r == 1) ? X.uphi1[di]
+                             : X.bphi[(size_t)(r - opt_ns::route_born_base_v)]
+                                        [di]);
 }
 
 // per-continuation routing phis (U has no phis of its own: single-pred)
@@ -560,7 +499,7 @@ constexpr void td_emit_uphis(Fn &fn, TdCtx &X) {
       continue;
     std::vector<Instr> phis{};
     for (size_t di = 0; di < X.defv.size(); ++di) {
-      if (!((U == X.U0) ? X.need0[di] : X.need1[di]))
+      if (!((U == X.U0) ? X.need[0][di] : X.need[1][di]))
         continue; // no reader routes through this continuation
       const uint32_t d = new_anon_vreg(fn, fn.base_of(X.defv[di]));
       if (U == X.U0)
@@ -585,7 +524,7 @@ constexpr void td_emit_uphis(Fn &fn, TdCtx &X) {
 constexpr void td_emit_bphis(Fn &fn, TdCtx &X) {
   X.bphi.assign(X.bsites.size(), {});
   for (size_t k = 0; k < X.bsites.size(); ++k) {
-    const TdCtx::Site &S = X.bsites[k];
+    const opt_ns::route_site_t &S = X.bsites[k];
     std::vector<Instr> phis{};
     X.bphi[k].assign(X.defv.size(), NONE);
     for (uint32_t di : X.bvals[k]) {
@@ -593,10 +532,10 @@ constexpr void td_emit_bphis(Fn &fn, TdCtx &X) {
       X.bphi[k][di] = d;
       phis.push_back({.k = K::Phi,
                       .dst = d,
-                      .a = td_arg_of(X, S.r0, di),
-                      .b2 = td_arg_of(X, S.r1, di),
-                      .t = S.p0,
-                      .f = S.p1,
+                      .a = td_arg_of(X, S.proutes[0], di),
+                      .b2 = td_arg_of(X, S.proutes[1], di),
+                      .t = S.preds[0],
+                      .f = S.preds[1],
                       .c = (int64_t)fn.base_of(X.defv[di])});
     }
     if (!phis.empty()) // prepend (W may keep phis of its own below)
@@ -675,8 +614,8 @@ constexpr void td_rewire_use(const TdCtx &X, uint32_t &v, uint32_t key_pred,
                              bool isphi, uint32_t b) {
   if (v == NONE || v >= X.nv || !X.isdef[v])
     return;
-  const int r = X.route[isphi ? key_pred : b];
-  if (r < 0)
+  const uintlen_t r = X.route[isphi ? key_pred : b];
+  if (r == opt_ns::route_dead_v)
     return; // validated above: does not happen
   for (size_t di = 0; di < X.defv.size(); ++di)
     if (v == X.defv[di]) {

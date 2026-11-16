@@ -64,18 +64,13 @@ constexpr bool opt_lsimp(Fn &fn, const An &A, OptStats &os) {
     for (ulen x : row)
       inL[(uint32_t)x] = 1;
     inL[h] = 1;
-    // unique outside pred + unique latch (same shape the others want)
-    uint32_t pre = NONE, latch = NONE, outside = 0, inside = 0;
-    for (uint32_t p : fn.preds[h]) {
-      if (inL[p]) {
-        latch = p;
-        ++inside;
-      } else {
-        pre = p;
-        ++outside;
-      }
-    }
-    if (inside != 1 || outside != 1 || pre == NONE || latch == NONE)
+    // unique outside pred + unique latch (same shape the others want;
+    // the classification is the generic kernel -- opt_ns::shape_ns::
+    // calculate_header_preds, pure CFG math over the pred row)
+    const opt_ns::header_preds_t hp =
+        opt_ns::calculate_header_preds(fn.preds[h], inL);
+    const uint32_t pre = (uint32_t)hp.pre, latch = (uint32_t)hp.latch;
+    if (hp.n_in != 1 || hp.n_out != 1 || pre == NONE || latch == NONE)
       continue;
     // trivial phis: latch arg == dst (the value never changes)
     for (uint32_t i = fn.blocks[h].begin; i < fn.blocks[h].end; ++i) {

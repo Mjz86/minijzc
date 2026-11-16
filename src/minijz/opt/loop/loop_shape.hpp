@@ -41,6 +41,7 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 
 // ---- the scan tables (one pass over the fn) -------------------------
 struct LoopScan {
@@ -118,9 +119,13 @@ constexpr bool header_phis(const Fn &fn, uint32_t h, uint32_t pre,
 // the canonical loop shape around header h (see the file header).
 // ok = recognized: unique outside pred (the preheader), unique latch,
 // Cbr header terminator with exactly one arm leaving the loop to X and
-// one arm staying inside (the body). The only-exit-edge property (no
-// breaks) is NOT required here — callers that need it (unroll, lcf)
-// check it themselves; unswitch allows internal exit edges.
+// one arm staying inside (the body). The pred/arms CLASSIFICATION is
+// the generic kernel (opt_ns::shape_ns::calculate_loop_shape -- pure
+// CFG math, any pred-row shape); what stays here is the IR half: that
+// the terminator IS a conditional branch, and the non-empty-block
+// paranoia. The only-exit-edge property (no breaks) is NOT required
+// here — callers that need it (unroll, lcf) check it themselves;
+// unswitch allows internal exit edges.
 struct LoopShape {
   uint32_t pre{NONE}, latch{NONE}, X{NONE}, body{NONE};
   bool ok{};
@@ -130,32 +135,19 @@ constexpr LoopShape loop_shape_of(const Fn &fn, const An &A,
                                   const std::vector<char> &inL, uint32_t h) {
   (void)A;
   LoopShape sh{};
-  uint32_t outside = 0, inside = 0;
-  for (uint32_t p : fn.preds[h]) {
-    if (inL[p]) {
-      sh.latch = p;
-      ++inside;
-    } else {
-      sh.pre = p;
-      ++outside;
-    }
-  }
-  if (inside != 1 || outside != 1 || sh.pre == NONE ||
-      fn.blocks[h].begin == fn.blocks[h].end)
-    return sh;
+  if (fn.blocks[h].begin == fn.blocks[h].end)
+    return sh; // paranoia: empty blocks carry no terminator
   const Instr hterm = fn.code[fn.blocks[h].end - 1];
   if (hterm.k != K::Cbr)
+    return sh; // the arms classification needs exactly two of them
+  const opt_ns::loop_shape_t k = opt_ns::calculate_loop_shape(
+      fn.preds[h], inL, (uintlen_t)hterm.t, (uintlen_t)hterm.f);
+  if (!k.ok)
     return sh;
-  // arms: one stays in the loop (body), one leaves (X)
-  if (hterm.t != NONE && inL[hterm.t] && hterm.f != NONE && !inL[hterm.f]) {
-    sh.body = hterm.t;
-    sh.X = hterm.f;
-  } else if (hterm.f != NONE && inL[hterm.f] && hterm.t != NONE &&
-             !inL[hterm.t]) {
-    sh.body = hterm.f;
-    sh.X = hterm.t;
-  } else
-    return sh;
+  sh.pre = (uint32_t)k.pre;
+  sh.latch = (uint32_t)k.latch;
+  sh.body = (uint32_t)k.body;
+  sh.X = (uint32_t)k.X;
   sh.ok = true;
   return sh;
 }

@@ -34,6 +34,7 @@
 //   (ostats[g].deadargs counts the removed params).
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "../opt_generic.hpp"
 
 // --- 9e5. DEAD-ARGUMENT ELIMINATION (interprocedural)
 // ------------------------------------- A parameter nobody observes can be
@@ -80,12 +81,9 @@ constexpr bool opt_deadargs(std::vector<Fn> &fns,
   if (n < 2 || ostats.size() < n)
     return false;
   // ---- analysis -----------------------------------------------------------
-  struct Soft { // a use of param p as argument q of a call to h
-    uint32_t h, q;
-  };
   std::vector<char> eligible(n, 1);
   std::vector<std::vector<char>> alive(n);              // [g][p]
-  std::vector<std::vector<std::vector<Soft>>> softs(n); // [g][p] -> uses
+  std::vector<std::vector<std::vector<opt_ns::soft_edge_t>>> softs(n); // [g][p]
   for (uint32_t g = 0; g < n; ++g) {
     const Fn &G = fns[g];
     const uint32_t P = G.nparams;
@@ -130,25 +128,11 @@ constexpr bool opt_deadargs(std::vector<Fn> &fns,
         }
       }
   }
-  // least fixpoint: alive propagates through forwarded arguments
-  for (bool ch = true; ch;) {
-    ch = false;
-    for (uint32_t g = 0; g < n; ++g) {
-      if (!eligible[g])
-        continue;
-      for (uint32_t p = 0; p < fns[g].nparams; ++p) {
-        if (alive[g][p])
-          continue;
-        for (const Soft &s : softs[g][p]) {
-          if (!eligible[s.h] || alive[s.h][s.q]) {
-            alive[g][p] = 1; // feeds a LIVE param (or a non-candidate)
-            ch = true;
-            break;
-          }
-        }
-      }
-    }
-  }
+  // least fixpoint (THE GENERIC KERNEL -- opt_ns::ipa_ns::
+  // calculate_live_params): alive propagates through forwarded
+  // arguments; alive only grows, so the fixpoint is the least one --
+  // exactly the observable parameters
+  opt_ns::calculate_live_params(eligible, softs, alive);
   // dead[g][p]
   std::vector<std::vector<char>> dead(n);
   bool any = false;

@@ -42,6 +42,7 @@
 #include "../../ir/instr.hpp"
 #include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
+#include "../opt_generic.hpp"
 #include "loop_shape.hpp"
 
 // ---- the invariant-condition gate ------------------------------------------
@@ -79,22 +80,28 @@ constexpr bool exit_inventory(const Fn &fn, const std::vector<char> &inL,
                               uint32_t nb, uint32_t primary, uint32_t X,
                               uint32_t pre, uint32_t h,
                               std::vector<ExitEdge> &exits) {
+  // the edge sweep is the GENERIC KERNEL (opt_ns::collect_exit_edges):
+  // every in-loop -> outside edge minus the caller's primary edge, with
+  // the all-arms-on-one-outside-target degeneracy and the forbidden
+  // targets (pre/h: the versioned CFG would tangle their preds) as
+  // parameters. What stays here is the IR half: succ slots -> rows.
+  std::vector<std::vector<uintlen_t>> rows(nb);
   for (uint32_t b = 0; b < nb; ++b) {
-    if (!inL[b])
-      continue;
-    const uint32_t s0 = fn.succ0(b), s1 = fn.succ1(b);
-    if (s0 != NONE && s1 != NONE && s0 == s1 && !inL[s0])
-      return false; // degenerate cbr (cbr_same's territory)
-    for (uint32_t s : {s0, s1}) {
-      if (s == NONE || inL[s])
-        continue;
-      if (b == primary && s == X)
-        continue; // the edge the caller replaces outright
-      exits.push_back({b, s});
-      if (s == pre || s == h)
-        return false; // structurally impossible; paranoia
-    }
+    if (fn.succ0(b) != NONE)
+      rows[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      rows[b].push_back(fn.succ1(b));
   }
+  std::vector<opt_ns::exit_edge_t> out{};
+  if (!opt_ns::collect_exit_edges(
+          rows, inL, (primary == NONE) ? opt_ns::none_v : (uintlen_t)primary,
+          (X == NONE) ? opt_ns::none_v : (uintlen_t)X,
+          (pre == NONE) ? opt_ns::none_v : (uintlen_t)pre,
+          (h == NONE) ? opt_ns::none_v : (uintlen_t)h, out))
+    return false;
+  exits.reserve(exits.size() + out.size());
+  for (const opt_ns::exit_edge_t &e : out)
+    exits.push_back({(uint32_t)e.from, (uint32_t)e.to});
   return true;
 }
 
