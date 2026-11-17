@@ -204,18 +204,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
     { // a NEVER-USED parameter gets NO incoming mov: the RA is free to
       // give its home to a live value (dead params have no interference
       // edges), and the mov would clobber that live value on entry
-      std::vector<uint32_t> pu(nv, 0);
-      for (const Instr &I : fn.code) {
-        auto bump = [&](uint32_t v) {
-          if (v != NONE && v < nv)
-            ++pu[v];
-        };
-        bump(I.a);
-        bump(I.b2);
-        bump(I.c2);
-        for (uint32_t v : I.args)
-          bump(v);
-      }
+      std::vector<uint32_t> pu{};
+      count_operand_uses(fn, nv, pu);
       for (uint32_t p = 0; p < fn.nparams && p < 6; ++p)
         if (pu[p] != 0)
           s += std::string("  movq %") + argregs[p] + ", " + loc(p) + "\n";

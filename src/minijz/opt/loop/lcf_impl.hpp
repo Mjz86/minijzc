@@ -96,15 +96,7 @@ struct LcfScan {
 };
 
 constexpr void lcf_bump_uses(const Instr &I, LcfScan &S) {
-  auto bump = [&](uint32_t v) {
-    if (v != NONE && v < S.nv)
-      ++S.uses[v];
-  };
-  bump(I.a);
-  bump(I.b2);
-  bump(I.c2);
-  for (uint32_t v : I.args)
-    bump(v);
+  bump_uses_of(I, S.nv, S.uses); // the shared counter (instr.hpp)
 }
 
 constexpr void lcf_count_defs_uses(Fn &fn, LcfScan &S) {
@@ -132,16 +124,6 @@ constexpr void lcf_mark_consts(Fn &fn, LcfScan &S) {
   seed_single_def_consts(fn, S.nv, S.kc, S.kv);
 }
 
-constexpr void lcf_header_list(const An &A, LcfScan &S) {
-  for (uint32_t h = 0; h < A.n; ++h)
-    if (A.inner[h] == h)
-      S.headers.push_back(h);
-  for (size_t i = 0; i + 1 < S.headers.size(); ++i)
-    for (size_t j = i + 1; j < S.headers.size(); ++j)
-      if (A.nest[S.headers[j]] > A.nest[S.headers[i]])
-        std::swap(S.headers[i], S.headers[j]);
-}
-
 constexpr bool lcf_scan(Fn &fn, const An &A, LcfScan &S) {
   if (A.n != fn.nblocks() || !fn.nblocks())
     return false;
@@ -151,7 +133,7 @@ constexpr bool lcf_scan(Fn &fn, const An &A, LcfScan &S) {
     return false;
   lcf_count_defs_uses(fn, S);
   lcf_mark_consts(fn, S);
-  lcf_header_list(A, S);
+  S.headers = innermost_headers_by_nest(A);
   return true;
 }
 
@@ -216,26 +198,9 @@ constexpr bool lcf_loop_edges(Fn &fn, const An &A, const LcfScan &S,
 // lcf_arms refuses a phase later, so the gate sequence is
 // unchanged.
 constexpr bool lcf_single_exit(Fn &fn, const LcfScan &S, LcfLoop &L) {
-  std::vector<std::vector<uintlen_t>> rows(S.nb);
-  for (uint32_t b = 0; b < S.nb; ++b) {
-    if (fn.succ0(b) != NONE)
-      rows[b].push_back(fn.succ0(b));
-    if (fn.succ1(b) != NONE)
-      rows[b].push_back(fn.succ1(b));
-  }
-  std::vector<opt_ns::exit_edge_t> ex{};
-  if (!opt_ns::collect_exit_edges(rows, L.inL, opt_ns::none_v, opt_ns::none_v,
-                                  opt_ns::none_v, opt_ns::none_v, ex))
-    return false; // an inner both-arms-out cbr: not foldable
-  uint32_t X = NONE;
-  for (const opt_ns::exit_edge_t &e : ex) {
-    if (e.from != L.h)
-      return false; // an inner exit edge: the loop is not foldable
-    if (X == NONE)
-      X = uint32_t(e.to);
-    else if (X != e.to)
-      return false; // two different exits
-  }
+  // the shared gate (loop_shape.hpp): an inner both-arms-out cbr or an
+  // inner exit edge (a break) makes the loop not foldable
+  const uint32_t X = loop_single_exit_target(fn, S.nb, L.inL, L.h);
   if (X == NONE)
     return false;
   L.X = X;
@@ -428,14 +393,7 @@ constexpr void lcf_trip_count(const LcfScan &S, LcfLoop &L) {
 
 // ---- zero trips: test provably false -> exit now -------------------------
 constexpr void lcf_zero_trip(Fn &fn, const LcfLoop &L) {
-  Instr &T = fn.code[fn.blocks[L.h].end - 1];
-  T.k = K::Br;
-  T.t = L.X;
-  T.f = NONE;
-  T.a = NONE;
-  fn.succ[2 * L.h] = L.X;
-  fn.succ[2 * L.h + 1] = NONE;
-  fn.recompute_preds();
+  loop_zero_trip_exit(fn, L.h, L.X); // the shared rewrite
 }
 
 // ---- safety gates --------------------------------------------------------

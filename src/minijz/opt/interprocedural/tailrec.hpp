@@ -143,18 +143,8 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
     uint32_t b, ci;             // block + call instr index
     std::vector<uint32_t> args; // the call's argument vregs
   };
-  std::vector<uint32_t> uses(nv, 0);
-  for (const Instr &I : fn.code) {
-    auto bump = [&](uint32_t v) {
-      if (v != NONE && v < nv)
-        ++uses[v];
-    };
-    bump(I.a);
-    bump(I.b2);
-    bump(I.c2);
-    for (uint32_t v : I.args)
-      bump(v);
-  }
+  std::vector<uint32_t> uses{};
+  count_operand_uses(fn, nv, uses);
   std::vector<Site> sites;
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
@@ -364,18 +354,8 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
   for (uint32_t x = 0; x < k; ++x) {
     const Fn &F = fns[members[x]];
     const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
-    std::vector<uint32_t> uses(nvx, 0);
-    for (const Instr &I : F.code) {
-      auto bump = [&](uint32_t v) {
-        if (v != NONE && v < nvx)
-          ++uses[v];
-      };
-      bump(I.a);
-      bump(I.b2);
-      bump(I.c2);
-      for (uint32_t v : I.args)
-        bump(v);
-    }
+    std::vector<uint32_t> uses{};
+    count_operand_uses(F, nvx, uses);
     for (uint32_t b = 0; b < F.nblocks(); ++b)
       for (uint32_t i = F.blocks[b].begin; i < F.blocks[b].end; ++i) {
         if (F.code[i].k != K::Call)

@@ -34,6 +34,7 @@
 //   leaves the generic uncalled for the dead-fn sweep.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "ipa_sites.hpp"
 
 // --- 9e5b. FUNCTION SPECIALIZATION (interprocedural) -------------------
 // When EVERY call site of a function passes a CONSTANT in some parameter
@@ -68,20 +69,10 @@ constexpr uint32_t SPEC_BODY_CAP = 600;
 constexpr uint32_t SPEC_VALUES_CAP = 4;
 constexpr uint32_t SPEC_GROWTH_CAP = 4000;
 
-// the defining Const of an SSA vreg in F, or NONE (params: no def)
+// the defining Const of an SSA vreg in F, or NONE (params: no def) --
+// the shared lookup (ipa_sites.hpp, the ckpt-31 dedup wave)
 constexpr bool spec_def_const(const Fn &F, uint32_t v, val_t &out) {
-  const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
-  if (v == NONE || v >= nv)
-    return false;
-  for (const Instr &I : F.code)
-    if (I.dst == v) {
-      if (I.k == K::Const) {
-        out = (val_t)I.c;
-        return true;
-      }
-      return false; // defined, but not by a Const
-    }
-  return false;
+  return ipa_def_const(F, v, out);
 }
 
 constexpr bool opt_fnspec(std::vector<Fn> &fns,
@@ -92,21 +83,8 @@ constexpr bool opt_fnspec(std::vector<Fn> &fns,
   if (n0 < 2 || names.size() < n0 || ostats.size() < n0 ||
       src_index.size() < n0)
     return false;
-  // ---- collect the call sites (f, instr index, callee) --------------------
-  struct Site {
-    uint32_t f, i, g;
-  };
-  std::vector<Site> sites{};
-  for (uint32_t f = 0; f < n0; ++f) {
-    const Fn &F = fns[f];
-    for (uint32_t bi = 0; bi < F.nblocks(); ++bi)
-      for (uint32_t i = F.blocks[bi].begin; i < F.blocks[bi].end; ++i)
-        if (F.code[i].k == K::Call) {
-          uint32_t g = (uint32_t)F.code[i].c;
-          if (g != 0 && g < n0)
-            sites.push_back({f, i, g});
-        }
-  }
+  // ---- the call sites: the shared census ----------------------------------
+  const std::vector<IpaSite> sites = ipa_collect_call_sites(fns, n0);
   bool any = false;
   uint32_t growth = 0;
   for (uint32_t g = 1; g < n0; ++g) { // ascending: appended clones keep ids
@@ -140,16 +118,8 @@ constexpr bool opt_fnspec(std::vector<Fn> &fns,
     if (param_defined)
       continue;
     // this fn's sites (arity must match at every one of them)
-    uint32_t n_sites = 0;
-    bool arity_bad = false;
-    for (const Site &s : sites)
-      if (s.g == g) {
-        if (fns[s.f].code[s.i].args.size() != G.nparams) {
-          arity_bad = true;
-          break;
-        }
-        ++n_sites;
-      }
+    const auto [n_sites, arity_bad] =
+        ipa_count_sites_of(fns, sites, g, G.nparams);
     if (arity_bad || n_sites < 2)
       continue;
     // find the first parameter that is CONST at every site and USED in g
@@ -170,7 +140,7 @@ constexpr bool opt_fnspec(std::vector<Fn> &fns,
       std::vector<std::pair<uint32_t, val_t>> vals{}; // (site idx, value)
       bool all_const = true;
       for (size_t si = 0; si < sites.size(); ++si) {
-        const Site &s = sites[si];
+        const IpaSite &s = sites[si];
         if (s.g != g)
           continue;
         const Instr &C = fns[s.f].code[s.i];
@@ -230,30 +200,11 @@ constexpr bool opt_fnspec(std::vector<Fn> &fns,
         };
         for (uint32_t bi = 0; bi < H.nblocks(); ++bi)
           for (uint32_t i = H.blocks[bi].begin; i < H.blocks[bi].end; ++i) {
-            Instr &I = H.code[i];
-            if (I.dst != NONE)
-              I.dst = mp(I.dst);
-            if (I.a != NONE)
-              I.a = mp(I.a);
-            if (I.b2 != NONE)
-              I.b2 = mp(I.b2);
-            if (I.c2 != NONE)
-              I.c2 = mp(I.c2);
-            for (uint32_t &a : I.args)
-              a = mp(a);
             // Phi's stale base-var tag intentionally left as-is (unread
             // post-ssa_construct, same policy as deadargs)
+            remap_vreg_fields(H.code[i], mp);
           }
-        {
-          std::vector<uint32_t> nb{}; // stk_arrays vregs remap
-          for (auto &sa : H.stk_arrays) {
-            sa.root = mp(sa.root);
-            nb.clear();
-            for (uint32_t u : sa.vregs)
-              nb.push_back(mp(u));
-            sa.vregs = std::move(nb);
-          }
-        }
+        remap_stk_arrays(H, mp);
         H.nparams -= 1;
         // entry Const: prepend (block 0 sits at code position 0 -- guarded).
         // Block 0 ABSORBS the Const (begin stays 0, end grows); every other
@@ -282,7 +233,7 @@ constexpr bool opt_fnspec(std::vector<Fn> &fns,
         for (const auto &sv : vals) {
           if (sv.second != v)
             continue;
-          const Site &s = sites[sv.first];
+          const IpaSite &s = sites[sv.first];
           Instr &C = fns[s.f].code[s.i];
           if (C.k != K::Call || (uint32_t)C.c != g)
             continue; // belt+braces: the site must be unchanged

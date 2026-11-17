@@ -97,15 +97,7 @@ constexpr bool opt_canon(Fn &fn, OptStats &os) {
     std::vector<uint32_t> defi(nv, NONE), ndefs(nv, 0), uses(nv, 0);
     for (uint32_t i = 0; i < fn.code.size(); ++i) {
       const Instr &I = fn.code[i];
-      auto bump = [&](uint32_t v) {
-        if (v != NONE && v < nv)
-          ++uses[v];
-      };
-      bump(I.a);
-      bump(I.b2);
-      bump(I.c2);
-      for (uint32_t v : I.args)
-        bump(v);
+      bump_uses_of(I, nv, uses); // the shared counter (instr.hpp)
       if (I.dst != NONE && I.dst < nv) {
         ++ndefs[I.dst];
         defi[I.dst] = i;

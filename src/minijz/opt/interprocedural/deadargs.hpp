@@ -199,19 +199,9 @@ constexpr bool opt_deadargs(std::vector<Fn> &fns,
     };
     for (uint32_t bi = 0; bi < G.nblocks(); ++bi)
       for (uint32_t i = G.blocks[bi].begin; i < G.blocks[bi].end; ++i) {
-        Instr &I = G.code[i];
-        if (I.dst != NONE)
-          I.dst = mp(I.dst);
-        if (I.a != NONE)
-          I.a = mp(I.a);
-        if (I.b2 != NONE)
-          I.b2 = mp(I.b2);
-        if (I.c2 != NONE)
-          I.c2 = mp(I.c2);
-        for (uint32_t &v : I.args)
-          v = mp(v);
         // Phi's c (base-var tag) intentionally left stale: unread after
         // ssa_construct; Call's c is a fn index, not a vreg.
+        remap_vreg_fields(G.code[i], mp);
       }
     if (G.var_names.size() == G.nvars) {
       std::vector<std::string_view> nn{};

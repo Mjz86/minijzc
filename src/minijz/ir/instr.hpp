@@ -356,3 +356,61 @@ constexpr void seed_single_def_consts(const Fn &fn, uint32_t nv,
       kv[I.dst] = I.c;
     }
 }
+
+// ---- the vreg permutation rewrite, shared by every cloning pass ----------
+// Apply mp() to every vreg field of an instr (dst + operands + args).
+// The identical five-field rewrite was hand-rolled in argpromo, fnspec
+// and deadargs until the ckpt-31 dedup wave; it is the "clone under a
+// vreg permutation" primitive. Phi's c (the stale base-var tag) and
+// Call's c (a fn index, not a vreg) are intentionally NOT remapped --
+// unread post-ssa_construct, the deadargs policy.
+template <class Map> constexpr void remap_vreg_fields(Instr &I, Map &&mp) {
+  if (I.dst != NONE)
+    I.dst = mp(I.dst);
+  if (I.a != NONE)
+    I.a = mp(I.a);
+  if (I.b2 != NONE)
+    I.b2 = mp(I.b2);
+  if (I.c2 != NONE)
+    I.c2 = mp(I.c2);
+  for (uint32_t &av : I.args)
+    av = mp(av);
+}
+
+// the same permutation over the stack-array bookkeeping (root + members)
+template <class Map> constexpr void remap_stk_arrays(Fn &H, Map &&mp) {
+  std::vector<uint32_t> nb{};
+  for (auto &sa : H.stk_arrays) {
+    sa.root = mp(sa.root);
+    nb.clear();
+    for (uint32_t u : sa.vregs)
+      nb.push_back(mp(u));
+    sa.vregs = std::move(nb);
+  }
+}
+
+// ---- the textual-use counters ---------------------------------------------
+// count uses of every vreg in a/b2/c2/args (the NONE-guarded operand
+// fields, Phi edge args included). The bump lambda was hand-rolled in
+// six files (emit_x64, tailrec x2, lcf, canon, reassoc) until the
+// ckpt-31 dedup wave; sccp's site-index variant stays local (it pushes
+// instr indices, not counts).
+constexpr void bump_uses_of(const Instr &I, uint32_t nv,
+                            std::vector<uint32_t> &uses) {
+  auto bump = [&](uint32_t v) {
+    if (v != NONE && v < nv)
+      ++uses[v];
+  };
+  bump(I.a);
+  bump(I.b2);
+  bump(I.c2);
+  for (uint32_t v : I.args)
+    bump(v);
+}
+
+constexpr void count_operand_uses(const Fn &fn, uint32_t nv,
+                                  std::vector<uint32_t> &uses) {
+  uses.assign(nv, 0);
+  for (const Instr &I : fn.code)
+    bump_uses_of(I, nv, uses);
+}

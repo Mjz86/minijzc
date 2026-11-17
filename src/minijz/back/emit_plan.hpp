@@ -86,18 +86,9 @@ constexpr FuseTable make_fuse_table(const Fn &fn, uint32_t nv) {
     if (fn.code[i].dst != NONE && fn.code[i].dst < nv)
       ++T.ndefs[fn.code[i].dst];
   for (uint32_t i = 0; i < fn.code.size(); ++i) {
-    const Instr &I = fn.code[i];
-    if (I.a != NONE && I.a < nv)
-      T.raw[I.a]++;
-    if (I.b2 != NONE && I.b2 < nv)
-      T.raw[I.b2]++;
-    if (I.c2 != NONE && I.c2 < nv)
-      T.raw[I.c2]++;
-    for (uint32_t v : I.args)
-      if (v < nv)
-        T.raw[v]++;
-    if (I.dst != NONE && I.dst < nv)
-      T.def_idx[I.dst] = i;
+    bump_uses_of(fn.code[i], nv, T.raw); // the shared counter (instr.hpp)
+    if (fn.code[i].dst != NONE && fn.code[i].dst < nv)
+      T.def_idx[fn.code[i].dst] = i;
   }
   // branch fusion: cbr on a single-use comparison. Single USE is not
   // enough post-destruction: a phi slot has one use (this branch) but one

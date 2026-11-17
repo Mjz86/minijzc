@@ -34,6 +34,7 @@
 //   site resolved the dead-fn sweep drops the uncalled generic.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "ipa_sites.hpp"
 
 // --- 9e7. ARGUMENT PROMOTION ----------------------------------------------
 // A function whose array parameter is only READ at constant indices can
@@ -84,35 +85,10 @@ constexpr bool opt_argpromo(std::vector<Fn> &fns,
   if (n0 < 2 || names.size() < n0 || ostats.size() < n0 ||
       src_index.size() < n0)
     return false;
-  // ---- collect the call sites (f, instr index, callee) --------------------
-  struct Site {
-    uint32_t f, i, g;
-  };
-  std::vector<Site> sites{};
-  for (uint32_t f = 0; f < n0; ++f) {
-    const Fn &F = fns[f];
-    for (uint32_t bi = 0; bi < F.nblocks(); ++bi)
-      for (uint32_t i = F.blocks[bi].begin; i < F.blocks[bi].end; ++i)
-        if (F.code[i].k == K::Call) {
-          uint32_t g = (uint32_t)F.code[i].c;
-          if (g != 0 && g < n0)
-            sites.push_back({f, i, g});
-        }
-  }
-  // the Const value behind an SSA vreg (params have no def -> false)
+  // ---- the call sites + the const lookup: the shared census ---------------
+  const std::vector<IpaSite> sites = ipa_collect_call_sites(fns, n0);
   auto def_const = [](const Fn &F, uint32_t v, val_t &out) -> bool {
-    const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
-    if (v == NONE || v >= nv)
-      return false;
-    for (const Instr &I : F.code)
-      if (I.dst == v) {
-        if (I.k == K::Const) {
-          out = (val_t)I.c;
-          return true;
-        }
-        return false;
-      }
-    return false;
+    return ipa_def_const(F, v, out);
   };
   // caller-side resolution: an argument vreg that is (a copy chain of) a
   // constant-length Alloc -- returns the element count
@@ -152,16 +128,8 @@ constexpr bool opt_argpromo(std::vector<Fn> &fns,
         G.code.size() > ARG_BODY_CAP || G.nblocks() == 0)
       continue;
     // arity must match at every site (inconsistent programs: skip)
-    uint32_t n_sites = 0;
-    bool arity_bad = false;
-    for (const Site &s : sites)
-      if (s.g == g) {
-        if (fns[s.f].code[s.i].args.size() != G.nparams) {
-          arity_bad = true;
-          break;
-        }
-        ++n_sites;
-      }
+    const auto [n_sites, arity_bad] =
+        ipa_count_sites_of(fns, sites, g, G.nparams);
     if (arity_bad || n_sites == 0)
       continue;
     // no calls inside the callee (v1 envelope)
@@ -275,7 +243,7 @@ constexpr bool opt_argpromo(std::vector<Fn> &fns,
         // per-caller def maps, computed once per distinct caller
         std::vector<std::pair<uint32_t, std::vector<uint32_t>>> defmaps{};
         for (size_t si = 0; si < sites.size(); ++si) {
-          const Site &s = sites[si];
+          const IpaSite &s = sites[si];
           if (s.g != g)
             continue;
           const Fn &F = fns[s.f];
@@ -360,27 +328,9 @@ constexpr bool opt_argpromo(std::vector<Fn> &fns,
             I.src = keep_src;
             continue;
           }
-          if (I.dst != NONE)
-            I.dst = mp(I.dst);
-          if (I.a != NONE)
-            I.a = mp(I.a);
-          if (I.b2 != NONE)
-            I.b2 = mp(I.b2);
-          if (I.c2 != NONE)
-            I.c2 = mp(I.c2);
-          for (uint32_t &av : I.args)
-            av = mp(av); // (no calls in G; paranoia)
+          remap_vreg_fields(I, mp); // (no calls in G; paranoia)
         }
-      { // stk_arrays vreg ids follow the permutation
-        std::vector<uint32_t> nb{};
-        for (auto &sa : H.stk_arrays) {
-          sa.root = mp(sa.root);
-          nb.clear();
-          for (uint32_t u : sa.vregs)
-            nb.push_back(mp(u));
-          sa.vregs = std::move(nb);
-        }
-      }
+      remap_stk_arrays(H, mp); // stk_arrays vreg ids follow the permutation
       const uint32_t h = (uint32_t)fns.size();
       fns.push_back(std::move(H));
       names.push_back(names[g]); // same source name (indices disambiguate)

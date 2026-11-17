@@ -134,19 +134,6 @@ constexpr void unr_defs(Fn &fn, UnrScan &S) {
     }
 }
 
-// headers = blocks that are their own innermost loop; sorted
-// nest-descending by the pair-swap sort (identical to loop_scan's,
-// kept local: see the byte-identical contract above).
-constexpr void unr_header_list(const An &A, UnrScan &S) {
-  for (uint32_t h = 0; h < A.n; ++h)
-    if (A.inner[h] == h)
-      S.headers.push_back(h);
-  for (size_t i = 0; i + 1 < S.headers.size(); ++i)
-    for (size_t j = i + 1; j < S.headers.size(); ++j)
-      if (A.nest[S.headers[j]] > A.nest[S.headers[i]])
-        std::swap(S.headers[i], S.headers[j]);
-}
-
 constexpr bool unr_scan(Fn &fn, const An &A, uint32_t limit, UnrScan &S) {
   if (!limit)
     return false; // unrolling disabled for this config
@@ -161,7 +148,7 @@ constexpr bool unr_scan(Fn &fn, const An &A, uint32_t limit, UnrScan &S) {
   S.defi.assign(S.nv, NONE);
   S.defb.assign(S.nv, NONE);
   unr_defs(fn, S);
-  unr_header_list(A, S);
+  S.headers = innermost_headers_by_nest(A);
   return true;
 }
 
@@ -226,26 +213,9 @@ constexpr bool unr_header_term(Fn &fn, UnrLoop &L) {
 // unr_arms refuses a phase later, so the gate sequence is
 // unchanged.
 constexpr bool unr_single_exit(Fn &fn, UnrScan &S, UnrLoop &L) {
-  std::vector<std::vector<uintlen_t>> rows(S.nb);
-  for (uint32_t b = 0; b < S.nb; ++b) {
-    if (fn.succ0(b) != NONE)
-      rows[b].push_back(fn.succ0(b));
-    if (fn.succ1(b) != NONE)
-      rows[b].push_back(fn.succ1(b));
-  }
-  std::vector<opt_ns::exit_edge_t> ex{};
-  if (!opt_ns::collect_exit_edges(rows, L.inL, opt_ns::none_v, opt_ns::none_v,
-                                  opt_ns::none_v, opt_ns::none_v, ex))
-    return false; // a both-arms-out cbr: not unrollable
-  uint32_t X = NONE;
-  for (const opt_ns::exit_edge_t &e : ex) {
-    if (e.from != L.h)
-      return false; // a break: not unrollable
-    if (X == NONE)
-      X = uint32_t(e.to); // the header's exit target
-    else if (X != e.to)
-      return false; // two different exits from the header
-  }
+  // the shared gate (loop_shape.hpp): a both-arms-out inner cbr or a
+  // break makes the loop not unrollable
+  const uint32_t X = loop_single_exit_target(fn, S.nb, L.inL, L.h);
   if (X == NONE)
     return false;
   L.X = X;
@@ -508,14 +478,7 @@ constexpr uint32_t unr_mapv(uint32_t v, uint32_t k, UnrMaps &M) {
 // becomes Br X in place; the unreachable body dies in the next
 // unreach/phi-degen round and the phis degenerate to their pre args.
 constexpr bool unr_zero_trip(Fn &fn, UnrLoop &L) {
-  Instr &T = fn.code[fn.blocks[L.h].end - 1];
-  T.k = K::Br;
-  T.t = L.X;
-  T.f = NONE;
-  T.a = NONE;
-  fn.succ[2 * L.h] = L.X;
-  fn.succ[2 * L.h + 1] = NONE;
-  fn.recompute_preds();
+  loop_zero_trip_exit(fn, L.h, L.X); // the shared rewrite
   return true;
 }
 

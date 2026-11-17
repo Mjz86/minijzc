@@ -43,6 +43,71 @@
 #include "../analysis/an.hpp"
 #include "../opt_generic.hpp"
 
+
+// ---- the lcf/unroll shared gates (the ckpt-31 dedup wave) ---------------
+// These three were verbatim twins in lcf_impl and unroll_impl (the unroll
+// decomposition of ckpt 25 kept them local to stay byte-identical; the
+// dedup wave moved them to the family vocabulary with the same guarantee).
+
+// headers = blocks that are their own innermost loop, sorted
+// nest-descending (innermost first). The pair-swap order is behavior:
+// the passes visit headers in exactly this order.
+constexpr std::vector<uint32_t> innermost_headers_by_nest(const An &A) {
+  std::vector<uint32_t> headers{};
+  for (uint32_t h = 0; h < A.n; ++h)
+    if (A.inner[h] == h)
+      headers.push_back(h);
+  for (size_t i = 0; i + 1 < headers.size(); ++i)
+    for (size_t j = i + 1; j < headers.size(); ++j)
+      if (A.nest[headers[j]] > A.nest[headers[i]])
+        std::swap(headers[i], headers[j]);
+  return headers;
+}
+
+// the single-exit gate: the loop's ONLY exit edge must depart the
+// header itself (an inner both-arms-out cbr or a break makes the loop
+// untouchable for both lcf and unroll). Returns the unique exit
+// target, or NONE when the loop does not qualify.
+constexpr uint32_t loop_single_exit_target(const Fn &fn, uint32_t nb,
+                                           const std::vector<char> &inL,
+                                           uint32_t h) {
+  std::vector<std::vector<uintlen_t>> rows(nb);
+  for (uint32_t b = 0; b < nb; ++b) {
+    if (fn.succ0(b) != NONE)
+      rows[b].push_back(fn.succ0(b));
+    if (fn.succ1(b) != NONE)
+      rows[b].push_back(fn.succ1(b));
+  }
+  std::vector<opt_ns::exit_edge_t> ex{};
+  if (!opt_ns::collect_exit_edges(rows, inL, opt_ns::none_v, opt_ns::none_v,
+                                  opt_ns::none_v, opt_ns::none_v, ex))
+    return NONE; // an inner both-arms-out cbr
+  uint32_t X = NONE;
+  for (const opt_ns::exit_edge_t &e : ex) {
+    if (e.from != h)
+      return NONE; // an inner exit edge (a break)
+    if (X == NONE)
+      X = uint32_t(e.to);
+    else if (X != e.to)
+      return NONE; // two different exits
+  }
+  return X; // NONE when the loop never exits
+}
+
+// K == 0 (the test provably false on entry): the header terminator
+// becomes `br X` in place; the unreachable body dies in the next
+// unreach/phi-degen round and the phis degenerate to their pre args.
+constexpr void loop_zero_trip_exit(Fn &fn, uint32_t h, uint32_t X) {
+  Instr &T = fn.code[fn.blocks[h].end - 1];
+  T.k = K::Br;
+  T.t = X;
+  T.f = NONE;
+  T.a = NONE;
+  fn.succ[2 * h] = X;
+  fn.succ[2 * h + 1] = NONE;
+  fn.recompute_preds();
+}
+
 // ---- the scan tables (one pass over the fn) -------------------------
 struct LoopScan {
   uint32_t nb{}, nv{};
@@ -72,13 +137,7 @@ constexpr LoopScan loop_scan(const Fn &fn, const An &A) {
         }
       }
     }
-  for (uint32_t h = 0; h < A.n; ++h)
-    if (A.inner[h] == h)
-      S.headers.push_back(h);
-  for (size_t i = 0; i + 1 < S.headers.size(); ++i)
-    for (size_t j = i + 1; j < S.headers.size(); ++j)
-      if (A.nest[S.headers[j]] > A.nest[S.headers[i]])
-        std::swap(S.headers[i], S.headers[j]);
+  S.headers = innermost_headers_by_nest(A);
   return S;
 }
 
