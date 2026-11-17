@@ -2758,6 +2758,334 @@ static void fz_equi(std::mt19937_64 &rng, KzRec &R) {
 }
 
 // ---------------------------------------------------------------------------
+// 31. opt.liveness: the backward fixpoint vs the textbook gen/kill
+//     equations (a different formulation AND a different sweep order),
+//     and the interference rows vs a pairwise fresh-scan enumeration
+// ---------------------------------------------------------------------------
+static void fz_liveness(std::mt19937_64 &rng, KzRec &R) {
+  const ulen nb = 1 + kz_pick(rng, 8);
+  const ulen nv = 1 + kz_pick(rng, 8);
+  // the random CFG (valid rows only -- the adapters' convention)
+  std::vector<std::vector<ulen>> succs(nb);
+  for (ulen b = 0; b < nb; ++b) {
+    const int deg = int(kz_pick(rng, 4));
+    for (int j = 0; j < deg; ++j)
+      if (kz_chance(rng, 80))
+        succs[b].push_back(kz_pick(rng, nb));
+  }
+  // the random sites: contiguous [begin,end) ranges per block
+  std::vector<std::pair<ulen, ulen>> blocks(nb, {0, 0});
+  std::vector<std::vector<ulen>> args{};
+  std::vector<ulen> defs{};
+  std::vector<char> skip{};
+  for (ulen b = 0; b < nb; ++b) {
+    blocks[b].first = ulen(args.size());
+    const int cnt = int(kz_pick(rng, 5)); // 0..4 sites
+    for (int j = 0; j < cnt; ++j) {
+      std::vector<ulen> row{};
+      const int na = int(kz_pick(rng, 4));
+      for (int k = 0; k < na; ++k)
+        row.push_back(kz_chance(rng, 90) ? kz_pick(rng, nv)
+                                         : uintlen_t(opt_ns::none_v));
+      args.push_back(std::move(row));
+      defs.push_back(kz_chance(rng, 55)
+                         ? (kz_chance(rng, 90) ? kz_pick(rng, nv)
+                                               : uintlen_t(opt_ns::none_v))
+                         : uintlen_t(opt_ns::none_v));
+      skip.push_back(kz_chance(rng, 20) ? 1 : 0);
+    }
+    blocks[b].second = ulen(args.size());
+  }
+  const auto liv = opt_ns::calculate_block_liveness<V>(succs, blocks, args,
+                                                       defs, skip, nv, 64);
+  // ---- reference 1: the gen/kill equations, swept FORWARD --------------
+  // gen(b): upward-exposed uses (a use AFTER its own def in the block is
+  // not exposed -- the forward walk kills as it goes); kill(b): the
+  // block's defs. The classic dataflow formulation -- a different
+  // algorithm and a different block order than the kernel's descending
+  // backward scan.
+  std::vector<std::vector<char>> gen(nb, std::vector<char>(nv, 0)),
+      kill(nb, std::vector<char>(nv, 0));
+  for (ulen b = 0; b < nb; ++b) {
+    std::vector<char> dead(nv, 0);
+    for (ulen i = blocks[b].first; i < blocks[b].second; ++i) {
+      if (skip[i])
+        continue;
+      for (ulen v : args[i])
+        if (v < nv && !dead[v])
+          gen[b][v] = 1; // exposed: no def of v earlier in the block
+      const ulen d = defs[i];
+      if (d != opt_ns::none_v && d < nv) {
+        kill[b][d] = 1;
+        dead[d] = 1;
+      }
+    }
+  }
+  std::vector<std::vector<char>> rin(nb, std::vector<char>(nv, 0)),
+      rout(nb, std::vector<char>(nv, 0));
+  for (int round = 0; round < 1000; ++round) {
+    bool ch = false;
+    for (ulen b = 0; b < nb; ++b) { // FORWARD order (the kernel goes down)
+      std::vector<char> &o = rout[b];
+      std::fill(o.begin(), o.end(), 0);
+      for (ulen s : succs[b])
+        if (s < nb)
+          for (ulen v = 0; v < nv; ++v)
+            o[v] = char(o[v] | rin[s][v]);
+      for (ulen v = 0; v < nv; ++v) {
+        const char want = char(gen[b][v] | (o[v] && !kill[b][v]));
+        if (want != rin[b][v]) {
+          rin[b][v] = want;
+          ch = true;
+        }
+      }
+    }
+    if (!ch)
+      break;
+  }
+  for (ulen b = 0; b < nb; ++b)
+    for (ulen v = 0; v < nv; ++v) {
+      R.ok(!!liv.live_in[b][v] == !!rin[b][v],
+           "liveness: live-in matches the gen/kill equations");
+      R.ok(!!liv.live_out[b][v] == !!rout[b][v],
+           "liveness: live-out matches the gen/kill equations");
+    }
+  // ---- the interference rows vs the pairwise enumeration ---------------
+  const ulen ent = kz_pick(rng, nb);
+  std::vector<ulen> edefs{};
+  {
+    const ulen np = kz_pick(rng, nv + 1);
+    for (ulen p = 0; p < np; ++p)
+      edefs.push_back(kz_pick(rng, nv)); // duplicates welcome
+  }
+  const auto adj = opt_ns::calculate_interference_rows<V>(
+      blocks, args, defs, skip, liv, nv, ent, edefs);
+  // reference: var-major. (a,b) interfere iff some site's def is a and b
+  // is live just after it -- recomputed FRESH per site by rescanning the
+  // block -- or the entry rules hold.
+  std::vector<std::vector<char>> want(nv, std::vector<char>(nv, 0));
+  auto wedge = [&](ulen a, ulen b) {
+    if (a == b || a >= nv || b >= nv)
+      return;
+    want[a][b] = want[b][a] = 1;
+  };
+  for (ulen b = 0; b < nb; ++b) {
+    for (ulen i = blocks[b].first; i < blocks[b].second; ++i) {
+      if (skip[i])
+        continue;
+      const ulen d = defs[i];
+      if (d == opt_ns::none_v || d >= nv)
+        continue;
+      // live-after(i): fresh backward scan of the sites after i
+      std::vector<char> live = rout[b];
+      for (ulen j = blocks[b].second; j-- > i + 1;) {
+        if (skip[j])
+          continue;
+        const ulen dj = defs[j];
+        if (dj != opt_ns::none_v && dj < nv)
+          live[dj] = 0;
+        for (ulen v : args[j])
+          if (v < nv)
+            live[v] = 1;
+      }
+      for (ulen u = 0; u < nv; ++u)
+        if (live[u])
+          wedge(d, u);
+    }
+  }
+  if (nb && ent < nb)
+    for (ulen d : edefs) {
+      if (d >= nv)
+        continue;
+      for (ulen u = 0; u < nv; ++u)
+        if (u != d && rin[ent][u])
+          wedge(d, u); // live into the entry
+      for (ulen u : edefs)
+        wedge(d, u);   // entry defs are pairwise, always
+    }
+  for (ulen a = 0; a < nv; ++a) {
+    R.ok(adj[a].size() == ulen(std::count(want[a].begin(), want[a].end(), 1)),
+         "liveness: interference degree matches the enumeration");
+    for (ulen b : adj[a]) {
+      R.ok(b < nv && want[a][b], "liveness: interference edge is wanted");
+      R.ok(b != a, "liveness: no self loops");
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 32. opt.trace: the RPO vs a RECURSIVE postorder walk, and the trace
+//     chains vs their greedy replica + the structural invariants
+// ---------------------------------------------------------------------------
+static void fz_trace(std::mt19937_64 &rng, KzRec &R) {
+  const ulen nb = 1 + kz_pick(rng, 9);
+  std::vector<std::vector<ulen>> succs(nb);
+  for (ulen b = 0; b < nb; ++b) {
+    const int deg = int(kz_pick(rng, 4)); // arity 0..3: shapes the
+    for (int j = 0; j < deg; ++j)         // binary IR can never spell
+      if (kz_chance(rng, 80))
+        succs[b].push_back(kz_pick(rng, nb));
+  }
+  const ulen ent = kz_pick(rng, nb);
+  const std::vector<char> reach = kz_ref_reach(succs, ent);
+  const std::vector<ulen> rpo =
+      opt_ns::calculate_reverse_postorder(succs, reach, ent);
+  // reference: the recursive DFS the textbook spells -- a genuinely
+  // different engine than the kernel's explicit two-stack walk
+  std::vector<ulen> want_rpo{};
+  {
+    std::vector<ulen> post{};
+    std::vector<char> seen(nb, 0);
+    auto dfs = [&](auto &&self, ulen b) -> void {
+      seen[b] = 1;
+      for (ulen s : succs[b])
+        if (s < nb && reach[s] && !seen[s])
+          self(self, s);
+      post.push_back(b);
+    };
+    if (nb && ent < nb && reach[ent])
+      dfs(dfs, ent);
+    want_rpo.assign(post.rbegin(), post.rend());
+  }
+  R.ok(rpo == want_rpo, "trace: RPO matches the recursive DFS");
+  // RPO invariants: a permutation of the reachable blocks, entry first
+  {
+    std::vector<char> got(nb, 0);
+    ulen nreach = 0;
+    for (ulen b = 0; b < nb; ++b)
+      nreach += reach[b] ? 1 : 0;
+    R.ok(rpo.size() == nreach, "trace: RPO covers exactly the reachable");
+    for (ulen b : rpo) {
+      R.ok(b < nb && reach[b] && !got[b], "trace: RPO entry is fresh");
+      if (b < nb)
+        got[b] = 1;
+    }
+    if (!rpo.empty())
+      R.ok(rpo[0] == ent, "trace: the entry leads the RPO");
+  }
+  // the trace chains: random scores, the greedy replica
+  std::vector<ulen> score(nb, 0);
+  for (ulen b = 0; b < nb; ++b)
+    score[b] = kz_pick(rng, 5);
+  const auto tr = opt_ns::calculate_trace_layout(succs, reach, score, rpo);
+  // replica: same greedy, coded as a candidate fold (first open succ,
+  // replaced only by a STRICTLY smaller score -- the earliest-slot tie)
+  std::vector<char> placed(nb, 0);
+  std::vector<ulen> word{};
+  for (ulen bb : rpo) {
+    if (placed[bb] || !reach[bb])
+      continue;
+    ulen cur = bb;
+    for (;;) {
+      placed[cur] = 1;
+      word.push_back(cur);
+      ulen pick = opt_ns::none_v;
+      for (ulen s : succs[cur]) {
+        if (s >= nb || placed[s] || !reach[s])
+          continue;
+        if (pick == opt_ns::none_v || score[s] < score[pick])
+          pick = s;
+      }
+      if (pick == opt_ns::none_v)
+        break;
+      cur = pick;
+    }
+  }
+  R.ok(tr.order == word, "trace: the chains match the greedy replica");
+  for (ulen b = 0; b < nb; ++b)
+    R.ok((tr.next[b] == opt_ns::none_v) || (tr.next[b] < nb),
+         "trace: next is a block or none");
+  for (ulen k = 0; k + 1 < tr.order.size(); ++k)
+    R.ok(tr.next[tr.order[k]] == tr.order[k + 1],
+         "trace: next chains the emission order");
+}
+
+// ---------------------------------------------------------------------------
+// 33. opt.escape: the copy closure vs a BFS over the copy graph, and
+//     the positional scan vs a var-major enumeration; plus the closure
+//     invariants (contains the seeds, closed under the copy edges)
+// ---------------------------------------------------------------------------
+static void fz_escape(std::mt19937_64 &rng, KzRec &R) {
+  const ulen nv = 1 + kz_pick(rng, 10);
+  const ulen nc = kz_pick(rng, 12);
+  std::vector<ulen> csrc(nc), cdst(nc);
+  for (ulen i = 0; i < nc; ++i) {
+    csrc[i] = kz_chance(rng, 90) ? kz_pick(rng, nv) : uintlen_t(opt_ns::none_v);
+    cdst[i] = kz_chance(rng, 90) ? kz_pick(rng, nv) : uintlen_t(opt_ns::none_v);
+  }
+  std::vector<ulen> seeds{};
+  {
+    const ulen ns = kz_pick(rng, 4);
+    for (ulen j = 0; j < ns; ++j)
+      seeds.push_back(kz_chance(rng, 90) ? kz_pick(rng, nv)
+                                         : uintlen_t(opt_ns::none_v));
+  }
+  const auto ali = opt_ns::calculate_copy_closure(csrc, cdst, seeds, nv);
+  // reference: BFS over the explicit copy adjacency, from the seeds
+  std::vector<std::vector<ulen>> adj(nv);
+  for (ulen i = 0; i < nc; ++i)
+    if (csrc[i] < nv && cdst[i] < nv)
+      adj[csrc[i]].push_back(cdst[i]);
+  std::vector<char> want(nv, 0);
+  {
+    std::vector<ulen> wl{};
+    for (ulen s : seeds)
+      if (s < nv && !want[s]) {
+        want[s] = 1;
+        wl.push_back(s);
+      }
+    while (!wl.empty()) {
+      const ulen v = wl.back();
+      wl.pop_back();
+      for (ulen d : adj[v])
+        if (!want[d]) {
+          want[d] = 1;
+          wl.push_back(d);
+        }
+    }
+  }
+  for (ulen v = 0; v < nv; ++v)
+    R.ok(!!ali[v] == !!want[v], "escape: closure matches the BFS");
+  // invariants: the seeds are in, and the set is copy-closed
+  for (ulen s : seeds)
+    if (s < nv)
+      R.ok(ali[s], "escape: the closure contains its seeds");
+  for (ulen i = 0; i < nc; ++i)
+    if (csrc[i] < nv && cdst[i] < nv)
+      R.ok(!ali[csrc[i]] || ali[cdst[i]], "escape: the closure is copy-closed");
+  // the positional scan: random sites, random safety flags (rows may be
+  // SHORTER than the operand rows -- a missing flag is unsafe)
+  const ulen ns = kz_pick(rng, 12);
+  std::vector<std::vector<ulen>> args(ns);
+  std::vector<std::vector<char>> safe(ns);
+  for (ulen s = 0; s < ns; ++s) {
+    const ulen na = kz_pick(rng, 4);
+    for (ulen j = 0; j < na; ++j)
+      args[s].push_back(kz_chance(rng, 90) ? kz_pick(rng, nv)
+                                           : uintlen_t(opt_ns::none_v));
+    const ulen nf = kz_chance(rng, 80) ? na : kz_pick(rng, na + 1);
+    for (ulen j = 0; j < nf; ++j)
+      safe[s].push_back(kz_chance(rng, 40) ? 1 : 0);
+  }
+  const bool esc = opt_ns::scan_position_escapes(args, safe, ali);
+  // reference: var-major -- for every closure member, hunt an unsafe
+  // occurrence (the scan's definition, enumerated inside-out)
+  bool wesc = false;
+  for (ulen v = 0; v < nv && !wesc; ++v) {
+    if (!ali[v])
+      continue;
+    for (ulen s = 0; s < ns && !wesc; ++s)
+      for (ulen j = 0; j < args[s].size(); ++j)
+        if (args[s][j] == v &&
+            !(j < safe[s].size() && safe[s][j])) {
+          wesc = true;
+          break;
+        }
+  }
+  R.ok(esc == wesc, "escape: the scan matches the var-major enumeration");
+}
+
+// ---------------------------------------------------------------------------
 // the driver: component selection, seeds, workers, the report
 // ---------------------------------------------------------------------------
 // the graph library's component bodies (generators, references, the
@@ -2771,11 +3099,11 @@ static const KzFn KZ_FNS[] = {
     fz_split,     fz_reach, fz_splice, fz_inv,     fz_ren,     fz_trivphi,
     fz_shape,     fz_exits, fz_route,  fz_needs,   fz_alias,   fz_mem,
     fz_iv,        fz_ai,    fz_key,    fz_leak,    fz_ipa,     fz_equi,
-    fz_invfam,    fz_scc,   fz_seq,    fz_dsu,     fz_search,  fz_dij,
-    fz_flow,      fz_stcut, fz_mcf,    fz_gcut,    fz_dgcut,   fz_maxcut,
-    fz_gh,        fz_mst,   fz_match,  fz_blossom, fz_bic,     fz_kcore,
-    fz_euler,     fz_tr,    fz_rmas,   fz_dist,    fz_meg,     fz_maxclosure,
-    fz_pathcover, fz_rmasp};
+    fz_liveness,  fz_trace, fz_escape, fz_invfam,  fz_scc,     fz_seq,
+    fz_dsu,       fz_search, fz_dij,  fz_flow,     fz_stcut,   fz_mcf,
+    fz_gcut,      fz_dgcut, fz_maxcut, fz_gh,      fz_mst,     fz_match,
+    fz_blossom,   fz_bic,   fz_kcore,  fz_euler,    fz_tr,      fz_rmas,
+    fz_dist,      fz_meg,   fz_maxclosure, fz_pathcover, fz_rmasp};
 static_assert(sizeof(KZ_FNS) / sizeof(KZ_FNS[0]) == KZ_NCOMP,
               "component table mismatch");
 

@@ -1,30 +1,30 @@
 #pragma once
 // === regalloc.hpp ========================================
 // the x86-64 register allocator (split from emit_x64_impl.hpp, checkpoint
-// 21): RaPlan + ra_plan — block liveness (backward fixpoint), the SSA
-// interference graph, chordal coloring via mjz_lib (greedy in
-// maximum-cardinality-search order — OPTIMAL for chordal graphs, and
-// SSA-shaped interference graphs are chordal), and the 5-register
-// assignment (colors 0..4 -> rbx,r12..r15, the callee-saved pool, so
-// anything live across a call needs no extra saving; the rest spill to
-// the classic -N(%rbp) slots). The audit layer (regaudit.hpp) reads the
-// SAME plan the codegen gets — one allocator, two consumers.
+// 21): RaPlan + ra_plan — block liveness, the SSA interference graph,
+// chordal coloring via mjz_lib, and the 5-register assignment (colors
+// 0..4 -> rbx,r12..r15, the callee-saved pool, so anything live across
+// a call needs no extra saving; the rest spill to the classic -N(%rbp)
+// slots). The audit layer (regaudit.hpp) reads the SAME plan the
+// codegen gets — one allocator, two consumers.
 //
 // MECHANICS (liveness -> interference -> coloring -> homes):
-//   * BACKWARD LIVENESS. lin/lout per block, computed by a backward
-//     fixpoint (up to 64 rounds): live-out(b) = union of live-in of
-//     b's successors; inside a block, scan instructions BACKWARD
-//     with def-kills-use (a def removes its vreg from live, a use
-//     adds it). Dead instrs (P.dead) and inlined consts (P.kc) are
-//     invisible to the reader -- the fused Cbr reads the compare's
-//     OPERANDS (each_use), which is what keeps slots alive where
-//     the branch fusion needs them.
-//   * INTERFERENCE. Walk each block backward with `live` seeded
-//     from live-out: at a def, add edges (def, every vreg live
-//     after it), then kill the def. Parameters interfere with
+//   * BACKWARD LIVENESS. lin/lout per block, the fixpoint in the
+//     library now (opt/liveness.hpp's calculate_block_liveness --
+//     the round-robin sweep this file hand-rolled until the kernel
+//     lift): live-out(b) = union of live-in of b's successors; inside
+//     a block, instructions scanned BACKWARD with def-kills-use.
+//     Dead instrs (P.dead) and inlined consts (P.kc) are invisible to
+//     the reader -- the fused Cbr reads the compare's OPERANDS
+//     (each_use), which is what keeps slots alive where the branch
+//     fusion needs them.
+//   * INTERFERENCE. calculate_interference_rows (the same header):
+//     walk each block backward with `live` seeded from live-out; at a
+//     def, add edges (def, every vreg live after it), then kill the
+//     def. Parameters are the entry defs: they interfere with
 //     everything live into entry AND PAIRWISE ALWAYS (the prologue
 //     unconditionally moves every argument into its home -- fuzz
-//     seed 804, documented at the edge() calls above).
+//     seed 804, documented in the kernel).
 //   * COLORING. mjz_lib's color_chordal_graph: greedy in maximum-
 //     cardinality-search order, OPTIMAL on chordal graphs (colors =
 //     clique number), and these interference graphs are SSA-shaped
@@ -33,6 +33,13 @@
 //     live across a call needs no save); color >= 5 spills to
 //     -N(%rbp) with spill[] ordinals; usedmask drives the prologue's
 //     counted push/pop of the used subset only.
+//
+// THE ADAPTER'S TABLES (what the kernel lift left here): the
+// textual-use reader (each_use -- the fuse/kc visibility policy) and
+// the def reader (is_def) materialize args_of_site/def_of_site/
+// skip_site rows; the succ rows filter NONE. Everything else is the
+// IR knowledge the kernel must not know (which vregs exist, what a
+// home is, the 5-register pool).
 
 #include "../base/pass_cfg.hpp"
 #include "../graph_lib.hpp"
@@ -66,6 +73,7 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
   R.spill.assign(nv, 0);
   if (!nb || !nv)
     return R;
+  const uint32_t ni = uint32_t(fn.code.size());
   // textual-use reader honoring inlined consts and fused branches
   auto each_use = [&](uint32_t i, auto &&f) {
     const Instr &I = fn.code[i];
@@ -97,81 +105,36 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
       return NONE;
     return I.dst;
   };
-  // ---- block liveness (backward scan, fixpoint over successors) ----------
-  std::vector<std::vector<char>> lin(nb, std::vector<char>(nv, 0)),
-      lout(nb, std::vector<char>(nv, 0));
-  for (int round = 0; round < 64; ++round) {
-    bool changed = false;
-    for (int32_t b = (int32_t)nb - 1; b >= 0; --b) {
-      std::vector<char> &lo = lout[(uint32_t)b];
-      std::fill(lo.begin(), lo.end(), 0);
-      for (uint32_t s : {fn.succ0((uint32_t)b), fn.succ1((uint32_t)b)})
-        if (s != NONE && s < nb)
-          for (uint32_t v = 0; v < nv; ++v)
-            lo[v] |= lin[s][v];
-      std::vector<char> live = lo;
-      for (uint32_t i = fn.blocks[(uint32_t)b].end;
-           i-- > fn.blocks[(uint32_t)b].begin;) {
-        if (P.dead[i])
-          continue;
-        uint32_t d = is_def(i);
-        if (d != NONE)
-          live[d] = 0;
-        each_use(i, [&](uint32_t v) { live[v] = 1; });
-      }
-      for (uint32_t v = 0; v < nv; ++v)
-        if (live[v] != lin[(uint32_t)b][v]) {
-          lin[(uint32_t)b][v] = live[v];
-          changed = true;
-        }
-    }
-    if (!changed)
-      break;
+  // ---- the kernel tables (the adapter's whole job) ------------------------
+  std::vector<std::vector<ulen>> succ_rows(nb);
+  for (uint32_t b = 0; b < nb; ++b)
+    for (uint32_t s : {fn.succ0(b), fn.succ1(b)})
+      if (s != NONE && s < nb)
+        succ_rows[b].push_back(s);
+  std::vector<std::pair<ulen, ulen>> block_sites(nb);
+  for (uint32_t b = 0; b < nb; ++b)
+    block_sites[b] = {fn.blocks[b].begin, fn.blocks[b].end};
+  std::vector<std::vector<ulen>> args_of_site(ni);
+  std::vector<ulen> def_of_site(ni, opt_ns::none_v);
+  std::vector<char> skip_site(ni, 0);
+  for (uint32_t i = 0; i < ni; ++i) {
+    skip_site[i] = P.dead[i] ? 1 : 0;
+    if (P.dead[i])
+      continue; // invisible to every reader
+    each_use(i, [&](uint32_t v) { args_of_site[i].push_back(v); });
+    const uint32_t d = is_def(i);
+    def_of_site[i] = (d == NONE) ? opt_ns::none_v : ulen(d);
   }
-  // ---- interference edges ------------------------------------------------
-  std::vector<std::vector<ulen>> adj(nv);
-  auto edge = [&](uint32_t a, uint32_t b) {
-    if (a == b || a >= nv || b >= nv)
-      return;
-    for (uint32_t x : adj[a])
-      if (x == b)
-        return;
-    adj[a].push_back(b);
-    adj[b].push_back(a);
-  };
-  { // parameters are "defined at entry": they conflict with each other and
-    // with anything live into the entry block
-    std::vector<char> live = lin[0];
-    for (uint32_t p = 0; p < fn.nparams && p < nv; ++p) {
-      for (uint32_t u = 0; u < nv; ++u)
-        if (live[u] && u != p)
-          edge(p, u);
-      live[p] = 0;
-    }
-    // ... and PAIRWISE, always: the prologue unconditionally moves every
-    // incoming argument into its home, so even a param whose only uses sit
-    // in unreachable code (not live-in, no edges above) must not share a
-    // home with a live sibling — the entry move would clobber it (fuzz
-    // seed 804: p0 and p1 both colored rbx, `mov %rsi,%rbx` destroyed p0)
-    for (uint32_t a = 0; a < fn.nparams && a < nv; ++a)
-      for (uint32_t b = a + 1; b < fn.nparams && b < nv; ++b)
-        edge(a, b);
-  }
-  for (uint32_t b = 0; b < nb; ++b) {
-    std::vector<char> live = lout[b];
-    for (uint32_t i = fn.blocks[b].end; i-- > fn.blocks[b].begin;) {
-      if (P.dead[i])
-        continue;
-      uint32_t d = is_def(i);
-      if (d != NONE) {
-        for (uint32_t u = 0; u < nv; ++u)
-          if (live[u])
-            edge(d, u);
-        live[d] = 0;
-      }
-      each_use(i, [&](uint32_t v) { live[v] = 1; });
-    }
-  }
+  // ---- liveness + interference: the library kernels ----------------------
+  const auto liv =
+      opt_ns::calculate_block_liveness<V>(succ_rows, block_sites, args_of_site,
+                                       def_of_site, skip_site, nv, 64);
+  std::vector<ulen> entry_defs{};
+  for (uint32_t p = 0; p < fn.nparams && p < nv; ++p)
+    entry_defs.push_back(p);
+  const auto adj = opt_ns::calculate_interference_rows<V>(
+      block_sites, args_of_site, def_of_site, skip_site, liv, nv, 0,
+      entry_defs);
   // ---- the lib does the coloring ------------------------------------------
   auto forest = gns::make_basic_forest<V>(adj);
   auto colored = gns::color_chordal_graph<V>(forest);

@@ -36,6 +36,7 @@ static const char *const KZ_NAMES[] = {
     "opt.split", "opt.reach", "opt.splice", "opt.inv", "opt.ren", "opt.trivphi",
     "opt.shape", "opt.exits", "opt.route", "opt.needs", "opt.alias", "opt.mem",
     "opt.iv", "opt.ai", "opt.key", "opt.leak", "opt.ipa", "opt.equi",
+    "opt.liveness", "opt.trace", "opt.escape",
     // the graph library's algorithm layer (fuzz_graphs.hpp)
     "gns.invfam", "gns.scc", "gns.seq", "gns.dsu", "gns.search", "gns.dij",
     "gns.flow", "gns.stcut", "gns.mcf", "gns.gcut", "gns.dgcut", "gns.maxcut",

@@ -13,6 +13,11 @@
 //      unplaced successor (both open => fewer preds wins; succ1 alone
 //      => the false arm falls through, shaping `if (c) goto T;`),
 //      linearizing into P.order and P.next (the fallthrough neighbor).
+//      [phases 1-3 are the library kernels now: opt_ns::
+//      calculate_reachable_mask + opt/layout.hpp's
+//      calculate_reverse_postorder + calculate_trace_layout, with the
+//      pred-count score; this file keeps only the IR glue -- the NONE
+//      filtering and the score tables]
 //   4. constants: kc/kv mark a vreg literal-inlinable ONLY with exactly
 //      one def that is a Const -- post-destruction phi slots hold one
 //      def per edge; inlining one edge's constant everywhere would
@@ -37,6 +42,7 @@
 //      allocator assign_slots (astrun.hpp) mirrors the fusion gate.
 
 #include "../ir/instr.hpp"
+#include "../opt/opt_generic.hpp"
 
 #include <vector>
 
@@ -54,76 +60,30 @@ inline EmitPlan make_emit_plan(const Fn &fn) {
   EmitPlan P{};
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  // reachability from entry
-  std::vector<char> reach(nb, 0);
-  {
-    std::vector<uint32_t> st{0};
-    reach[0] = 1;
-    while (!st.empty()) {
-      uint32_t b = st.back();
-      st.pop_back();
-      for (uint32_t s : {fn.succ0(b), fn.succ1(b)})
-        if (s != NONE && !reach[s]) {
-          reach[s] = 1;
-          st.push_back(s);
-        }
-    }
-  }
-  // reverse postorder (succ0 first => loop headers precede their bodies)
-  std::vector<uint32_t> rpo{};
-  {
-    std::vector<uint32_t> post{};
-    post.reserve(nb);
-    std::vector<char> seen(nb, 0);
-    std::vector<std::pair<uint32_t, uint32_t>> st{};
-    if (reach[0]) {
-      seen[0] = 1;
-      st.push_back({0, 0});
-    }
-    while (!st.empty()) {
-      uint32_t b = st.back().first, ci = st.back().second;
-      if (ci < 2) {
-        uint32_t s = (ci == 0) ? fn.succ0(b) : fn.succ1(b);
-        ++st.back().second;
-        if (s != NONE && reach[s] && !seen[s]) {
-          seen[s] = 1;
-          st.push_back({s, 0});
-        }
-      } else {
-        post.push_back(b);
-        st.pop_back();
-      }
-    }
-    rpo.assign(post.rbegin(), post.rend());
-  }
-  // trace layout: chain each block with its preferred unplaced successor
-  std::vector<char> placed(nb, 0);
+  // the kernel rows: valid succs in SLOT order (the tiebreak vocabulary)
+  std::vector<std::vector<ulen>> succ_rows(nb);
+  for (uint32_t b = 0; b < nb; ++b)
+    for (uint32_t s : {fn.succ0(b), fn.succ1(b)})
+      if (s != NONE && s < nb)
+        succ_rows[b].push_back(s);
+  // reachability from entry + RPO (succ0 first => loop headers precede
+  // their bodies) + the trace chains: all three in the library now
+  const std::vector<char> reach =
+      opt_ns::calculate_reachable_mask(succ_rows, 0);
+  const std::vector<ulen> rpo =
+      opt_ns::calculate_reverse_postorder(succ_rows, reach, 0);
+  std::vector<ulen> score(nb, 0);
+  for (uint32_t b = 0; b < nb; ++b)
+    score[b] = ulen(fn.preds[b].size()); // fewer preds: the cheaper jump
+  const opt_ns::trace_layout_t tr =
+      opt_ns::calculate_trace_layout(succ_rows, reach, score, rpo);
+  P.order.clear();
+  P.order.reserve(tr.order.size());
+  for (ulen b : tr.order)
+    P.order.push_back(uint32_t(b));
   P.next.assign(nb, NONE);
-  for (uint32_t b : rpo) {
-    if (!reach[b] || placed[b])
-      continue;
-    uint32_t cur = b;
-    for (;;) {
-      placed[cur] = 1;
-      P.order.push_back(cur);
-      uint32_t c0 = fn.succ0(cur), c1 = fn.succ1(cur);
-      auto cand = [&](uint32_t s) -> bool {
-        return s != NONE && s < nb && reach[s] && !placed[s];
-      };
-      uint32_t pick = NONE;
-      if (cand(c0) && cand(c1))
-        pick = (fn.preds[c1].size() < fn.preds[c0].size()) ? c1 : c0;
-      else if (cand(c1))
-        pick = c1; // else/false arm: `if (c) goto T; <else falls through>`
-      else if (cand(c0))
-        pick = c0;
-      if (pick == NONE)
-        break;
-      cur = pick;
-    }
-  }
-  for (size_t k = 0; k + 1 < P.order.size(); ++k)
-    P.next[P.order[k]] = P.order[k + 1];
+  for (uint32_t b = 0; b < nb; ++b)
+    P.next[b] = (tr.next[b] == opt_ns::none_v) ? NONE : uint32_t(tr.next[b]);
   // constants: a vreg is literal-inlinable ONLY when it has exactly ONE def
   // and that def is a Const. Post-destruction phi slots can hold several
   // defs, one of which post_destruct_peephole may have folded into a Const

@@ -48,8 +48,9 @@ the pricing.
    died on it before the packing ledger, and the shipped design's
    certificate (packing == total) needs no exponential reference.
 4. **Widen the fuzz window**: rotation 16131+, random-cfg 14731+.
-   Windows verified this checkpoint: e2e 1-2400 + 30001-30400
-   (random cfg), kernel campaign 1-30000 all 56 components.
+   Windows verified this checkpoint: e2e 1-1477 + 10000-11200,
+   kernel campaign 1-30000 all 59 components (liveness/trace/escape
+   lifted this checkpoint; 43.7M checks).
 
 ## Build in a recycled sandbox (the short version)
 

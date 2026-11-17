@@ -9,17 +9,24 @@
 //   * candidate Allocs: constant length, 1 <= len <=
 //     MJZ_STK_ARR_MAX_ELEMS, within the MJZ_STK_ARR_TOTAL_ELEMS budget.
 //   * alias closure ali: the alloc's dst plus every transitive Copy
-//     destination -- a fixpoint rescan of fn.code until stable.
-//   * escape scan over the FINAL closure: Copy sources and the HANDLE
-//     positions of Load/Store/Len are safe; any other use -- an
-//     index, a stored value, a phi, Bin/Cbr/Print/Call/Ret/Exit/Input
-//     operands -- makes the numeric handle observable and pins the
-//     array to the arena.
+//     destination -- the library kernel now (opt/escape.hpp's
+//     calculate_copy_closure; the rescan fixpoint this file
+//     hand-rolled until the lift).
+//   * escape scan over the FINAL closure: the library kernel too
+//     (scan_position_escapes); THIS file's whole job is the POSITION
+//     POLICY -- which operand positions of which instr kinds may
+//     legally see a handle: Copy sources and the HANDLE positions of
+//     Load/Store/Len are safe; any other use -- an index, a stored
+//     value, a phi, Bin/Cbr/Print/Call/Ret/Exit/Input operands --
+//     makes the numeric handle observable and pins the array to the
+//     arena.
 //   * survivors become Fn::StkArr{root, len, vregs} records in
 //     fn.stk_arrays (the array is named after its root vreg).
 //
-// DATA STRUCTURES: ndefs/kc/kv (nv-sized), ali (the alias bitmap),
-// total (the element budget); StkArr itself lives in ir/instr.hpp.
+// DATA STRUCTURES: ndefs/kc/kv (nv-sized), the per-site operand and
+// position-safety rows (materialized once for all candidates), ali
+// (the alias bitmap, per candidate); StkArr itself lives in
+// ir/instr.hpp.
 //
 // THEORY: a provably non-escaping array's handle value is unobservable,
 // so the C backend may keep it in a zero-filled stack local (memset at
@@ -34,6 +41,7 @@
 // lowers the array's Alloc/Load/Store/Len to mjz_s<root>[] accesses.
 
 #include "../ir/instr.hpp"
+#include "../opt/opt_generic.hpp"
 
 // --- 9f2. stack-allocation analysis (for the C backend) ---------------------
 // An `array(n)` with constant n whose handle only ever flows (through Copies)
@@ -68,6 +76,52 @@ constexpr void analyze_stack_allocs(Fn &fn) {
       kc[I.dst] = 1;
       kv[I.dst] = I.c;
     }
+  // ---- the kernel tables, materialized ONCE for every candidate -----------
+  // copy_src/copy_dst: the identity-preserving moves. operands/safe: per
+  // site, the read positions with the handle-position policy (1 = a member
+  // may legally appear there). none_v operands ride along -- the kernel's
+  // range checks skip them, exactly like the old bad() reader's.
+  std::vector<ulen> copy_src{}, copy_dst{};
+  std::vector<std::vector<ulen>> operands{};
+  std::vector<std::vector<char>> safe{};
+  operands.resize(fn.code.size());
+  safe.resize(fn.code.size());
+  for (const Instr &I : fn.code) {
+    const uint32_t i = uint32_t(&I - fn.code.data());
+    auto push = [&](uint32_t v, char ok) {
+      operands[i].push_back((v == NONE) ? opt_ns::none_v : ulen(v));
+      safe[i].push_back(ok);
+    };
+    switch (I.k) {
+    case K::Copy: // source: alias extension (ok); dst cannot re-define
+      if (I.a != NONE && I.a < nv && I.dst < nv) {
+        copy_src.push_back(I.a);
+        copy_dst.push_back(I.dst);
+      }
+      push(I.a, 1);
+      break;
+    case K::Load: // handle position ok; the INDEX is a value use
+      push(I.a, 1);
+      push(I.b2, 0);
+      break;
+    case K::Store: // handle ok; index and stored value are value uses
+      push(I.a, 1);
+      push(I.b2, 0);
+      push(I.c2, 0);
+      break;
+    case K::Len: // handle position ok
+      push(I.a, 1);
+      break;
+    default: // Bin/Cbr/Print/Call/Ret/Phi/Exit/Input/Alloc: every
+      // operand observes the value (an Alloc's length included)
+      push(I.a, 0);
+      push(I.b2, 0);
+      push(I.c2, 0);
+      for (uint32_t v : I.args)
+        push(v, 0);
+      break;
+    }
+  }
   val_t total = 0;
   for (uint32_t b = 0; b < nb; ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
@@ -81,48 +135,14 @@ constexpr void analyze_stack_allocs(Fn &fn) {
         continue;
       if (total + len > MJZ_STK_ARR_TOTAL_ELEMS)
         continue;
+      if (I.dst == NONE || I.dst >= nv)
+        continue; // defensive: no home to name
       // alias closure: the alloc dst + transitive Copy destinations
-      std::vector<char> ali(nv, 0);
-      ali[I.dst] = 1;
-      for (bool grew = true; grew;) {
-        grew = false;
-        for (const Instr &C : fn.code)
-          if (C.k == K::Copy && C.a != NONE && C.a < nv && C.dst < nv &&
-              ali[C.a] && !ali[C.dst]) {
-            ali[C.dst] = 1;
-            grew = true;
-          }
-      }
+      const std::vector<ulen> seeds{ulen(I.dst)};
+      const std::vector<char> ali =
+          opt_ns::calculate_copy_closure(copy_src, copy_dst, seeds, nv);
       // escape scan over the FINAL alias set
-      bool esc = false;
-      for (uint32_t b2 = 0; b2 < nb && !esc; ++b2)
-        for (uint32_t j = fn.blocks[b2].begin; j < fn.blocks[b2].end && !esc;
-             ++j) {
-          const Instr &U = fn.code[j];
-          auto bad = [&](uint32_t v) { return v != NONE && v < nv && ali[v]; };
-          switch (U.k) {
-          case K::Copy: // source: alias extension (ok); dst cannot re-define
-            break;
-          case K::Load: // handle position ok; the INDEX is a value use
-            if (bad(U.b2))
-              esc = true;
-            break;
-          case K::Store: // handle ok; index and stored value are value uses
-            if (bad(U.b2) || bad(U.c2))
-              esc = true;
-            break;
-          case K::Len: // handle position ok
-            break;
-          default: // Bin/Cbr/Print/Call/Ret/Phi/Exit/Input: any alias use
-            if (bad(U.a) || bad(U.b2) || bad(U.c2))
-              esc = true;
-            for (uint32_t v : U.args)
-              if (bad(v))
-                esc = true;
-            break;
-          }
-        }
-      if (esc)
+      if (opt_ns::scan_position_escapes(operands, safe, ali))
         continue;
       total += len;
       Fn::StkArr sa{};

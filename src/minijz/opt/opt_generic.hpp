@@ -72,6 +72,17 @@
 //                         (dead arguments)
 //   * opt/equi.hpp     -- class refinement over serial keys
 //                         (identical-code folding)
+//   * opt/liveness.hpp -- backward block liveness (the fixpoint
+//                         regalloc runs) + the interference rows
+//                         (defs vs live-outs, entry defs pairwise):
+//                         the allocator's graph, stated for any client
+//   * opt/layout.hpp   -- reverse postorder (slot-order DFS) + the
+//                         trace chain plan (smallest-score open
+//                         successor, ties to the earliest slot): the
+//                         emission order every native backend lays out
+//   * opt/escape.hpp   -- the copy alias closure + the positional
+//                         escape scan (stack_alloc's non-escaping
+//                         array test, any handle-position policy)
 //
 // THE PROGRAM MODEL (identical to ssa_ns, one paragraph each):
 //   * blocks  0..n_blocks-1; CFG as slot rows (succs_of_block, the

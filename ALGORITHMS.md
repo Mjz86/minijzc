@@ -844,6 +844,68 @@ fold commits at — or the round cap declines. The keys are opaque:
 what "identical" means is the client's serialization policy; the
 grouping is the algorithm.
 
+### 3.18 liveness_ns — block liveness + interference (`calculate_block_liveness`, `calculate_interference_rows`)
+**Papers.** The dataflow equations: Aho, Sethi & Ullman, *Compilers:
+Principles, Techniques, and Tools* (the "dragon book"), Chapter 9
+(live-variable analysis); the interference construction: Preston
+Briggs, Keith Cooper & Linda Torczon, *Improvements to Graph
+Coloring Register Allocation*, TOPLAS 16(3), 1994 (the
+def-vs-live-out walk); SSA interference chordality: Sebastian Hack,
+*Register Allocation for Programs in SSA Form*, CC 2007 (why greedy
+coloring in a good order is optimal on these graphs).
+
+**What was added.** The register allocator's analysis core, lifted
+out of `back/regalloc.hpp` verbatim (the 146-run parity gate held):
+the backward round-robin fixpoint (live-out = union of successor
+live-ins; per block, sites scanned backward with def-kills-use) and
+the interference rows (a def conflicts with everything live after
+it; the entry defs conflict with the entry live-in set AND pairwise
+always — the founding `mov %rsi,%rbx` bug, fuzz seed 804). The
+fuzzer (`opt.liveness`) plays the kernel against the textbook
+gen/kill equations swept in the OPPOSITE order — a different
+algorithm, not a copy — and the rows against a var-major pairwise
+enumeration that rescans each block fresh per site.
+
+### 3.19 layout_ns — reverse postorder + trace chains (`calculate_reverse_postorder`, `calculate_trace_layout`)
+**Papers.** RPO for iterative dataflow: Hecht & Ullman, *Analysis of
+a Simple Algorithm for Global Data Flow Problems*, JACM 23(1), 1976;
+trace scheduling: Joseph A. Fisher, *Trace Scheduling: A Technique
+for Global Microcode Compaction*, IEEE TC-30(7), 1981; the
+fallthrough-chaining heuristic (fewer-preds tiebreak) is the classic
+basic-block layout rule of every production backend.
+
+**What was added.** The emission plan's first three phases
+(`back/emit_plan.hpp`), lifted as pure CFG math: an iterative
+two-stack DFS in slot order whose reversed postorder puts loop
+headers before bodies, and the chain walk — from each RPO block,
+repeatedly append the open successor with the smallest score (the
+backend passes the pred count), ties to the earliest slot, so a
+binary backend's false arm falls through. The N-ary generalization
+is deliberate (the founding rule): a 3-way branch chains by the same
+rule. The fuzzer (`opt.trace`) checks the RPO against a RECURSIVE
+DFS (a different engine) and the chains against a greedy replica
+plus structural invariants (order = permutation of the reachable;
+next[] chains it).
+
+### 3.20 escape_ns — copy closure + positional escape (`calculate_copy_closure`, `scan_position_escapes`)
+**Papers.** Escape analysis by local alias reasoning: Choi, Burke &
+Carini, *Efficient Escape Analysis for Stack Allocation*, POPL
+1993 (the CHA-based flow-insensitive closure the C backend's
+stack-array analysis approximates); the copy-closure fixpoint is the
+classic union-find-free flavor of the same transitive closure.
+
+**What was added.** The stack-array analysis's two kernels, lifted
+out of `back/stack_alloc.hpp`: the monotone copy-alias closure
+(seeds + every var reachable through identity-preserving moves) and
+the positional escape scan (does any closure member appear at a
+position whose safety flag is not 1? missing flags are unsafe — the
+analysis fails closed). The position policy (which operand of which
+instruction may legally observe a handle) stays with the client as a
+table, which is what makes the kernel reusable by any backend with
+different handle positions. The fuzzer (`opt.escape`) plays the
+closure against a BFS over the explicit copy graph and the scan
+against a var-major enumeration.
+
 ---
 
 ## 4. Pass-side algorithms that are policy or rewrite rules
@@ -955,3 +1017,7 @@ end to end.
 | 36 | Dijkstra, Numerische Mathematik 1959; Hart, Nilsson & Raphael, IEEE TSSC 1968; Johnson, J. ACM 1977 | dijkstra.hpp |
 | 37 | Aho, Garey & Ullman, *The Transitive Reduction of a Directed Graph*, SIAM J. Comput. 1972 | rmas.hpp (transitive reduction) |
 | 38 | Ramachandran, *Finding a Minimum Feedback Arc Set in Reducible Flow Graphs*, J. Algorithms 1988; Karp, *Reducibility among Combinatorial Problems*, 1972 | rmas.hpp (weighted FAS — exact by Held–Karp sweep; the reducible special case polynomial: the packing-discounted per-loop min-cut walk) |
+| 39 | Hecht & Ullman, *Analysis of a Simple Algorithm for Global Data Flow Problems*, JACM 1976 | layout_ns (RPO for dataflow) |
+| 40 | Fisher, *Trace Scheduling: A Technique for Global Microcode Compaction*, IEEE TC 1981 | layout_ns (trace chains) |
+| 41 | Choi, Burke & Carini, *Efficient Escape Analysis for Stack Allocation*, POPL 1993 | escape_ns (stack arrays) |
+| 42 | Briggs, Cooper & Torczon, *Improvements to Graph Coloring Register Allocation*, TOPLAS 1994; Hack, *Register Allocation for Programs in SSA Form*, CC 2007 | liveness_ns (interference rows) |

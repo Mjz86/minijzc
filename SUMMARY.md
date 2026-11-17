@@ -82,7 +82,7 @@ bone. One fold per invocation; the tier-0 loop fixpoints it.
 ## The battery (all green)
 
 selftest 208/208 | units 6476/6476 | demo 206/206 | cx checks 7/7 |
-kernel campaign 56 components x 30,000 seeds, 0 failures | e2e
+kernel campaign 59 components x 30,000 seeds (43.7M checks), 0 failures | e2e
 differential fuzz 2,400 seeds (windows 1-800/801-1600/1601-2400) +
 400 random-config seeds, 0 mismatches | fuzz_native_gate | stress
 battery ALL PASS | all debugger tours + bugrepros | header order
