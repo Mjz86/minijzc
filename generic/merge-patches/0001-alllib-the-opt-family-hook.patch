@@ -1,0 +1,15 @@
+diff --git a/mjz_lib/alllib.hpp b/mjz_lib/alllib.hpp
+index 6114bab..6e562fc 100644
+--- a/mjz_lib/alllib.hpp
++++ b/mjz_lib/alllib.hpp
+@@ -43,6 +43,10 @@
+ #include "graph/alllib.hpp"
+ #endif
+ 
++#if __has_include("opt/alllib.hpp")
++#include "opt/alllib.hpp"
++#endif
++
+ #if __has_include("allocs/alllib.hpp")
+ #include "allocs/alllib.hpp"
+ #endif

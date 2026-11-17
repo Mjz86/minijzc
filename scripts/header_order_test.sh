@@ -23,14 +23,14 @@ HDRS=$(cd src/minijz && find . -name "*.hpp" | sed 's|^\./||' | sort)
 int main() { return 0; }
 EOF
     echo "tu_$n.chk: tu_$n.cpp"
-    echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib -fsyntax-only tu_$n.cpp && touch tu_$n.chk || echo 'ORDER-FAIL: minijz/$h'"
+    echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib -I../../mjz_lib/mjz_lib/graph -I../../mjz_lib/graph -fsyntax-only tu_$n.cpp && touch tu_$n.chk || echo 'ORDER-FAIL: minijz/$h'"
   done
   cat > "build/hdrtest/umbrella.cpp" <<'EOF'
 #include "minijz.hpp"
 int main() { return 0; }
 EOF
   echo "umbrella.chk: umbrella.cpp"
-  echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib -fsyntax-only umbrella.cpp && touch umbrella.chk || echo 'ORDER-FAIL: minijz.hpp'"
+  echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib -I../../mjz_lib/mjz_lib/graph -I../../mjz_lib/graph -fsyntax-only umbrella.cpp && touch umbrella.chk || echo 'ORDER-FAIL: minijz.hpp'"
 } > build/hdrtest/Makefile
 make -C build/hdrtest -j"$JOBS" 2>&1 | grep -E "ORDER-FAIL|error:" | head -60
 n_fail=$(make -C build/hdrtest -j"$JOBS" 2>/dev/null | grep -c ORDER-FAIL || true)

@@ -1,0 +1,32 @@
+diff --git a/mjz_lib/graph/algo.hpp b/mjz_lib/graph/algo.hpp
+index 06be8fa..1aac133 100644
+--- a/mjz_lib/graph/algo.hpp
++++ b/mjz_lib/graph/algo.hpp
+@@ -24,17 +24,27 @@ SOFTWARE.
+ #ifndef MJZ_SRC_GRAPH_algo_FILE_
+ #define MJZ_SRC_GRAPH_algo_FILE_
+ #include "bijective.hpp"
++#include "biconnect.hpp"
+ #include "color.hpp"
+ #include "csr.hpp"
++#include "cut.hpp"
+ #include "dijkstra.hpp"
++#include "distances.hpp"
+ #include "dom.hpp"
+ #include "dsu.hpp"
++#include "euler.hpp"
++#include "flow.hpp"
+ #include "idf.hpp"
+ #include "loop.hpp"
++#include "matching.hpp"
++#include "mst.hpp"
+ #include "optimize.hpp"
++#include "phis.hpp"
++#include "rmas.hpp"
+ #include "scc.hpp"
+ #include "search.hpp"
+ #include "sequence.hpp"
++#include "ssa.hpp"
+ 
+ MJZ_EXPORT
+ //

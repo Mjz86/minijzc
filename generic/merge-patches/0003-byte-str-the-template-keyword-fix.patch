@@ -1,0 +1,13 @@
+diff --git a/mjz_lib/byte_str/implace_string.hpp b/mjz_lib/byte_str/implace_string.hpp
+index e7401b8..b669628 100644
+--- a/mjz_lib/byte_str/implace_string.hpp
++++ b/mjz_lib/byte_str/implace_string.hpp
+@@ -259,7 +259,7 @@ MJZ_EXPORT namespace mjz::bstr_ns {
+       implace_str_t ret{};
+       str_t &str = ret.m_str();
+       str.reset_to_error_on_fail(
+-          str.copy_assign_<when_t_impl_<version_v>::relax>(
++          str.template copy_assign_<when_t_impl_<version_v>::relax>(
+               m_str(), false, byte_offset, byte_count) &&
+               ret.init_stack(str),
+           "[Error]implace_str_t::make_substring: cannot init string");

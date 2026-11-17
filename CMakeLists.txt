@@ -160,7 +160,12 @@ else()
 endif()
 target_include_directories(minijz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                                          ${CMAKE_CURRENT_SOURCE_DIR}/src
-                                         ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib)
+                                         ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
+                                         # the generic/ families include their
+                                         # String deps in upstream form (see
+                                         # generic/README.md); both clone layouts
+                                         ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
+                                         ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph)
 target_compile_options(minijz PRIVATE ${MJZ_EXTRA_FLAGS}
   $<$<CONFIG:Debug>:${MJZ_CX_LIMITS}>)
 
@@ -170,7 +175,10 @@ target_compile_options(minijz PRIVATE ${MJZ_EXTRA_FLAGS}
 add_executable(minijz_unit_tests tests/unit_tests.cpp)
 target_include_directories(minijz_unit_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib)
+  ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
+  # generic/'s upstream-form String includes (generic/README.md)
+  ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
+  ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph)
 target_compile_options(minijz_unit_tests PRIVATE ${MJZ_EXTRA_FLAGS})
 
 enable_testing()
@@ -190,7 +198,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_compile_definitions(cx_obj_${k} PRIVATE MJZ_CX_CHECK=${k})
     target_include_directories(cx_obj_${k} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src
-      ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib)
+      ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
+      # generic/'s upstream-form String includes (generic/README.md)
+      ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
+      ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph)
     target_compile_options(cx_obj_${k} PRIVATE ${MJZ_CX_LIMITS})
     add_test(NAME cx_check_${k}
       COMMAND ${CMAKE_COMMAND}
@@ -204,6 +215,8 @@ else()
       COMMAND ${CMAKE_CXX_COMPILER} -std=c++${MINIJZ_CXX_STANDARD} -O0
         -I${CMAKE_CURRENT_SOURCE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/src
         -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
+        -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
+        -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph
         -DMJZ_CX_CHECK=${k} ${MJZ_CX_LIMITS}
         -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/constexpr_check.cpp
         -o ${CMAKE_CURRENT_BINARY_DIR}/cx${k}.o)

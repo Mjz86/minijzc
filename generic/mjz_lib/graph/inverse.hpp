@@ -1,0 +1,433 @@
+/*MIT License
+
+Copyright (c) 2026 Mjz86
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+#ifndef MJZ_SRC_GRAPH_inverse_FILE_
+#define MJZ_SRC_GRAPH_inverse_FILE_
+#include "csr.hpp"
+
+MJZ_EXPORT
+//
+namespace mjz::graph_ns {
+
+// THE INVERSE FAMILY -- how many ways are there to inverse a
+// relation? SIXTEEN, along three independent axes. csr.hpp ships the
+// three historical backward square members (names and byte behavior
+// intact); this header completes the family with the other thirteen:
+//
+//   * the UNIVERSE axis. SQUARE: rows and entries share one index
+//     space (node->node graphs) -- the output sizes itself by the ROW
+//     count. UNIVERSE: the relation is bipartite -- rows over one
+//     space, entries over another (phi placement: variable rows,
+//     block entries) -- the output universe is the ENTRY space,
+//     passed explicitly (the square sibling indexes out of bounds
+//     when the two spaces differ in size; that was the review bug
+//     that motivated the universe variant).
+//
+//   * the FILL ORDER axis. BACKWARD (the classic CSR transpose
+//     idiom): counts become END offsets and the fill pre-decrements,
+//     so each row's entries land in DESCENDING source-row order --
+//     the order the original square members pinned, which clients key
+//     on. FORWARD: counts become BEGIN offsets and the fill walks
+//     cursors forward, so each row's entries land in ASCENDING
+//     source-row order -- the order the universe member pinned (the
+//     phi-placement transpose's emission order).
+//
+//   * the PAYLOAD axis. PLAIN: just the transposed forest. DATA: each
+//     source entry carries a payload (map_..._edges_data), transposed
+//     alongside. BIJECTION: each target slot records the LINEAR index
+//     of the source entry it came from (map_..._edges_bijection) --
+//     the edge bijection a client needs to follow an entry's payload
+//     or identity back to the source row. BOTH: data and bijection.
+//
+//   2 universes x 2 fill orders x 4 payloads = 16 entry points:
+//     square:   make_basic_inv_forest                       (backward, plain -- csr.hpp)
+//               map_make_basic_inv_forest_edges_data        (backward, data -- csr.hpp)
+//               map_make_basic_inv_forest_edges_bijection   (backward, bij -- csr.hpp)
+//               map_make_basic_inv_forest_edges_data_bijection (backward, both)
+//               + the four _forward siblings
+//     universe: make_basic_inv_forest_universe              (forward, plain)
+//               + the _backward plain sibling, and the four
+//               data/bijection/both shapes in both orders
+//
+//   (Two related-but-different inverses live elsewhere and are NOT
+//   members of this family: range_bijective_inv inverts a
+//   PERMUTATION of an index space, and basic_forest_t's
+//   inv_transform* members re-express a forest under a permutation of
+//   its own nodes -- both assume bijectivity, which a relation's
+//   transpose does not have.)
+
+// the family's four cores, one per payload shape, each generic over
+// the fill order (the universe is a parameter: the square members
+// pass the row count, the universe members pass the entry-space size)
+namespace detail {
+template <version_t version_v, bool forward_fill_v>
+MJZ_CX_FN basic_forest_t<version_v, std::vector<uintlen_t>>
+make_inv_forest_impl_(const auto &range_of_range,
+                      uintlen_t node_count) noexcept {
+  treversal_result_t<version_v> ret{};
+  static_assert(requires() {
+    { range_of_range } -> std::ranges::sized_range;
+  });
+  ret.nodes_index = std::vector<uintlen_t>(node_count, 0);
+  for (auto &&range : range_of_range) {
+    for (uintlen_t edge : range) {
+      asserts(edge < node_count);
+      ret.nodes_index[edge]++;
+    }
+  }
+  uintlen_t accumulate{};
+  for (uintlen_t &node_index : ret.nodes_index) {
+    const uintlen_t range_sz = node_index;
+    if constexpr (forward_fill_v) {
+      node_index = accumulate; // counts -> BEGIN offsets (house state)
+    } else {
+      accumulate += range_sz;
+      node_index = accumulate; // counts -> END offsets (the classic)
+    }
+    if constexpr (forward_fill_v) {
+      accumulate += range_sz;
+    }
+  }
+  ret.edges = std::vector<uintlen_t>(accumulate, 0);
+  std::vector<uintlen_t> fill_cursors =
+      forward_fill_v ? ret.nodes_index : std::vector<uintlen_t>{};
+  uintlen_t node_index{};
+  for (auto &&range : range_of_range) {
+    for (uintlen_t edge : range) {
+      if constexpr (forward_fill_v) {
+        ret.edges[fill_cursors[edge]++] = node_index;
+      } else {
+        ret.edges[--ret.nodes_index[edge]] = node_index;
+      }
+    }
+    node_index++;
+  }
+  return ret;
+}
+
+template <version_t version_v, bool forward_fill_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<T>>
+make_inv_forest_data_impl_(const auto &range_of_range,
+                           auto &&range_of_edge_datas,
+                           uintlen_t node_count) noexcept {
+  pair_t<treversal_result_t<version_v>, std::vector<T>> ret_{};
+  auto &[ret, dret] = ret_;
+  static_assert(requires() {
+    { range_of_range } -> std::ranges::sized_range;
+  });
+  ret.nodes_index = std::vector<uintlen_t>(node_count, 0);
+  for (auto &&range : range_of_range) {
+    for (uintlen_t edge : range) {
+      asserts(edge < node_count);
+      ret.nodes_index[edge]++;
+    }
+  }
+  uintlen_t accumulate{};
+  for (uintlen_t &node_index : ret.nodes_index) {
+    const uintlen_t range_sz = node_index;
+    if constexpr (forward_fill_v) {
+      node_index = accumulate;
+    } else {
+      accumulate += range_sz;
+      node_index = accumulate;
+    }
+    if constexpr (forward_fill_v) {
+      accumulate += range_sz;
+    }
+  }
+  ret.edges = std::vector<uintlen_t>(accumulate, 0);
+  dret = std::vector<T>(accumulate);
+  std::vector<uintlen_t> fill_cursors =
+      forward_fill_v ? ret.nodes_index : std::vector<uintlen_t>{};
+  uintlen_t node_index{};
+  auto itd = std::ranges::begin(range_of_edge_datas);
+  for (auto &&range : range_of_range) {
+    auto &&drange = *itd;
+    auto &&ititd = std::ranges::begin(drange);
+    for (uintlen_t edge : range) {
+      uintlen_t rindex;
+      if constexpr (forward_fill_v) {
+        rindex = fill_cursors[edge]++;
+      } else {
+        rindex = --ret.nodes_index[edge];
+      }
+      ret.edges[rindex] = node_index;
+      dret[rindex] = std::ranges::iter_move(ititd);
+      (void)++ititd;
+    }
+    node_index++;
+    (void)++itd;
+  }
+  return ret_;
+}
+
+template <version_t version_v, bool forward_fill_v>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<uintlen_t>>
+make_inv_forest_bij_impl_(const auto &range_of_range,
+                          uintlen_t node_count) noexcept {
+  pair_t<treversal_result_t<version_v>, std::vector<uintlen_t>> ret_{};
+  auto &[ret, bijective_edge_map] = ret_;
+  static_assert(requires() {
+    { range_of_range } -> std::ranges::sized_range;
+  });
+  ret.nodes_index = std::vector<uintlen_t>(node_count, 0);
+  for (auto &&range : range_of_range) {
+    for (uintlen_t edge : range) {
+      asserts(edge < node_count);
+      ret.nodes_index[edge]++;
+    }
+  }
+  uintlen_t accumulate{};
+  for (uintlen_t &node_index : ret.nodes_index) {
+    const uintlen_t range_sz = node_index;
+    if constexpr (forward_fill_v) {
+      node_index = accumulate;
+    } else {
+      accumulate += range_sz;
+      node_index = accumulate;
+    }
+    if constexpr (forward_fill_v) {
+      accumulate += range_sz;
+    }
+  }
+  ret.edges = std::vector<uintlen_t>(accumulate, 0);
+  bijective_edge_map = std::vector<uintlen_t>(accumulate);
+  std::vector<uintlen_t> fill_cursors =
+      forward_fill_v ? ret.nodes_index : std::vector<uintlen_t>{};
+  uintlen_t node_index{};
+  uintlen_t edge_index{};
+  for (auto &&range : range_of_range) {
+    for (uintlen_t edge : range) {
+      uintlen_t rindex;
+      if constexpr (forward_fill_v) {
+        rindex = fill_cursors[edge]++;
+      } else {
+        rindex = --ret.nodes_index[edge];
+      }
+      ret.edges[rindex] = node_index;
+      bijective_edge_map[rindex] = edge_index++;
+    }
+    node_index++;
+  }
+  return ret_;
+}
+
+template <version_t version_v, bool forward_fill_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>,
+                 pair_t<std::vector<T>, std::vector<uintlen_t>>>
+make_inv_forest_data_bij_impl_(const auto &range_of_range,
+                               auto &&range_of_edge_datas,
+                               uintlen_t node_count) noexcept {
+  pair_t<treversal_result_t<version_v>,
+         pair_t<std::vector<T>, std::vector<uintlen_t>>>
+      ret_{};
+  auto &[ret, outs] = ret_;
+  auto &[dret, bijective_edge_map] = outs;
+  static_assert(requires() {
+    { range_of_range } -> std::ranges::sized_range;
+  });
+  ret.nodes_index = std::vector<uintlen_t>(node_count, 0);
+  for (auto &&range : range_of_range) {
+    for (uintlen_t edge : range) {
+      asserts(edge < node_count);
+      ret.nodes_index[edge]++;
+    }
+  }
+  uintlen_t accumulate{};
+  for (uintlen_t &node_index : ret.nodes_index) {
+    const uintlen_t range_sz = node_index;
+    if constexpr (forward_fill_v) {
+      node_index = accumulate;
+    } else {
+      accumulate += range_sz;
+      node_index = accumulate;
+    }
+    if constexpr (forward_fill_v) {
+      accumulate += range_sz;
+    }
+  }
+  ret.edges = std::vector<uintlen_t>(accumulate, 0);
+  dret = std::vector<T>(accumulate);
+  bijective_edge_map = std::vector<uintlen_t>(accumulate);
+  std::vector<uintlen_t> fill_cursors =
+      forward_fill_v ? ret.nodes_index : std::vector<uintlen_t>{};
+  uintlen_t node_index{};
+  uintlen_t edge_index{};
+  auto itd = std::ranges::begin(range_of_edge_datas);
+  for (auto &&range : range_of_range) {
+    auto &&drange = *itd;
+    auto &&ititd = std::ranges::begin(drange);
+    for (uintlen_t edge : range) {
+      uintlen_t rindex;
+      if constexpr (forward_fill_v) {
+        rindex = fill_cursors[edge]++;
+      } else {
+        rindex = --ret.nodes_index[edge];
+      }
+      ret.edges[rindex] = node_index;
+      bijective_edge_map[rindex] = edge_index++;
+      dret[rindex] = std::ranges::iter_move(ititd);
+      (void)++ititd;
+    }
+    node_index++;
+    (void)++itd;
+  }
+  return ret_;
+}
+} // namespace detail
+
+// ---- the SQUARE members (rows and entries share one index space) ----------
+// (the three historical backward ones -- plain, data, bijection --
+// stay in csr.hpp, byte behavior intact; the both-payload backward
+// sibling and the four _forward siblings live here)
+
+template <version_t version_v>
+MJZ_CX_FN basic_forest_t<version_v, std::vector<uintlen_t>>
+make_basic_inv_forest_forward(const auto &range_of_range) noexcept {
+  return detail::make_inv_forest_impl_<version_v, true>(
+      range_of_range, uintlen_t(std::ranges::size(range_of_range)));
+}
+
+template <version_t version_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<T>>
+map_make_basic_inv_forest_edges_data_forward(
+    const auto &range_of_range, auto &&range_of_edge_datas) noexcept {
+  return detail::make_inv_forest_data_impl_<version_v, true, T>(
+      range_of_range, std::forward<decltype(range_of_edge_datas)>(
+                          range_of_edge_datas),
+      uintlen_t(std::ranges::size(range_of_range)));
+}
+
+template <version_t version_v>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<uintlen_t>>
+map_make_basic_inv_forest_edges_bijection_forward(
+    const auto &range_of_range) noexcept {
+  return detail::make_inv_forest_bij_impl_<version_v, true>(
+      range_of_range, uintlen_t(std::ranges::size(range_of_range)));
+}
+
+template <version_t version_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>,
+                 pair_t<std::vector<T>, std::vector<uintlen_t>>>
+map_make_basic_inv_forest_edges_data_bijection(
+    const auto &range_of_range, auto &&range_of_edge_datas) noexcept {
+  return detail::make_inv_forest_data_bij_impl_<version_v, false, T>(
+      range_of_range, std::forward<decltype(range_of_edge_datas)>(
+                          range_of_edge_datas),
+      uintlen_t(std::ranges::size(range_of_range)));
+}
+
+template <version_t version_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>,
+                 pair_t<std::vector<T>, std::vector<uintlen_t>>>
+map_make_basic_inv_forest_edges_data_bijection_forward(
+    const auto &range_of_range, auto &&range_of_edge_datas) noexcept {
+  return detail::make_inv_forest_data_bij_impl_<version_v, true, T>(
+      range_of_range, std::forward<decltype(range_of_edge_datas)>(
+                          range_of_edge_datas),
+      uintlen_t(std::ranges::size(range_of_range)));
+}
+
+// ---- the UNIVERSE members (bipartite relations: rows over one space,
+// entries over another; the output universe is the ENTRY space) -------------
+
+template <version_t version_v>
+MJZ_CX_FN basic_forest_t<version_v, std::vector<uintlen_t>>
+make_basic_inv_forest_universe(const auto &range_of_range,
+                               uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_impl_<version_v, true>(range_of_range,
+                                                        node_count);
+}
+
+template <version_t version_v>
+MJZ_CX_FN basic_forest_t<version_v, std::vector<uintlen_t>>
+make_basic_inv_forest_universe_backward(const auto &range_of_range,
+                                        uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_impl_<version_v, false>(range_of_range,
+                                                         node_count);
+}
+
+template <version_t version_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<T>>
+map_make_basic_inv_forest_edges_data_universe(
+    const auto &range_of_range, auto &&range_of_edge_datas,
+    uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_data_impl_<version_v, true, T>(
+      range_of_range,
+      std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),
+      node_count);
+}
+
+template <version_t version_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<T>>
+map_make_basic_inv_forest_edges_data_universe_backward(
+    const auto &range_of_range, auto &&range_of_edge_datas,
+    uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_data_impl_<version_v, false, T>(
+      range_of_range,
+      std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),
+      node_count);
+}
+
+template <version_t version_v>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<uintlen_t>>
+map_make_basic_inv_forest_edges_bijection_universe(
+    const auto &range_of_range, uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_bij_impl_<version_v, true>(range_of_range,
+                                                            node_count);
+}
+
+template <version_t version_v>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<uintlen_t>>
+map_make_basic_inv_forest_edges_bijection_universe_backward(
+    const auto &range_of_range, uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_bij_impl_<version_v, false>(range_of_range,
+                                                             node_count);
+}
+
+template <version_t version_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>,
+                 pair_t<std::vector<T>, std::vector<uintlen_t>>>
+map_make_basic_inv_forest_edges_data_bijection_universe(
+    const auto &range_of_range, auto &&range_of_edge_datas,
+    uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_data_bij_impl_<version_v, true, T>(
+      range_of_range,
+      std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),
+      node_count);
+}
+
+template <version_t version_v, typename T>
+MJZ_CX_FN pair_t<treversal_result_t<version_v>,
+                 pair_t<std::vector<T>, std::vector<uintlen_t>>>
+map_make_basic_inv_forest_edges_data_bijection_universe_backward(
+    const auto &range_of_range, auto &&range_of_edge_datas,
+    uintlen_t node_count) noexcept {
+  return detail::make_inv_forest_data_bij_impl_<version_v, false, T>(
+      range_of_range,
+      std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),
+      node_count);
+}
+
+};     // namespace mjz::graph_ns
+#endif // MJZ_SRC_GRAPH_inverse_FILE_
