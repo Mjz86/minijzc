@@ -1676,3 +1676,40 @@ operating procedure in CONTINUE.md.
   units 6482/6482, header order 116/116 + umbrella, includes
   529/529, stress ALL PASS. Net -60 lines; ~150 lines of duplication
   converted to single definitions.
+
+## 18. checkpoint 34: unswitch decomposed (the code-quality continuation, round ten) — DONE
+
+The queue's biggest remaining monolith, `opt_unswitch` (381 lines),
+got the cdfold/lcf/unroll/fold/unswitch_bif/taildup/mem2reg/rotate
+treatment: a 35-line driver stating the phase list plus
+`unswitch_impl.hpp`, the support layer — `UsCtx` (the per-loop
+context), `us_shape_ok` (the trivial/compound shape pick + the shared
+gates), `us_exits_ok`, `us_false_region`, `us_outside_uses_ok` (the
+outside-use safety scan), and the commit tail (`us_guard_blocks`,
+`us_emit_guards`, `us_merge_phis`, `us_rewire`). The bif path and the
+shared shape matchers/clone machinery stay where they were
+(unswitch_bif*.hpp / unswitch_shape.hpp).
+
+* **the round's dedup pass** (the new per-round protocol's first
+  beneficiary): the monolith's mark/rw operand enumerations were
+  already collapsed to `for_each_operand`/`rewrite_operands` by
+  ckpt 33's commit, so the impl layer was written reuse-first against
+  instr.hpp's hub.
+* **the landmine, caught by the differential window and NOT by the
+  146-run parity**: the monolith initialized its guard-block ids per
+  header as `g2 = NONE, fx = NONE, t1 = NONE`; the first draft's
+  UsCtx zero-initialized them, so the `&&` compound shape (which
+  never allocates t1) fell into `us_emit_guards`' `if (U.t1 != NONE)`
+  and emitted the `||`-only `t1: br H'` into block 0 — seed 20029's
+  optimized build then looped forever under `-O3 --disable=mem2reg`.
+  Fixed by defaulting every id field to NONE (the struct's contract
+  documents it); the seed is now clean and both committed fuzz
+  windows (1-300, 20000-20300) verify byte-identical modulo timing.
+  The audit programs simply never exercise the compound-&& shape —
+  the case for keeping the wide fuzz windows in every round's gate.
+* **the verification**: 146 parity runs byte-identical, fuzz windows
+  1-300 + 20000-20300 identical modulo timing, selftest 208/208,
+  units 6482/6482, header order 117/117 + umbrella (the new impl
+  header), includes 535/535, audit table regenerated identically,
+  kernel fuzz 3000 all components 0 fails, e2e fuzz 600 clean,
+  stress ALL PASS.

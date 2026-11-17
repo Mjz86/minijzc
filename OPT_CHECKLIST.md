@@ -74,25 +74,52 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
       units 6476, header order 111 + umbrella, includes 493/493,
       stress ALL PASS)
 
-## Queue (priority = biggest first; sizes re-measured 2026-11-17)
+- [x] opt/loop/unswitch.hpp — opt_unswitch 381 lines -> 35-line
+      driver + unswitch_impl.hpp (round ten): UsCtx (the shape
+      fields, the analysis tables, the scan marks, the commit's merge
+      values), us_shape_ok (the trivial/compound pick + the shared
+      gates: both guards cond_invariant, the dedicated `br h'
+      preheader, the 1..120 growth cap), us_exits_ok (exit_inventory
+      + header_phis), us_false_region (the F worklist + loopdef),
+      us_outside_uses_ok (the hphi_idx/arg_ok/plain_ok safety scan
+      with read_on_false), and the commit tail: us_guard_blocks
+      (compound g2/fx/t1 BEFORE the clone map), us_emit_guards (the
+      trivial/&&/|| arms + the fx/t1 bodies), us_merge_phis (the
+      fresh merge phis at X with the begin/end shift fixup),
+      us_rewire (the rk phi-edge rekey + the rw plain-use rewrite).
+      THE LANDMINE the first draft hit (fuzz seed 20029, caught by
+      the committed differential window, NOT by the 146-run parity):
+      UsCtx's id fields must default to NONE exactly like the
+      monolith's per-header locals (`g2 = NONE, fx = NONE, t1 =
+      NONE`) -- zero-init made the && shape emit the ||-only
+      `t1: br H' into block 0. Documented in the struct's contract.
+      (verified: 146-run parity byte-identical, fuzz windows 1-300
+      + 20000-20300 identical modulo timing, audit table identical,
+      selftest 208, units 6482, headers 117 + umbrella, includes
+      535, kernel fuzz 3000 all components 0 fails, e2e fuzz 600,
+      stress ALL PASS)
+
+## Queue (priority = biggest first; sizes re-measured 2026-11-18)
 
 NOTE (ckpt 31, 2026-11-17): the scctco_member and scctco_fold queue
 entries are DONE (round nine, moved to the done list above). The
-dedup wave of this checkpoint also SHRANK several queue files (the
-kc/kv seedings, the bump counters, the ipa twins, the loop-family
-gates): re-measure before starting. The standing dedup requirement
-(now in CONTINUE.md) applies to every decomposition: BEFORE the
-commit, diff-scan the touched files for inline twins of code that
-already exists (scripts/../dup_scan.py pattern or the mjz_lib kernel
-inventory) and reuse FIRST.
+dedup waves of ckpt 31/33 SHRANK several queue files (the kc/kv
+seedings, the bump counters, the ipa twins, the loop-family gates,
+the mark/rw enumerations): re-measure before starting. The standing
+dedup requirement (now the per-round protocol in CONTINUE.md) applies
+to every decomposition: BEFORE the commit, diff-scan the touched
+files for inline twins of code that already exists
+(scripts/../dup_scan.py pattern or the mjz_lib kernel inventory) and
+reuse FIRST.
 
-- [ ] opt/loop/unswitch.hpp — ~389 lines (468-line file, pre-dedup)
-- [ ] opt/interprocedural/argpromo.hpp — ~387 lines (pre-dedup; the
-      ipa_sites/remap wave already removed ~70 lines of twins)
-- [ ] opt/interprocedural/tailrec.hpp — tce_merge ~385 lines
-      (797-line file, also on the >700-line file list)
-- [ ] opt/loop/unswitch_shape.hpp — 429-line file (shared shape
-      matcher, check function sizes when reached)
+- [ ] opt/interprocedural/tailrec.hpp — tce_merge ~370 lines
+      (745-line file, also on the >700-line file list; the mapv
+      remap + count_operand_uses twins already shared)
+- [ ] opt/interprocedural/argpromo.hpp — ~408 lines (the ipa_sites /
+      remap wave already removed ~70 lines of twins)
+- [ ] opt/loop/unswitch_shape.hpp — 433-line file (shared shape
+      matcher + clone machinery, all three unswitch paths call it;
+      check function sizes when reached)
 
 NOTE (branch generic-ssa, 2026-11-14): the SSA-construction core that
 mem2reg shares with ssa_construct was extracted into the generic

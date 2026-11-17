@@ -1,98 +1,81 @@
-# SUMMARY — checkpoint 32: the generic localization + the param survey
+# SUMMARY — checkpoints 33 + 34: dedup round two + unswitch decomposed
 
-Two commits, one session. The user's directive: pull every mjz_lib
-change into a generic folder INSIDE the compiler repo, written as if
-it was in mjz_lib, such that the String repo (the vendored clone)
-matches upstream — all changes localized for the author to merge —
-then check every component for code-reuse opportunities (kernels
-taking the necessary things as params, "for example a dominator
-interval param", rather than calculating them inline).
+Two commits, one session, both under the user's standing directives:
+keep deduplicating every round (recorded in CONTINUE.md as the
+per-round protocol), and keep working the OPT_CHECKLIST queue.
 
-## 1. generic/ is the single carrier (commit 1)
+## 1. The dedup campaign, round two (commit 1 — "dedup:")
 
-All 32 kernel headers moved VERBATIM (md5-verified) off the String
-clone's `graph-opt-kernels` branch into `generic/mjz_lib/` — the opt
-family (22 headers, aggregated by `opt/alllib.hpp`) and the graph
-family (10 headers). The vendored clone reverted to PRISTINE upstream
-`main` (`git diff origin/main` empty); the four changes that touch
-files upstream already ships ride as patches in
-`generic/merge-patches/`:
+The window-8/10/12 twin scan re-run after ckpt 31/32; ten waves, all
+proved identical before sharing, byte-identical parity at every step:
 
-* `0001` — `alllib.hpp`'s opt-family `__has_include` hook,
-* `0002` — `graph/algo.hpp`'s ten new-family includes,
-* `0003` — `byte_str/implace_string.hpp`'s missing `template`
-  keyword (a conformance fix g++ 14 warns about on the pristine
-  clone; the compiler builds fine either way),
-* `0004` — the OPTIONAL csr inverse-family fold (the design
-  alternative to inverse.hpp; exactly one carrier, never both).
+* **`for_each_operand` + `rewrite_operands`** (ir/instr.hpp): the
+  fixed a/b2/c2/args operand traversal, defined once. Eleven
+  hand-rolled mark/chk/one/rw enumerations collapsed across
+  rotate_impl, unswitch (x2), lcf_impl, lcf_rt, lcf_sim, regalloc,
+  astrun, vn_sites' completed-map rewrite, and bump_uses_of's own
+  body. reassoc's bump copy (a ckpt-31 miss) and jthread's use census
+  became plain `bump_uses_of` calls.
+* **`vn_run`** (opt/scalar/vn_sites.hpp): the cse/gvn driver — both
+  passes were verbatim twins outside their site-fill policy and stats
+  counter. cse is now a one-line policy; gvn states its three entry
+  kinds (Bins, non-param consts, complete phis).
+* **`remap_vreg_fields` adoption**: callgraph's and tailrec's inline
+  five-field permutation copies joined the shared primitive (their
+  mapv maps NONE to NONE, so the shared form's guards are vacuous —
+  proved and documented in instr.hpp).
+* **`any_fn_in_closure`** (opt/interprocedural/constcall.hpp): the
+  call-graph closure worklist; closure_has_depth and
+  fn_pure_closure are predicate one-liners over it.
+* **The in-file twins**: vm_step's eleven trap-stop copies -> one
+  `trap_out` lambda; astrun's And/Or mirror arms -> one arm with the
+  polarity flag; emit_c's Load/Store bounds-check emission ->
+  `emit_arr_bounds`; diag's line scan -> `line_of`; parser's if/while
+  `'( expr )'` sequence -> `paren_expr`.
+* **Rejected on record** (CONTINUE.md): intervals' census (deliberately
+  excludes Phi edge args), cmp_txt vs bname (emission subset with a
+  load-bearing default vs the full diagnostic table), deadargs/icf's
+  Call-walk openings, the seed_consts decl prologue.
 
-`generic/README.md` documents the layout, the merge route, and the
-in-tree plumbing. The compiler imports both families through
-`src/minijz/graph_lib.hpp` — the single mjz_lib import point, no
-consumer changed. The generic headers keep their upstream-form quoted
-includes (`"csr.hpp"`, `"../graph/csr.hpp"`), so CMake and the
-header-order gate carry the clone's graph module dir on the include
-path (both clone layouts); `include_portability_test.sh` still scans
-only `src/`+`tests/` — inside `generic/` those includes are
-rule-#1-true post-merge, the -I is the in-tree stand-in.
+Net -60 lines; ~150 lines of duplication converted to single
+definitions.
 
-## 2. graph/inverse.hpp — the split carrier
+## 2. Unswitch decomposed (commit 2 — round ten of the continuation)
 
-The branch's csr.hpp rework deleted the three historical inverse
-members and re-implemented them (byte behavior intact) over four
-shared cores, adding thirteen siblings. Shadowing upstream csr.hpp
-from generic/ would have been an order-dependent ODR trap, so the
-thirteen NET-NEW members (four payload cores, the square
-forward/both siblings, the universe octet) live in
-`generic/mjz_lib/graph/inverse.hpp`, verbatim from the rework; the
-three historical stay in upstream csr.hpp. `phis.hpp` gained
-`#include "inverse.hpp"` — the only content delta besides the new
-file (on the branch the universe transpose lived in the reworked
-csr.hpp).
+`opt_unswitch` 381 lines -> a 35-line driver + `unswitch_impl.hpp`:
+`UsCtx` (the per-loop context), `us_shape_ok` (the trivial/compound
+pick + the shared gates), `us_exits_ok`, `us_false_region`,
+`us_outside_uses_ok` (the outside-use safety scan), and the commit
+tail (`us_guard_blocks`, `us_emit_guards`, `us_merge_phis`,
+`us_rewire`). The bif path and the shared shape/clone machinery stay
+in unswitch_bif*.hpp / unswitch_shape.hpp.
 
-## 3. The param survey (commit 2)
+**The round's lesson (the landmine)**: the first draft zero-initialized
+UsCtx's guard-block ids; the monolith initialized them to NONE per
+header. The `&&` compound shape never allocates t1, so
+`if (U.t1 != NONE)` fell through and emitted the `||`-only
+`t1: br H'` into BLOCK 0 — seed 20029's `-O3 --disable=mem2reg` build
+then looped forever (timeout, not wrong output). The 146-run parity
+did NOT catch it (the audit programs never exercise compound-&&); the
+committed differential fuzz window 20000-20300 caught it on the first
+run. Fix: NONE-default every id field (documented in UsCtx's
+contract). Rules recorded in CONTINUE.md: a context struct replacing
+function locals must copy the locals' INITIALIZERS exactly, and the
+wide fuzz windows are part of every decomposition's gate.
 
-Verdict first: the opt family was ALREADY param-driven by design —
-vn/mem/ssa take `dominator_tree`, inv takes the `dom_begin/dom_end`
-interval pair (licm passes An's `A.ib/A.ie` today — literally the
-user's "dominator interval param"), layout takes cfg's reachable
-mask, phis takes dominance frontiers — and the compiler's An layer
-is 100% kernel-built (`make_dominator_forest_given_dominators`,
-`calculate_dominance_frontiers_given_dominators`; zero hand-rolled
-orders, masks, or dominators anywhere in src/).
+## 3. Verification (both commits)
 
-The ONE genuine inline site: rmas's
-`calculate_minimum_feedback_arc_set_reducible` computed immediate
-dominators internally (plus a preds forest) every call. It gained a
-`..._given_dominators` sibling (the family's `*_given_*` naming) that
-takes the caller's idoms; the 3-arg form builds the table inline —
-same preds scan, same upstream dom kernel — and forwards. Callers
-that already hold idoms (the compiler's An layer, any future
-loop-family consumer) skip the rebuild.
+Dedup commit: parity 146/146 byte-identical, fuzz windows 1-300 +
+20000-20300 identical modulo timing, selftest 208/208, units
+6482/6482, header order 116/116 + umbrella, includes 529/529, stress
+ALL PASS. Unswitch commit: parity 146/146 again, both fuzz windows
+again, selftest 208, units 6482, header order 117/117 + umbrella (the
+new impl header), includes 535/535, audit table regenerated
+identically, kernel fuzz 3000 all components 0 fails, e2e fuzz 600
+clean, stress ALL PASS.
 
-Considered and REJECTED (per standing requirement 1, reasons on
-record in CONTINUE.md): rmas's internal `make_basic_forest(net.succs)`
-conversions (flow-kernel input format over internal data), cut's
-symmetrization forest (built from its own symmetrized edge list),
-matching's bipartite transpose (the Hopcroft-Karp working set),
-`calculate_minimum_equivalent_arc_set`'s internal SCC condensation
-(consumed immediately, no second consumer).
-
-## 4. Verification
-
-Commit 1 (localization): parity 146/146 byte-identical vs the
-pre-move baseline (rebuilt from clean HEAD first — the sandbox had
-recycled); selftest 208/208, units 6482/6482, header order 116/116 +
-umbrella, includes 527/527, kernel fuzz 3000 seeds all components 0
-fails, e2e fuzz 600, stress ALL PASS. Commit 2 (the param split):
-parity 146/146 again; fz_rmasp now SELF-DIFFERENTIALS the two forms
-every seed (the given-dominators call vs the standalone call vs the
-exact 2^V sweep — 35408 checks, 0 fails, was 23536); the rest of the
-battery green.
-
-The String clone: pristine `main`, `origin/main` at ce6ea95; the
-local branch `graph-opt-kernels` (tip 2cb6c7d) keeps the same content
-as commits for diff-based review. The queue after this
-(OPT_CHECKLIST.md) is unchanged: unswitch, argpromo, tailrec's
-tce_merge, unswitch_shape — rotate_impl.hpp the template, both
-standing requirements in force.
+The String clone: pristine `main`, `origin/main` at ce6ea95; the local
+branch `graph-opt-kernels` (tip 2cb6c7d) unchanged. The queue after
+this (OPT_CHECKLIST.md): tailrec's tce_merge (~370), argpromo (~408),
+unswitch_shape (433) — the per-round dedup protocol and both standing
+requirements in force.

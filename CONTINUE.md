@@ -1,6 +1,6 @@
-# CONTINUE — next steps after checkpoint 33 (dedup round two)
+# CONTINUE — next steps after checkpoint 34 (unswitch decomposed)
 
-Read SUMMARY.md (same zip root) first. The main repo is 23 commits
+Read SUMMARY.md (same zip root) first. The main repo is 24 commits
 ahead of origin/main; the vendored String clone sits PRISTINE on
 upstream `main` (nothing under `mjz_lib/` is modified — the user's
 directive), and every mjz_lib addition this repo carries lives in
@@ -25,6 +25,23 @@ it here — not just before commits:
    mjz_lib kernel inventory for what the new code needs.
 4. **Record**: the round's accepted + rejected dedups land in this
    file's ledger (the section below) with the verification numbers.
+
+## What checkpoint 34 shipped: unswitch decomposed (round ten)
+
+opt_unswitch 381 lines -> 35-line driver + unswitch_impl.hpp (UsCtx
++ us_shape_ok/us_exits_ok/us_false_region/us_outside_uses_ok + the
+commit tail us_guard_blocks/us_emit_guards/us_merge_phis/us_rewire).
+THE LESSON of the round (record for every future decomposition): the
+first draft zero-initialized UsCtx's guard-block ids; the monolith
+initialized them to NONE per header. The && compound shape never
+allocates t1, so `if (U.t1 != NONE)` fell through and emitted the
+||-only `t1: br H' into BLOCK 0 — seed 20029's -O3 build looped
+forever. The 146-run parity did NOT catch it (the audit programs
+never hit compound-&&); the committed differential fuzz window did, on
+the first try. Two rules: (1) a context struct replacing
+function locals must copy the locals' INITIALIZERS exactly
+(NONE-defaulted ids, not value-defaulted); (2) the wide fuzz windows
+are part of every decomposition's gate, not optional.
 
 ## What checkpoint 33 shipped: the dedup campaign, round two
 
@@ -178,11 +195,11 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
 
 ## Where the next work is (priority order)
 
-1. **OPT_CHECKLIST queue** (re-measured after ckpt 33's shaves):
-   unswitch (~460, the mark/rw enumerations already shared),
-   argpromo (~408), tailrec's tce_merge (~745 file), unswitch_shape
-   (433). rotate_impl.hpp is the freshest template; REUSE FIRST (the
-   per-round protocol above).
+1. **OPT_CHECKLIST queue** (re-measured after ckpt 34): tailrec's
+   tce_merge (~370, 745-line file, the mapv/remap twins already
+   shared), argpromo (~408), unswitch_shape (433, the shared matcher
+   + clone machinery). REUSE FIRST (the per-round protocol above);
+   the UsCtx-lessons apply (NONE-defaulted ids).
 2. **mjz_lib extraction candidates**: the loop-family gates
    (loop_single_exit_target et al.) are candidates for
    generic/mjz_lib/opt/shape.hpp once a second consumer exists
@@ -191,9 +208,10 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
    loop-access/dependence, SCEV unification; DSE's chains are DONE.
    Machine layer: block placement (layout kernels are the
    foundation), peephole, spill splitting, shrink-wrapping.
-4. **Widen the fuzz window**: post-dedup windows 1-300 + 20000-20300
-   verified this checkpoint. The committed fuzz_parity.sh windows
-   for refactors must be re-baselined after any new pass fires.
+4. **Widen the fuzz window**: post-unswitch windows 1-300 +
+   20000-20300 verified this checkpoint (20029 proved their worth).
+   The committed fuzz_parity.sh windows for refactors must be
+   re-baselined after any new pass fires.
 
 ## Build in a recycled sandbox (the short version)
 
