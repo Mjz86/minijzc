@@ -29,12 +29,13 @@
 // MECHANISM: the walk, the scoped table, the operand resolution and the
 //   commutative/const key normalization are the GENERIC kernel
 //   (opt_ns::value_number) -- the same call cse makes, with phi and
-//   const entries enabled. This wrapper states the site tables: which
-//   instrs take part (the policy: pure Bins, complete phis, non-param
-//   consts) and their operand/pred rows; the phi TAINT rule (a pair is
-//   refused when either phi's raw args contain the other's result --
-//   checked over ALL of the block's phi sites, hit-dropped ones included)
-//   reads the site rows inside the kernel.
+//   const entries enabled. The pass is the shared driver
+//   (vn_sites.hpp's vn_run) plus the site policy: which instrs take
+//   part (pure Bins, complete phis, non-param consts) and their
+//   operand/pred rows; the phi TAINT rule (a pair is refused when
+//   either phi's raw args contain the other's result -- checked over
+//   ALL of the block's phi sites, hit-dropped ones included) reads the
+//   site rows inside the kernel.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../../ir/sweep.hpp"
@@ -43,59 +44,39 @@
 #include "vn_sites.hpp"
 
 constexpr bool opt_gvn(Fn &fn, const An &A, OptStats &os) {
-  if (A.n != fn.nblocks() || !fn.nblocks())
+  uint32_t hits = 0;
+  // the three entry kinds, their policies (pure Bins with nt-gated
+  // div/mod -- the SHARED vn_fill_bin_site; phis with BOTH incomings
+  // present -- a degenerate phi is phi-degen's business; consts that
+  // do not define a PARAMETER vreg), and the operand/pred rows
+  const bool did = vn_run(
+      fn, A, hits,
+      [&fn](const Instr &I, uint32_t nv, opt_ns::vn_site_t<V> &si,
+            std::vector<uintlen_t> &sa, std::vector<uintlen_t> &sp) {
+        if (I.dst == NONE || I.dst >= nv)
+          return;
+        if (I.k == K::Const) {
+          if (I.dst < fn.nparams)
+            return; // param-defining placeholder (fnspec clones): keep
+          si.tag = opt_ns::vn_const_v;
+          si.c = I.c;
+          return;
+        }
+        if (I.k == K::Phi) {
+          // phis carry <= 2 incomings: I.a from pred I.t, I.b2 from pred
+          // I.f. A degenerate phi (a missing incoming, NONE) is
+          // phi-degen's business, not ours.
+          if (I.a == NONE || I.b2 == NONE)
+            return;
+          si.tag = opt_ns::vn_phi_v;
+          sa = {vn_u(I.a), vn_u(I.b2)};
+          sp = {vn_u(I.t), vn_u(I.f)};
+          return;
+        }
+        vn_fill_bin_site(I, nv, si, sa);
+      });
+  if (!did)
     return false;
-  const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  // known constants (the shared seeding): operands key by VALUE, not by
-  // vreg (cse's rule), so i*7 hits i*7 even when the 7s are different temps
-  std::vector<char> kconst{};
-  std::vector<val_t> kval{};
-  seed_consts(fn, nv, kconst, kval);
-  // ---- the site tables (the wrapper's whole job): the three entry
-  // kinds, their policies (pure Bins with nt-gated div/mod -- the SHARED
-  // vn_fill_bin_site; phis with BOTH incomings present -- a degenerate
-  // phi is phi-degen's business; consts that do not define a PARAMETER
-  // vreg), and the operand/pred rows. The walk, the scoped table,
-  // resolution and the taint rule are the kernel's.
-  const uint32_t n = (uint32_t)fn.code.size();
-  std::vector<opt_ns::vn_site_t<V>> sinfo(n);
-  std::vector<std::vector<uintlen_t>> sargs(n), spreds(n);
-  std::vector<std::vector<uintlen_t>> sites_of_block(fn.nblocks());
-  for (uint32_t b = 0; b < fn.nblocks(); ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      sites_of_block[b].push_back(i);
-      const Instr &I = fn.code[i];
-      sinfo[i].dst = vn_u(I.dst);
-      if (I.dst == NONE || I.dst >= nv)
-        continue;
-      if (I.k == K::Const) {
-        if (I.dst < fn.nparams)
-          continue; // param-defining placeholder (fnspec clones): keep
-        sinfo[i].tag = opt_ns::vn_const_v;
-        sinfo[i].c = I.c;
-        continue;
-      }
-      if (I.k == K::Phi) {
-        // phis carry <= 2 incomings: I.a from pred I.t, I.b2 from pred
-        // I.f. A degenerate phi (a missing incoming, NONE) is
-        // phi-degen's business, not ours.
-        if (I.a == NONE || I.b2 == NONE)
-          continue;
-        sinfo[i].tag = opt_ns::vn_phi_v;
-        sargs[i] = {vn_u(I.a), vn_u(I.b2)};
-        spreds[i] = {vn_u(I.t), vn_u(I.f)};
-        continue;
-      }
-      vn_fill_bin_site(I, nv, sinfo[i], sargs[i]);
-    }
-  const opt_ns::vn_result_t<V> R = opt_ns::value_number<V>(
-      nv, A.dom_tree, sites_of_block, sinfo, sargs, spreds, kconst, kval);
-  if (!R.hits)
-    return false;
-  // second pass with the COMPLETED map (the shared rewrite)
-  vn_rewrite_completed_map(fn, nv, R);
-  // sweep dropped instrs, preserving block ranges
-  os.gvns += (uint32_t)R.hits;
-  sweep_survivors(fn, R.keep);
+  os.gvns += hits;
   return true;
 }

@@ -84,8 +84,16 @@ constexpr bool fn_local_pure(const Fn &f) {
     }
   return true;
 }
-// does the call closure of fi contain a K::Depth (frame-sensitive value)?
-constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
+// ---- the call-graph closure walk, shared ----------------------------------
+// Visits every fn reachable from fi over Call edges (cycle-safe seen
+// mask, worklist DFS -- the visit order is irrelevant to the result),
+// applying q to each visited fn and stopping early the moment q fires.
+// The two inline worklist twins (closure_has_depth / fn_pure_closure)
+// collapsed here in the ckpt-33 dedup wave; the predicate is the
+// caller's policy.
+template <class Q>
+constexpr bool any_fn_in_closure(const std::vector<Fn> &fns, uint32_t fi,
+                                 Q &&q) {
   const uint32_t n = (uint32_t)fns.size();
   std::vector<uint8_t> seen(n, 0);
   std::vector<uint32_t> work{fi};
@@ -93,31 +101,8 @@ constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
   while (!work.empty()) {
     uint32_t f = work.back();
     work.pop_back();
-    for (const Instr &I : fns[f].code) {
-      if (I.k == K::Depth)
-        return true;
-      if (I.k == K::Call) {
-        uint32_t g = (uint32_t)I.c;
-        if (g < n && !seen[g]) {
-          seen[g] = 1;
-          work.push_back(g);
-        }
-      }
-    }
-  }
-  return false;
-}
-// transitive purity over the call graph (cycle-safe DFS)
-constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
-  const uint32_t n = (uint32_t)fns.size();
-  std::vector<uint8_t> seen(n, 0);
-  std::vector<uint32_t> work{fi};
-  seen[fi] = 1;
-  while (!work.empty()) {
-    uint32_t f = work.back();
-    work.pop_back();
-    if (!fn_local_pure(fns[f]))
-      return false;
+    if (q(fns[f]))
+      return true;
     for (const Instr &I : fns[f].code)
       if (I.k == K::Call) {
         uint32_t g = (uint32_t)I.c;
@@ -127,7 +112,21 @@ constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
         }
       }
   }
-  return true;
+  return false;
+}
+// does the call closure of fi contain a K::Depth (frame-sensitive value)?
+constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
+  return any_fn_in_closure(fns, fi, [](const Fn &F) {
+    for (const Instr &I : F.code)
+      if (I.k == K::Depth)
+        return true;
+    return false;
+  });
+}
+// transitive purity over the call graph (cycle-safe DFS)
+constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
+  return !any_fn_in_closure(
+      fns, fi, [](const Fn &F) { return !fn_local_pure(F); });
 }
 
 // exact SSA execution of one pure fn; mirrors run_prog's semantics: phis are

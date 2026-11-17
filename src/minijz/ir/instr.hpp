@@ -360,10 +360,14 @@ constexpr void seed_single_def_consts(const Fn &fn, uint32_t nv,
 // ---- the vreg permutation rewrite, shared by every cloning pass ----------
 // Apply mp() to every vreg field of an instr (dst + operands + args).
 // The identical five-field rewrite was hand-rolled in argpromo, fnspec
-// and deadargs until the ckpt-31 dedup wave; it is the "clone under a
-// vreg permutation" primitive. Phi's c (the stale base-var tag) and
+// and deadargs until the ckpt-31 dedup wave; callgraph's and tailrec's
+// inline copies (a/b2 unguarded there -- their mapv maps NONE to NONE,
+// so the guards are vacuous) joined in ckpt 33. It is the "clone under
+// a vreg permutation" primitive. Phi's c (the stale base-var tag) and
 // Call's c (a fn index, not a vreg) are intentionally NOT remapped --
-// unread post-ssa_construct, the deadargs policy.
+// unread post-ssa_construct, the deadargs policy. NOTE the asymmetry:
+// dst/a/b2/c2 are remapped only when != NONE, args row entries
+// UNCONDITIONALLY -- the original contract, preserved exactly.
 template <class Map> constexpr void remap_vreg_fields(Instr &I, Map &&mp) {
   if (I.dst != NONE)
     I.dst = mp(I.dst);
@@ -389,6 +393,32 @@ template <class Map> constexpr void remap_stk_arrays(Fn &H, Map &&mp) {
   }
 }
 
+// ---- the operand enumeration ----------------------------------------------
+// EVERY operand-use field of I, in the fixed order (a, b2, c2, then the
+// args row) -- the traversal half of the counters below. The POLICY
+// (guards, masks, marking, remapping) stays with the caller; the field
+// set and its order are IR knowledge and live here exactly once. The
+// mark/chk/one/rw enumerations once hand-rolled in rotate_impl,
+// unswitch, lcf_impl, lcf_rt, lcf_sim, regalloc, astrun and vn_sites
+// were the inline twins (collapsed in the ckpt-33 dedup wave).
+template <class F> constexpr void for_each_operand(const Instr &I, F &&f) {
+  f(I.a);
+  f(I.b2);
+  f(I.c2);
+  for (uint32_t v : I.args)
+    f(v);
+}
+
+// the REWRITE variant: f takes the field by reference and may replace
+// it in place (clone-under-permutation, resolve-through-ren)
+template <class F> constexpr void rewrite_operands(Instr &I, F &&f) {
+  f(I.a);
+  f(I.b2);
+  f(I.c2);
+  for (uint32_t &av : I.args)
+    f(av);
+}
+
 // ---- the textual-use counters ---------------------------------------------
 // count uses of every vreg in a/b2/c2/args (the NONE-guarded operand
 // fields, Phi edge args included). The bump lambda was hand-rolled in
@@ -397,15 +427,10 @@ template <class Map> constexpr void remap_stk_arrays(Fn &H, Map &&mp) {
 // instr indices, not counts).
 constexpr void bump_uses_of(const Instr &I, uint32_t nv,
                             std::vector<uint32_t> &uses) {
-  auto bump = [&](uint32_t v) {
+  for_each_operand(I, [&](uint32_t v) {
     if (v != NONE && v < nv)
       ++uses[v];
-  };
-  bump(I.a);
-  bump(I.b2);
-  bump(I.c2);
-  for (uint32_t v : I.args)
-    bump(v);
+  });
 }
 
 constexpr void count_operand_uses(const Fn &fn, uint32_t nv,

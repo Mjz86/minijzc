@@ -105,26 +105,15 @@ struct AstRun {
       out = r.v;
       return true;
     }
-    case Ek::And: {
+    case Ek::And:
+    case Ek::Or: { // mirror arms (the ckpt-33 dedup): only the
+      // short-circuit polarity differs (And stops on 0, Or on nonzero)
+      const bool is_and = e.k == Ek::And;
       val_t x{};
       if (!eval(e.l, x))
         return false;
-      if (x == 0) {
-        out = 0;
-        return true;
-      } // short-circuit
-      val_t y{};
-      if (!eval(e.r, y))
-        return false;
-      out = (y != 0) ? 1 : 0;
-      return true;
-    }
-    case Ek::Or: {
-      val_t x{};
-      if (!eval(e.l, x))
-        return false;
-      if (x != 0) {
-        out = 1;
+      if (is_and ? x == 0 : x != 0) {
+        out = is_and ? 0 : 1;
         return true;
       } // short-circuit
       val_t y{};
@@ -414,11 +403,7 @@ constexpr void assign_slots(Fn &fn) {
       if (v != NONE && v < nv)
         f(v);
     };
-    one(I.a);
-    one(I.b2);
-    one(I.c2);
-    for (uint32_t v : I.args)
-      one(v);
+    for_each_operand(I, one); // the shared enumeration (instr.hpp)
   };
   auto is_def = [&](const Instr &I) -> uint32_t {
     if (I.dst == NONE || I.dst >= nv)

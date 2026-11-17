@@ -51,15 +51,7 @@ constexpr bool opt_jthread(Fn &fn, const An &A, const Ranges &RA,
   std::vector<uint32_t> defi(nv, NONE), raw(nv, 0);
   for (uint32_t i = 0; i < fn.code.size(); ++i) {
     const Instr &I = fn.code[i];
-    if (I.a != NONE && I.a < nv)
-      raw[I.a]++;
-    if (I.b2 != NONE && I.b2 < nv)
-      raw[I.b2]++;
-    if (I.c2 != NONE && I.c2 < nv)
-      raw[I.c2]++;
-    for (uint32_t v : I.args)
-      if (v != NONE && v < nv)
-        raw[v]++;
+    bump_uses_of(I, nv, raw); // the shared counter (instr.hpp)
     if (I.dst != NONE && I.dst < nv)
       defi[I.dst] = i;
   }

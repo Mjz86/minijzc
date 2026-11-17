@@ -1627,3 +1627,52 @@ calculating inline).
   kernel fuzz clean (rmasp now self-differential); selftest 208/208,
   units 6482/6482, header order 116/116 + umbrella, includes
   527/527, e2e fuzz 600, stress ALL PASS.
+
+## 17. checkpoint 33: the dedup campaign round two (every round's standing pass) — DONE
+
+The user's directive: keep deduplicating, and make the pass a recorded
+part of EVERY codebase round. This checkpoint re-ran the twin scan
+window-8/10/12 over the whole tree after ckpt 31/32 and removed the
+remaining proved-identical twins; the per-round protocol (scan ->
+triage -> prove-or-reject -> record) is now standing requirement 1's
+operating procedure in CONTINUE.md.
+
+* **the operand enumeration (`ir/instr.hpp`)**: `for_each_operand`
+  (read) + `rewrite_operands` (in-place) — the fixed a/b2/c2/args
+  traversal eleven sites hand-rolled as mark/chk/one/rw lambdas
+  (rotate_impl, unswitch x2, lcf_impl, lcf_rt, lcf_sim, regalloc,
+  astrun, vn_sites, plus bump_uses_of itself). The POLICY (guards,
+  masks, marking) stays at each site; the field set and its order are
+  IR knowledge, defined once. reassoc's bump copy (missed by ckpt 31)
+  and jthread's use census collapsed to `bump_uses_of` outright.
+* **`vn_run` (`opt/scalar/vn_sites.hpp`)**: the shared cse/gvn
+  driver — both passes were verbatim twins outside their site-fill
+  policy and stats counter (gate, const seeding, census, kernel call,
+  completed-map rewrite, sweep). cse is now a one-line policy; gvn
+  states its three entry kinds.
+* **`remap_vreg_fields` adoption**: callgraph's and tailrec's inline
+  five-field permutation copies (a/b2 unguarded there; their mapv
+  maps NONE to NONE, so the shared form's guards are vacuous —
+  proved, documented in instr.hpp).
+* **`any_fn_in_closure` (`opt/interprocedural/constcall.hpp`)**: the
+  call-graph closure worklist (seen mask + DFS) the file's two
+  predicates hand-rolled twice; the predicate is policy now.
+* **the small in-file twins**: vm_step's eleven `S.trapped/R.trapped/
+  return false` copies -> one `trap_out` lambda; astrun's And/Or
+  mirror arms -> one arm with the polarity flag (the builder-diamond
+  precedent); emit_c's Load/Store bounds-check emission -> one
+  `emit_arr_bounds`; diag's line scan -> `line_of`; parser's
+  if/while `'( expr )'` sequence -> `paren_expr`.
+* **rejected on record** (CONTINUE.md): intervals' raw use census
+  (deliberately ignores Phi edge args — is_cmp_def counts scalar cmp
+  uses only), emit_c's cmp_txt vs instr.hpp's bname (6-case emission
+  subset with a `!=` default vs the full diagnostic table — different
+  contracts), deadargs/icf's Call-walk openings (5-line traversal
+  around different inner logic; the divmagic/reassoc precedent), the
+  seed_consts decl prologue (the seed call is already the shared
+  primitive; the two decl lines are the out-param call cost).
+* **the verification**: 146 parity runs byte-identical, fuzz windows
+  1-300 + 20000-20300 identical modulo timing, selftest 208/208,
+  units 6482/6482, header order 116/116 + umbrella, includes
+  529/529, stress ALL PASS. Net -60 lines; ~150 lines of duplication
+  converted to single definitions.

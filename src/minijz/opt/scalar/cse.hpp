@@ -49,38 +49,21 @@
 // block in preorder (a merge block does not sit below the predecessor in the
 // dominator tree) — rewriting during the walk would leave the phi pointing at
 // a dropped def (a ghost vreg reading as 0).
+//
+// The whole pass is the shared driver (vn_sites.hpp's vn_run) plus ONE
+// policy line: every instr is offered as a pure Bin site (nt-gated
+// div/mod; vn_fill_bin_site declines the rest).
 constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
-  if (A.n != fn.nblocks() || !fn.nblocks())
+  uint32_t hits = 0;
+  const bool did = vn_run(
+      fn, A, hits,
+      [](const Instr &I, uint32_t nv, opt_ns::vn_site_t<V> &si,
+         std::vector<uintlen_t> &sa, std::vector<uintlen_t> &) {
+        vn_fill_bin_site(I, nv, si, sa);
+      });
+  if (!did)
     return false;
-  const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  // known constants (the shared seeding): two temps holding 7 are the
-  // SAME operand -- CSE keys constants by VALUE, not by vreg
-  std::vector<char> kconst{};
-  std::vector<val_t> kval{};
-  seed_consts(fn, nv, kconst, kval);
-  // ---- the site tables (the wrapper's whole job): WHICH instrs take part
-  // is policy (pure Bins only, Div/Mod gated on nt -- vn_fill_bin_site);
-  // the walk, the scoped table and the ren map are the kernel's
-  // (opt_ns::value_number)
-  const uint32_t n = (uint32_t)fn.code.size();
-  std::vector<opt_ns::vn_site_t<V>> sinfo(n);
-  std::vector<std::vector<uintlen_t>> sargs(n), spreds(n);
-  std::vector<std::vector<uintlen_t>> sites_of_block(fn.nblocks());
-  for (uint32_t b = 0; b < fn.nblocks(); ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      sites_of_block[b].push_back(i);
-      sinfo[i].dst = vn_u(fn.code[i].dst);
-      vn_fill_bin_site(fn.code[i], nv, sinfo[i], sargs[i]);
-    }
-  const opt_ns::vn_result_t<V> R = opt_ns::value_number<V>(
-      nv, A.dom_tree, sites_of_block, sinfo, sargs, spreds, kconst, kval);
-  if (!R.hits)
-    return false;
-  // second pass with the COMPLETED map (the shared rewrite)
-  vn_rewrite_completed_map(fn, nv, R);
-  // sweep CSE'd instrs, preserving block ranges
-  os.cses += (uint32_t)R.hits;
-  sweep_survivors(fn, R.keep);
+  os.cses += hits;
   return true;
 }
 

@@ -179,6 +179,19 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
       return "==";
     }
   };
+  // the local-array bounds check the Load/Store arms shared verbatim
+  // (the ckpt-33 dedup); nt: the alias analysis PROVED the index in
+  // range, so the check is skipped
+  auto emit_arr_bounds = [&](const Instr &I) {
+    if (!I.nt) {
+      std::snprintf(buf, sizeof buf,
+                    "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
+                    "exit(1); }\n",
+                    V(I.b2).c_str(), V(I.b2).c_str(),
+                    (long long)fn.stk_arrays[arr_of[I.a]].len);
+      s += buf;
+    }
+  };
   // signature (non-main: parameters are the first vregs, v0..vP-1)
   if (is_main) {
     s += "int main(void) {\n";
@@ -475,14 +488,7 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
       case K::Load:
         if (I.a < nv &&
             arr_of[I.a] >= 0) { // local array: direct + bounds check
-          if (!I.nt) {          // nt: index PROVEN in range (alias analysis)
-            std::snprintf(buf, sizeof buf,
-                          "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
-                          "exit(1); }\n",
-                          V(I.b2).c_str(), V(I.b2).c_str(),
-                          (long long)fn.stk_arrays[arr_of[I.a]].len);
-            s += buf;
-          }
+          emit_arr_bounds(I);
           std::snprintf(buf, sizeof buf, "  %s = %s[%s];\n", D(I.dst).c_str(),
                         arr_name(arr_of[I.a]).c_str(), V(I.b2).c_str());
           s += buf;
@@ -499,14 +505,7 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
       case K::Store:
         if (I.a < nv &&
             arr_of[I.a] >= 0) { // local array: direct + bounds check
-          if (!I.nt) {          // nt: index PROVEN in range (alias analysis)
-            std::snprintf(buf, sizeof buf,
-                          "  if (%s < 0 || %s >= %lld) { printf(\"TRAP\\n\"); "
-                          "exit(1); }\n",
-                          V(I.b2).c_str(), V(I.b2).c_str(),
-                          (long long)fn.stk_arrays[arr_of[I.a]].len);
-            s += buf;
-          }
+          emit_arr_bounds(I);
           std::snprintf(buf, sizeof buf, "  %s[%s] = %s;\n",
                         arr_name(arr_of[I.a]).c_str(), V(I.b2).c_str(),
                         V(I.c2).c_str());

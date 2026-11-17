@@ -258,11 +258,7 @@ constexpr bool rot_classify_reads(Fn &fn, RotCtx &R) {
         if (v != NONE && v < R.nv && R.is_hbdef[v])
           R.loop_read[v] = 1;
       };
-      mark(I.a);
-      mark(I.b2);
-      mark(I.c2);
-      for (uint32_t v : I.args)
-        mark(v);
+      for_each_operand(I, mark); // the shared enumeration (instr.hpp)
     }
   }
   for (uint32_t b = 0; b < R.nb && !R.bad; ++b) {

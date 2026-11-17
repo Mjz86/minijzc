@@ -832,11 +832,7 @@ constexpr void lcf_rewrite_block_uses(Fn &fn, const LcfScan &S,
           return;
         }
     };
-    rw(I.a);
-    rw(I.b2);
-    rw(I.c2);
-    for (uint32_t &av : I.args)
-      rw(av);
+    rewrite_operands(I, rw); // the shared enumeration (instr.hpp)
   }
 }
 

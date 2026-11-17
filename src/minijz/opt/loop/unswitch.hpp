@@ -259,11 +259,7 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
               if (pi != NONE)
                 read_on_false[pi] = 1;
             };
-            mark(I.a);
-            mark(I.b2);
-            mark(I.c2);
-            for (uint32_t v : I.args)
-              mark(v);
+            for_each_operand(I, mark); // the shared enumeration
           }
         }
       }
@@ -455,11 +451,7 @@ constexpr bool opt_unswitch(Fn &fn, const An &A, OptStats &os) {
           }
           v = mapv(C, v);
         };
-        rw(I.a);
-        rw(I.b2);
-        rw(I.c2);
-        for (uint32_t &av : I.args)
-          rw(av);
+        rewrite_operands(I, rw); // the shared enumeration (instr.hpp)
       }
     }
     fn.recompute_preds();

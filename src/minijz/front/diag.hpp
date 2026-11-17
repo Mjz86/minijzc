@@ -58,6 +58,21 @@ inline std::string diag_message(std::string_view src, const char *what,
   return m;
 }
 
+// the line start (0-based offset of the line's first byte) and the
+// 1-based line number of pos. The two renders (compile error, runtime
+// trap) hand-rolled this scan twice until the ckpt-33 dedup; callers
+// check pos validity FIRST (the scan assumes 0 < pos <= src.size()).
+inline std::pair<uint32_t, uint32_t> line_of(std::string_view src,
+                                              uint32_t pos) {
+  uint32_t lo = 0, line = 1;
+  for (uint32_t i = 0; i < pos && i < src.size(); ++i)
+    if (src[i] == '\n') {
+      lo = i + 1;
+      ++line;
+    }
+  return {lo, line};
+}
+
 // the full located render. `file` may be empty (stdin / -e source). `pos`
 // may be NONE/0-with-no-location (internal errors): plain one-liner then.
 inline void print_compile_error(std::string_view src, const char *what,
@@ -69,12 +84,7 @@ inline void print_compile_error(std::string_view src, const char *what,
     return;
   }
   // line containing pos (1-based)
-  uint32_t lo = 0, line = 1;
-  for (uint32_t i = 0; i < pos && i < src.size(); ++i)
-    if (src[i] == '\n') {
-      lo = i + 1;
-      ++line;
-    }
+  const auto [lo, line] = line_of(src, pos);
   uint32_t hi = lo;
   while (hi < src.size() && src[hi] != '\n')
     ++hi;
@@ -101,12 +111,7 @@ inline void print_trap_at(std::string_view src, uint32_t pos,
     std::printf("TRAP (%s)\n", kind);
     return;
   }
-  uint32_t lo = 0, line = 1;
-  for (uint32_t i = 0; i < pos && i < src.size(); ++i)
-    if (src[i] == '\n') {
-      lo = i + 1;
-      ++line;
-    }
+  const auto [lo, line] = line_of(src, pos);
   uint32_t col = pos - lo + 1;
   std::printf("TRAP (%s at %u:%u)\n", kind, (unsigned)line, (unsigned)col);
 }

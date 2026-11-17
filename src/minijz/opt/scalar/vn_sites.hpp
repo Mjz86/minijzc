@@ -1,13 +1,13 @@
 #pragma once
 // === vn_sites.hpp ========================================
-// the shared site-table glue of cse and gvn (the ckpt-31 dedup wave:
-// both wrappers hand-rolled these three pieces verbatim until they
-// were lifted here). Both passes are thin policies over the ONE
-// generic kernel, opt_ns::value_number (mjz_lib/opt/vn.hpp -- the
-// dominator-scoped table walk with truncation, operand resolution,
-// const keying by VALUE, commutative canonicalization and the phi
-// congruence taint rule). The passes differ ONLY in which entry
-// kinds they admit:
+// the shared site-table glue and DRIVER of cse and gvn (the ckpt-31
+// dedup wave lifted the three helpers; ckpt 33 collapsed the passes'
+// verbatim prologue/epilogue twins into vn_run). Both passes are thin
+// policies over the ONE generic kernel, opt_ns::value_number
+// (mjz_lib/opt/vn.hpp -- the dominator-scoped table walk with
+// truncation, operand resolution, const keying by VALUE, commutative
+// canonicalization and the phi congruence taint rule). The passes
+// differ ONLY in which entry kinds they admit:
 //   * cse  -- Bin sites (pure, nt-gated div/mod)
 //   * gvn  -- Bin sites + Const entries + complete phis
 // The shared pieces, once:
@@ -22,8 +22,13 @@
 //     implies w's def DOMINATES v's def, which dominates every
 //     (edge-)use of v -- rewriting during the walk would leave a phi
 //     reading a dropped def (a ghost vreg reading as 0).
+//   * vn_run -- the whole pass skeleton: gate, seeding, census, kernel
+//     call, rewrite, sweep. The pass states its fill-site policy and
+//     bumps its own stats counter; everything else is here.
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
+#include "../../ir/sweep.hpp"
+#include "../analysis/an.hpp"
 #include "../opt_generic.hpp"
 
 // the NONE -> none_v conversion every site table needs
@@ -62,15 +67,51 @@ inline void vn_rewrite_completed_map(Fn &fn, uint32_t nv,
     return v;
   };
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
+      rewrite_operands(fn.code[i],
+                       [&](uint32_t &v) { v = resolve(v); });
+}
+
+// ---- the shared cse/gvn driver --------------------------------------------
+// Everything the two passes share, once: the freshness gate, the const
+// seeding, the site-table census (the dst row plus the POLICY fill),
+// the kernel call, the completed-map rewrite and the survivor sweep.
+// The passes differ in exactly two things: WHICH instrs admit entries
+// (the fill callback -- cse admits pure Bin sites only; gvn adds const
+// and complete-phi entries) and the stats counter they bump. The
+// prologue/epilogue twins (~30 lines x2) collapsed here in the
+// ckpt-33 dedup wave.
+template <class Fill>
+constexpr bool vn_run(Fn &fn, const An &A, uint32_t &hits, Fill &&fill) {
+  if (A.n != fn.nblocks() || !fn.nblocks())
+    return false;
+  const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
+  // known constants (the shared seeding): two temps holding 7 are the
+  // SAME operand -- operands key by VALUE, not by vreg
+  std::vector<char> kconst{};
+  std::vector<val_t> kval{};
+  seed_consts(fn, nv, kconst, kval);
+  // ---- the site tables: WHICH instrs take part is policy (the fill
+  // callback); the walk, the scoped table and the ren map are the
+  // kernel's (opt_ns::value_number)
+  const uint32_t n = (uint32_t)fn.code.size();
+  std::vector<opt_ns::vn_site_t<V>> sinfo(n);
+  std::vector<std::vector<uintlen_t>> sargs(n), spreds(n);
+  std::vector<std::vector<uintlen_t>> sites_of_block(fn.nblocks());
+  for (uint32_t b = 0; b < fn.nblocks(); ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      Instr &I = fn.code[i];
-      if (I.a != NONE)
-        I.a = resolve(I.a);
-      if (I.b2 != NONE)
-        I.b2 = resolve(I.b2);
-      if (I.c2 != NONE)
-        I.c2 = resolve(I.c2);
-      for (uint32_t &av : I.args)
-        av = resolve(av);
+      sites_of_block[b].push_back(i);
+      sinfo[i].dst = vn_u(fn.code[i].dst);
+      fill(fn.code[i], nv, sinfo[i], sargs[i], spreds[i]);
     }
+  const opt_ns::vn_result_t<V> R = opt_ns::value_number<V>(
+      nv, A.dom_tree, sites_of_block, sinfo, sargs, spreds, kconst, kval);
+  if (!R.hits)
+    return false;
+  // second pass with the COMPLETED map (the shared rewrite)
+  vn_rewrite_completed_map(fn, nv, R);
+  hits = (uint32_t)R.hits;
+  // sweep dropped instrs, preserving block ranges
+  sweep_survivors(fn, R.keep);
+  return true;
 }

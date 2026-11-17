@@ -305,11 +305,7 @@ constexpr bool lcf_rt_fold(Fn &fn, OptStats &os, const LcfRtIn &In) {
               return;
             }
         };
-        rw(I.a);
-        rw(I.b2);
-        rw(I.c2);
-        for (uint32_t &av : I.args)
-          rw(av);
+        rewrite_operands(I, rw); // the shared enumeration (instr.hpp)
       }
     }
     std::vector<Instr> xphis{};

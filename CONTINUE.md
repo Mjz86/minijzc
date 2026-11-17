@@ -1,12 +1,61 @@
-# CONTINUE — next steps after checkpoint 32 (the generic localization)
+# CONTINUE — next steps after checkpoint 33 (dedup round two)
 
-Read SUMMARY.md (same zip root) first. The main repo is 22 commits
+Read SUMMARY.md (same zip root) first. The main repo is 23 commits
 ahead of origin/main; the vendored String clone sits PRISTINE on
 upstream `main` (nothing under `mjz_lib/` is modified — the user's
 directive), and every mjz_lib addition this repo carries lives in
 `generic/` written as-if-in-mjz_lib (merge route: `generic/README.md`;
 the local branch `graph-opt-kernels`, tip 2cb6c7d, keeps the same
 content as commits for diff review). This file is the resume manual.
+
+## THE PER-ROUND PROTOCOL (the user's directive, ckpt 33)
+
+EVERY round that updates the codebase runs the dedup pass and records
+it here — not just before commits:
+1. **Scan**: `python3 /home/z/my-project/scripts/dup_scan.py 8` (and
+   10/12 for the big twins) over src/. Copy the tool in if the sandbox
+   recycled; it is 60 lines of python.
+2. **Triage every hit**: read BOTH sites in full. A twin is removable
+   ONLY if provably identical on every reachable input (guard
+   equivalence incl. NONE handling, allocation order, filter
+   strictness, traversal order when observable). Look-alikes around
+   different inner logic are REJECTED with the reason recorded below.
+3. **Reuse first**: before writing new code, check instr.hpp (the IR
+   knowledge hub: enumerations, counters, seeders, remap) and the
+   mjz_lib kernel inventory for what the new code needs.
+4. **Record**: the round's accepted + rejected dedups land in this
+   file's ledger (the section below) with the verification numbers.
+
+## What checkpoint 33 shipped: the dedup campaign, round two
+
+The window-8/10/12 scan after ckpt 31/32 found the stragglers; ten
+waves removed the proved-identical twins, byte-identical at every
+step:
+
+1. **`for_each_operand` + `rewrite_operands`** (ir/instr.hpp): the
+   fixed a/b2/c2/args operand traversal, once. Eleven hand-rolled
+   mark/chk/one/rw enumerations collapsed (rotate_impl, unswitch x2,
+   lcf_impl, lcf_rt, lcf_sim, regalloc, astrun, vn_sites' rewrite,
+   bump_uses_of's own body). reassoc's bump copy (a ckpt-31 miss) and
+   jthread's use census became plain `bump_uses_of` calls.
+2. **`vn_run`** (opt/scalar/vn_sites.hpp): the cse/gvn driver. Both
+   passes were verbatim twins outside the site-fill policy and the
+   stats counter; cse is a one-line policy now, gvn states its three
+   entry kinds.
+3. **remap_vreg_fields adoption**: callgraph + tailrec's inline
+   five-field permutation copies (their mapv maps NONE->NONE, so the
+   shared guards are vacuous — proved).
+4. **`any_fn_in_closure`** (opt/interprocedural/constcall.hpp): the
+   call-graph closure worklist; closure_has_depth/fn_pure_closure
+   are predicate one-liners.
+5. **In-file twins**: vm_step's eleven trap-stop copies -> trap_out;
+   astrun's And/Or mirror arms -> one arm + polarity; emit_c's
+   Load/Store bounds emission -> emit_arr_bounds; diag's line scan
+   -> line_of; parser's if/while '( expr )' -> paren_expr.
+
+Verification: parity 146 byte-identical, fuzz 1-300 + 20000-20300
+identical modulo timing, selftest 208, units 6482, header order 116,
+includes 529, stress ALL PASS. Net -60 lines.
 
 ## What checkpoint 32 shipped: the generic localization + the params
 
@@ -73,7 +122,8 @@ shared, single-definition code. The scan tool lives at
 /home/z/my-project/scripts/dup_scan.py (NOT in the repo — copy it in
 if the sandbox recycles; it is 60 lines of python, window size 8).
 
-## STANDING REQUIREMENTS (added by the user's directive, ckpt 31)
+## STANDING REQUIREMENTS (added by the user's directive, ckpt 31;
+## sharpened into the per-round protocol above, ckpt 33)
 
 1. **The code-bloat cleanup / deduplication pass runs BEFORE every
    finalized commit.** Before committing ANY change: diff-scan the
@@ -95,6 +145,22 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
 
 ## Rejected dedups (the reasons on record)
 
+- **intervals.hpp's raw use census** (ckpt 33): it deliberately
+  EXCLUDES Phi edge args — is_cmp_def counts scalar comparison uses
+  only, so bump_uses_of (which counts args) would change the
+  single-use gate. Stays local.
+- **emit_c's cmp_txt vs instr.hpp's bname** (ckpt 33): a 6-case
+  emission subset whose `default: "!="` is load-bearing for the
+  negation path vs the full diagnostic table. Different contracts;
+  coupling them would silently change C output the day one table
+  gains a spelling. Stays local.
+- **deadargs/icf's Call-walk openings** (ckpt 33): 5-line traversal
+  skeletons around different inner logic — the divmagic/reassoc
+  precedent (a callback walker would be over-abstraction).
+- **the seed_consts decl prologue** (ckpt 33): the seed CALL is
+  already the shared primitive; the two decl lines are the out-param
+  call cost, and half the sites seed into context members
+  (S.kc/X.kc/P.kc) a pair-returning helper cannot serve.
 - assign_slots' liveness/interference/coloring stay local in
   astrun.hpp: the kernel interference adds UNCONDITIONAL pairwise
   entry-def edges (seed 804's fix) which would change the degree
@@ -112,14 +178,12 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
 
 ## Where the next work is (priority order)
 
-1. **OPT_CHECKLIST queue** (re-measured after the dedup): unswitch
-   (~389), argpromo (~387, the twins already gone), tailrec's
-   tce_merge (~385), unswitch_shape (429). rotate_impl.hpp is the
-   freshest template; REUSE FIRST (the requirement above).
-2. **mjz_lib extraction candidates found by the scan**: the
-   kc/kv seeders and the bump counters are IR glue (stay in
-   instr.hpp); but if a SECOND compiler ever grows, they are the
-   first kernels to lift. The loop-family gates
+1. **OPT_CHECKLIST queue** (re-measured after ckpt 33's shaves):
+   unswitch (~460, the mark/rw enumerations already shared),
+   argpromo (~408), tailrec's tce_merge (~745 file), unswitch_shape
+   (433). rotate_impl.hpp is the freshest template; REUSE FIRST (the
+   per-round protocol above).
+2. **mjz_lib extraction candidates**: the loop-family gates
    (loop_single_exit_target et al.) are candidates for
    generic/mjz_lib/opt/shape.hpp once a second consumer exists
    (rmas's given_dominators form is ready for the same consumers).
@@ -127,7 +191,7 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
    loop-access/dependence, SCEV unification; DSE's chains are DONE.
    Machine layer: block placement (layout kernels are the
    foundation), peephole, spill splitting, shrink-wrapping.
-4. **Widen the fuzz window**: post-dedup windows 1-600 + 20000-20500
+4. **Widen the fuzz window**: post-dedup windows 1-300 + 20000-20300
    verified this checkpoint. The committed fuzz_parity.sh windows
    for refactors must be re-baselined after any new pass fires.
 

@@ -107,11 +107,15 @@ constexpr bool vm_step_op(VmCtx &S) {
   if (!S.started || S.halted || S.trapped || S.timeout)
     return false;
   const std::vector<uint8_t> &c = *S.c;
-  if (S.pc >= c.size()) {
+  // the uniform stop every opcode shares: trap set, step fails. The
+  // eleven hand-rolled copies collapsed in the ckpt-33 dedup.
+  auto trap_out = [&]() -> bool {
     S.trapped = true;
     S.R.trapped = true;
     return false;
-  }
+  };
+  if (S.pc >= c.size())
+    return trap_out();
   RunOut &R = S.R;
   Bc op = (Bc)c[S.pc++];
   switch (op) {
@@ -153,18 +157,14 @@ constexpr bool vm_step_op(VmCtx &S) {
     S.pc += 4;
     uint32_t na = bc_rd_u32(c, S.pc);
     S.pc += 4;
-    if (g >= S.nfns() || S.frames.size() > MJZ_MAX_CALL_DEPTH) {
-      S.trapped = true; // bad callee / recursion depth cap (512 CALLEE
-      R.trapped = true; // activations; main's frame does not count)
-      return false;
-    }
+    if (g >= S.nfns() || S.frames.size() > MJZ_MAX_CALL_DEPTH)
+      // bad callee / recursion depth cap (512 CALLEE activations;
+      // main's frame does not count)
+      return trap_out();
     std::vector<val_t> args(na, 0); // pop na args (a0 pushed first)
     for (uint32_t k = na; k-- > 0;) {
-      if (S.st.empty()) {
-        S.trapped = true;
-        R.trapped = true;
-        return false;
-      }
+      if (S.st.empty())
+        return trap_out();
       args[k] = S.st.back();
       S.st.pop_back();
     }
@@ -183,11 +183,8 @@ constexpr bool vm_step_op(VmCtx &S) {
       R.timeout = true;
       return false;
     }
-    if (S.rets.empty() || S.st.empty() || S.frames.size() < 2) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (S.rets.empty() || S.st.empty() || S.frames.size() < 2)
+      return trap_out();
     val_t v = S.st.back();
     S.st.pop_back();
     S.frames.pop_back();
@@ -215,11 +212,8 @@ constexpr bool vm_step_op(VmCtx &S) {
   case Bc::Lshr:
   case Bc::Asr:
   case Bc::MulHi: {
-    if (S.st.size() < 2) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (S.st.size() < 2)
+      return trap_out();
     val_t y = S.st.back();
     S.st.pop_back();
     val_t x = S.st.back();
@@ -283,11 +277,8 @@ constexpr bool vm_step_op(VmCtx &S) {
     default:
       break;
     }
-    if (v.trap) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (v.trap)
+      return trap_out();
     S.st.push_back(v.v);
     break;
   }
@@ -328,30 +319,21 @@ constexpr bool vm_step_op(VmCtx &S) {
     val_t n = S.st.back();
     S.st.pop_back();
     Rv r = R.arena_alloc(n);
-    if (r.trap) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (r.trap)
+      return trap_out();
     S.st.push_back(r.v);
     break;
   }
   case Bc::ArrLd: { // pop i, pop h -> push h[i]
-    if (S.st.size() < 2) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (S.st.size() < 2)
+      return trap_out();
     val_t i = S.st.back();
     S.st.pop_back();
     val_t h = S.st.back();
     S.st.pop_back();
     Rv r = R.arena_load(h, i);
-    if (r.trap) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (r.trap)
+      return trap_out();
     S.st.push_back(r.v);
     break;
   }
@@ -361,22 +343,16 @@ constexpr bool vm_step_op(VmCtx &S) {
       R.timeout = true;
       return false;
     }
-    if (S.st.size() < 3) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (S.st.size() < 3)
+      return trap_out();
     val_t v = S.st.back();
     S.st.pop_back();
     val_t i = S.st.back();
     S.st.pop_back();
     val_t h = S.st.back();
     S.st.pop_back();
-    if (!R.arena_store(h, i, v)) {
-      S.trapped = true;
-      R.trapped = true;
-      return false;
-    }
+    if (!R.arena_store(h, i, v))
+      return trap_out();
     break;
   }
   case Bc::ArrLen: { // pop h -> push len(h)

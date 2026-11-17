@@ -258,14 +258,8 @@ constexpr bool opt_inline_one(Fn &F, const Fn &G, uint32_t ci) {
         c.a = dadjV;
         c.b2 = NONE;
       }
-      if (c.dst != NONE)
-        c.dst = mapv(c.dst);
-      c.a = mapv(c.a);
-      c.b2 = mapv(c.b2);
-      if (c.c2 != NONE)
-        c.c2 = mapv(c.c2);
-      for (uint32_t &av : c.args)
-        av = mapv(av);
+      remap_vreg_fields(c, mapv); // the shared permutation (instr.hpp;
+      // mapv maps NONE to NONE, so this matches the old unguarded form)
       if (c.k == K::Phi) {
         if (c.t != NONE && c.t < nbG)
           c.t = bmap[c.t];

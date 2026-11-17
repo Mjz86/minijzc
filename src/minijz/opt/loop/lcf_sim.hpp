@@ -145,11 +145,7 @@ constexpr bool lcf_sim_fold(Fn &fn, OptStats &os, const LcfSimIn &In) {
               !phid[v])
             ok = false;
         };
-        chk(I.a);
-        chk(I.b2);
-        chk(I.c2);
-        for (uint32_t v : I.args)
-          chk(v);
+        for_each_operand(I, chk); // the shared enumeration (instr.hpp)
       }
     }
   }
@@ -282,11 +278,7 @@ constexpr bool lcf_sim_fold(Fn &fn, OptStats &os, const LcfSimIn &In) {
               return;
             }
         };
-        rw(I.a);
-        rw(I.b2);
-        rw(I.c2);
-        for (uint32_t &av : I.args)
-          rw(av);
+        rewrite_operands(I, rw); // the shared enumeration (instr.hpp)
       }
     }
     for (uint32_t i = fn.blocks[X].begin; i < fn.blocks[X].end; ++i) {

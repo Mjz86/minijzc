@@ -91,11 +91,7 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
       if (v != NONE && v < nv && !P.kc[v])
         f(v);
     };
-    one(I.a);
-    one(I.b2);
-    one(I.c2);
-    for (uint32_t v : I.args)
-      one(v);
+    for_each_operand(I, one); // the shared enumeration (instr.hpp)
   };
   auto is_def = [&](uint32_t i) -> uint32_t { // live def of instr i (or NONE)
     const Instr &I = fn.code[i];

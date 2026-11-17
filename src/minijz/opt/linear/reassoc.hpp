@@ -62,15 +62,7 @@ constexpr bool opt_reassoc(Fn &fn, OptStats &os) {
         defi[I.dst] = i;
         defb[I.dst] = b;
       }
-      auto bump = [&](uint32_t v) {
-        if (v != NONE && v < nv)
-          ++uses[v];
-      };
-      bump(I.a);
-      bump(I.b2);
-      bump(I.c2);
-      for (uint32_t v : I.args)
-        bump(v);
+      bump_uses_of(I, nv, uses); // the shared counter (instr.hpp)
     }
   seed_single_def_consts(fn, nv, kc, kv);
   bool changed = false;

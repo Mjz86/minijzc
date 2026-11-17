@@ -313,6 +313,22 @@ struct Parser {
       return 0;
     return s;
   }
+
+  // the parenthesized expression of if/while: '(' expr ')' with the
+  // uniform error contract. The two stmt arms hand-rolled this
+  // sequence twice until the ckpt-33 dedup. Advances ti PAST the kw.
+  constexpr bool paren_expr(uint32_t &c) {
+    ++ti;
+    if (!expect(Tk::LP, "expected '('"))
+      return false;
+    c = expr();
+    if (!ok)
+      return false;
+    if (!expect(Tk::RP, "expected ')'"))
+      return false;
+    return true;
+  }
+
   constexpr uint32_t stmts_until_rb() {
     const uint32_t p0 = peek().pos; // first stmt of the block
     std::vector<uint32_t> kids{};
@@ -381,13 +397,8 @@ struct Parser {
       return i;
     }
     case Tk::KwIf: {
-      ++ti;
-      if (!expect(Tk::LP, "expected '('"))
-        return 0;
-      uint32_t c = expr();
-      if (!ok)
-        return 0;
-      if (!expect(Tk::RP, "expected ')'"))
+      uint32_t c = 0;
+      if (!paren_expr(c)) // '(' expr ')'
         return 0;
       uint32_t then = block();
       if (!ok)
@@ -456,13 +467,8 @@ struct Parser {
       return i;
     }
     case Tk::KwWhile: {
-      ++ti;
-      if (!expect(Tk::LP, "expected '('"))
-        return 0;
-      uint32_t c = expr();
-      if (!ok)
-        return 0;
-      if (!expect(Tk::RP, "expected ')'"))
+      uint32_t c = 0;
+      if (!paren_expr(c)) // '(' expr ')'
         return 0;
       ++loop_depth;
       uint32_t body = block();

@@ -562,14 +562,8 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
           continue;
         }
         Instr c = I;
-        if (c.dst != NONE)
-          c.dst = mapv(c.dst);
-        c.a = mapv(c.a);
-        c.b2 = mapv(c.b2);
-        if (c.c2 != NONE)
-          c.c2 = mapv(c.c2);
-        for (uint32_t &av : c.args)
-          av = mapv(av);
+        remap_vreg_fields(c, mapv); // the shared permutation (instr.hpp;
+        // mapv maps NONE to NONE, so this matches the old unguarded form)
         if (c.k == K::Br || c.k == K::Cbr || c.k == K::Phi) {
           if (c.t != NONE && c.t < F.nblocks())
             c.t = bmap_base[x] + c.t;
