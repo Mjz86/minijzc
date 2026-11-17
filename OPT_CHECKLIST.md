@@ -46,7 +46,30 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
       identical modulo timing via the committed scripts/
       fuzz_parity.sh)
 
-## Queue (priority = biggest first; sizes re-measured 2026-11-14)
+- [x] opt/mem2reg.hpp — done earlier on this branch (round seven:
+      the slim driver + mem2reg_impl.hpp, M2RCtx + the m2r_* phase
+      functions; the queue entry above was stale)
+- [x] opt/loop/rotate.hpp — opt_rotate 405 lines -> 25-line driver +
+      rotate_impl.hpp (round eight): RotCtx (the shape tables, the
+      def/read classification, the commit's value maps), the gates
+      (rot_shape_ok: the canonical shape + the dedicated `br h'
+      preheader; rot_exit_ok: the only-exit + X-single-pred +
+      X-phi-free; rot_header_phis_ok; rot_collect_hbody: the SAVED
+      terminator + the const-test gate + the cap + body_on_true),
+      rot_mark_def_sets (HDEF/HPHI/HBDEF + loopdef), rot_after_region
+      (F), rot_classify_reads (loop_read/f_read + the outside-use
+      safety scan), the value maps (rot_gmap/lmap/rmap/xmap + the
+      generic rot_rw), rot_test_cbr, and the commit tail
+      (rot_mint_vregs -- the observable gv/lv-then-pv/xv order;
+      rot_emit_pre/header/latch/exit + the in-loop/F/verbatim arms;
+      rot_succ_rewire). The `continue'-vs-fall-through discipline and
+      the phase order preserved exactly (verified: 146-run parity
+      byte-identical, fuzz windows 16131-16330 + 14731-14930
+      identical modulo timing, audit table identical, selftest 208,
+      units 6476, header order 111 + umbrella, includes 493/493,
+      stress ALL PASS)
+
+## Queue (priority = biggest first; sizes re-measured 2026-11-17)
 
 NOTE (branch generic-ssa, 2026-11-14): the SSA-construction core that
 mem2reg shares with ssa_construct was extracted into the generic
@@ -131,11 +154,6 @@ audit table regenerated identically, full battery green (selftest
 207, ctest 44, units 6385, header order 102/102, includes 431/431,
 check-format clean on clang-format 16).
 
-- [ ] opt/mem2reg.hpp — the classification gates (liftable / dead /
-      bkpt-observed / budget) + the alias-driven pre-checks, on top of
-      the generic SSA kernel (the SSA-promotion core itself moved to
-      ir/ssa_generic.hpp on branch generic-ssa) NEXT UP.
-- [ ] opt/loop/rotate.hpp — ~405 lines (477-line file)
 - [ ] opt/interprocedural/scctco.hpp — scctco_member ~392 lines
       (735-line file, also on the >700-line file list)
 - [ ] opt/loop/unswitch.hpp — ~389 lines (468-line file)
