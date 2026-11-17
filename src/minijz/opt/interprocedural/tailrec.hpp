@@ -328,20 +328,7 @@ constexpr bool tce_self(Fn &fn, OptStats &os, uint32_t self_idx) {
   // ----------------------------------------------------------------
   fn.code = std::move(nc);
   fn.blocks = std::move(nbl);
-  fn.succ.assign(2 * fn.nblocks(), NONE);
-  for (uint32_t b = 0; b < fn.nblocks(); ++b) {
-    if (fn.blocks[b].begin >= fn.blocks[b].end)
-      continue; // empty/tombstone: reading code[end-1] would steal the
-                // PREVIOUS block's terminator and forge ghost edges
-    const Instr &term = fn.code[fn.blocks[b].end - 1];
-    if (term.k == K::Br)
-      fn.succ[2 * b] = term.t;
-    else if (term.k == K::Cbr) {
-      fn.succ[2 * b] = term.t;
-      fn.succ[2 * b + 1] = term.f;
-    }
-  }
-  fn.recompute_preds();
+  fn.resucc(); // succ wholesale from the fresh terminators + preds
   os.tces++;
   return true;
 }
@@ -660,19 +647,7 @@ constexpr bool tce_merge(std::vector<Fn> &fns,
   }
   Fm.code = std::move(nc);
   Fm.blocks = std::move(nbl);
-  Fm.succ.assign(2 * Fm.nblocks(), NONE);
-  for (uint32_t b = 0; b < Fm.nblocks(); ++b) {
-    if (Fm.blocks[b].begin >= Fm.blocks[b].end)
-      continue; // empty/tombstone: never read code[end-1] of an empty range
-    const Instr &term = Fm.code[Fm.blocks[b].end - 1];
-    if (term.k == K::Br)
-      Fm.succ[2 * b] = term.t;
-    else if (term.k == K::Cbr) {
-      Fm.succ[2 * b] = term.t;
-      Fm.succ[2 * b + 1] = term.f;
-    }
-  }
-  Fm.recompute_preds();
+  Fm.resucc(); // succ wholesale from the fresh terminators + preds
   Fm.tce_sel = k; // sel in [0,k) at every call site: an invariant we made
   // ---- rewrite every external call site: member m -> Fm(sel=m, ...) ------
   const uint32_t FmIdx = (uint32_t)fns.size();

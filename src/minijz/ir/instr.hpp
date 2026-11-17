@@ -266,6 +266,30 @@ struct Fn {
         preds[succ1(b)].push_back(b);
     }
   }
+  // rebuild succ WHOLESALE from the terminators, then preds. For pass
+  // commit tails that rewrite blocks faster than they can keep succ in
+  // lockstep (the wholesale code/blocks swap of scctco/tailrec). Empty
+  // or tombstone blocks stay isolated: their range is [x,x), and
+  // reading code[x-1] would steal the PREVIOUS block's terminator and
+  // forge ghost edges. (Surgical single-edge retargets -- unreach's
+  // isolation, breq's fold, jthread's retarget -- do NOT go through
+  // here: they keep succ current per edge and call recompute_preds
+  // alone.)
+  constexpr void resucc() {
+    succ.assign(2 * nblocks(), NONE);
+    for (uint32_t b = 0; b < nblocks(); ++b) {
+      if (blocks[b].begin >= blocks[b].end)
+        continue; // empty range
+      const Instr &T = code[blocks[b].end - 1];
+      if (T.k == K::Br) {
+        succ[2 * b] = T.t;
+      } else if (T.k == K::Cbr) {
+        succ[2 * b] = T.t;
+        succ[2 * b + 1] = T.f;
+      }
+    }
+    recompute_preds();
+  }
 };
 
 // Slot view used by the C + bytecode backends. Identity (empty slot_of,
