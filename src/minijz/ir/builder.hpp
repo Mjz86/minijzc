@@ -218,31 +218,21 @@ struct Builder {
       emit(ci);
       return d;
     }
-    case Ek::And: {
-      // short-circuit: l ? r : 0  — diamond, phi appears via SSA/IDF
-      uint32_t res = fresh_temp();
-      uint32_t l = ex(e.l, a);
-      uint32_t rb = new_block(), tt = new_block(), ff = new_block(),
-               mm = new_block();
-      close_cbr_at(l, rb, ff, p0);
-      cur = rb;
-      uint32_t r = ex(e.r, a);
-      close_cbr_at(r, tt, ff, p0);
-      cur = tt;
-      emit({.k = K::Const, .dst = res, .c = 1, .src = p0});
-      close_br(mm);
-      cur = ff;
-      emit({.k = K::Const, .dst = res, .c = 0, .src = p0});
-      close_br(mm);
-      cur = mm;
-      return res;
-    }
+    case Ek::And:
     case Ek::Or: {
+      // short-circuit diamonds (And: l ? r : 0; Or: l : 1 ? r) -- the two
+      // arms were verbatim twins until the ckpt-31 dedup wave; only the
+      // FIRST cbr's polarity differs (And's false arm short-circuits to
+      // ff, Or's true arm to tt), the rest of the diamond is shared:
+      // r's cbr, tt emits 1, ff emits 0, merge at mm (phi via SSA/IDF)
       uint32_t res = fresh_temp();
       uint32_t l = ex(e.l, a);
       uint32_t rb = new_block(), tt = new_block(), ff = new_block(),
                mm = new_block();
-      close_cbr_at(l, tt, rb, p0); // true short-circuits
+      if (e.k == Ek::And)
+        close_cbr_at(l, rb, ff, p0);
+      else
+        close_cbr_at(l, tt, rb, p0); // true short-circuits
       cur = rb;
       uint32_t r = ex(e.r, a);
       close_cbr_at(r, tt, ff, p0);
