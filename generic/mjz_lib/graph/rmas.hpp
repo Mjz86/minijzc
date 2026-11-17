@@ -265,6 +265,15 @@ calculate_minimum_feedback_arc_set(
 // root must reach every node (dominators are the contract's
 // vocabulary); an irreducible graph reports itself instead of
 // pretending.
+//
+// THE PARAMS. The *_given_dominators form takes the caller's
+// immediate-dominator table for this same graph (upstream dom.hpp's
+// calculate_dominators_from_entry output shape) instead of computing
+// it -- a caller that already holds idoms (the compiler's An layer
+// does) skips the rebuild; the 3-arg standalone form builds the
+// table inline and forwards. Same result either way, byte for byte:
+// the component fuzzer pins the two forms against each other and
+// the exact sweep.
 template <version_t version_v, class weight_t>
 struct reducible_fas_result_t {
   std::vector<uintlen_t> removed_arcs{}; // the FAS: INPUT arc ids, ascending
@@ -278,9 +287,10 @@ template <version_t version_v, class R,
           usable_range_exact_c<version_v> weights_t,
           std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN reducible_fas_result_t<version_v, weight_t>
-calculate_minimum_feedback_arc_set_reducible(
+calculate_minimum_feedback_arc_set_reducible_given_dominators(
     uintlen_t root, const basic_forest_t<version_v, R> &graph,
-    const weights_t &weights) noexcept {
+    const weights_t &weights,
+    const std::vector<uintlen_t> &idoms) noexcept {
   reducible_fas_result_t<version_v, weight_t> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
   const uintlen_t nedges = uintlen_t(std::ranges::size(graph.edges));
@@ -337,9 +347,11 @@ calculate_minimum_feedback_arc_set_reducible(
       asserts(seen[u]);
   }
 
-  // ---- dominators, the dominance query, the reducibility check --------
-  const auto idoms = calculate_dominators_from_entry<version_v>(
-      root, graph, make_basic_forest<version_v>(preds));
+  // ---- the dominance query, the reducibility check -------------------
+  // (idoms arrived as a param -- the standalone form's wrapper builds
+  // it with calculate_dominators_from_entry over the same preds scan;
+  // only the chain walks below consume it, never the interval table)
+  asserts(uintlen_t(std::ranges::size(idoms)) == n);
   auto dominates = [&](uintlen_t a, uintlen_t b) noexcept -> bool {
     // a dominates b iff a sits on b's idom chain (the chain walk;
     // the interval table is the bulk answer, this is the small one)
@@ -724,6 +736,35 @@ calculate_minimum_feedback_arc_set_reducible(
       ret.total_weight += wof(e); // the self loops and the cuts, once
     }
   return ret;
+}
+
+// the standalone sibling: builds the immediate-dominator table the
+// kernel wants (the arc scan's own preds -- self loops included, junk
+// slots skipped -- then upstream's dom kernel) and forwards. A caller
+// that already holds idoms for this graph (the compiler's An layer
+// does) calls the *_given_dominators form directly and skips the
+// rebuild; the component fuzzer pins the two forms equal.
+template <version_t version_v, class R,
+          usable_range_exact_c<version_v> weights_t,
+          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+MJZ_CX_FN reducible_fas_result_t<version_v, weight_t>
+calculate_minimum_feedback_arc_set_reducible(
+    uintlen_t root, const basic_forest_t<version_v, R> &graph,
+    const weights_t &weights) noexcept {
+  const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
+  if (!n)
+    return calculate_minimum_feedback_arc_set_reducible_given_dominators<
+        version_v>(root, graph, weights, std::vector<uintlen_t>{});
+  std::vector<std::vector<uintlen_t>> preds(n);
+  auto rows = graph.range();
+  for (uintlen_t u = 0; u < n; ++u)
+    for (uintlen_t v : rows[u])
+      if (v < n)
+        preds[v].push_back(u);
+  const auto idoms = calculate_dominators_from_entry<version_v>(
+      root, graph, make_basic_forest<version_v>(preds));
+  return calculate_minimum_feedback_arc_set_reducible_given_dominators<
+      version_v>(root, graph, weights, idoms);
 }
 
 // ---- cycle nodes (and the DAG contract checker) ------------------------------

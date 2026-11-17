@@ -7,7 +7,7 @@ as the only outputs — no `Instr`, no `Fn`, no `K`/`B` enums ever appear):
 
 | layer | file | what lives there |
 | --- | --- | --- |
-| `mjz::graph_ns` | `mjz_lib/mjz_lib/graph/` | pure graph theory: dominators, frontiers, SCC, loops, coloring |
+| `mjz::graph_ns` | `generic/mjz_lib/graph/` (in-tree carrier, as-if-in-mjz_lib; the pristine String clone's `mjz_lib/mjz_lib/graph/` is the merge destination) | pure graph theory: dominators, frontiers, SCC, loops, coloring |
 | `mjz::ssa_ns` | `src/minijz/ir/ssa_generic.hpp` | SSA construction over any index space |
 | `mjz::opt_ns` | `src/minijz/opt/opt_generic.hpp` | the optimization kernels (26 families) |
 
@@ -433,7 +433,7 @@ alongside the per-source masks in `gns.search`/`gns.dist`.
 
 ---
 
-## 2. ssa_ns — SSA construction (kernels: `mjz_lib/mjz_lib/graph/ssa.hpp`; the IR policy wrapper: `src/minijz/ir/ssa_generic.hpp`)
+## 2. ssa_ns — SSA construction (kernels: `generic/mjz_lib/graph/ssa.hpp`, the as-if-in-mjz_lib carrier -- see `generic/README.md`; the IR policy wrapper: `src/minijz/ir/ssa_generic.hpp`)
 
 **Paper.** Cytron, Ferrante, Rosen, Wegman, Zadeck, *Efficiently
 Computing Static Single Assignment Form and the Control Dependence
@@ -514,7 +514,7 @@ indices, the 2048-slot budget) are policy and live in the pass.
 
 ---
 
-## 3. opt_ns — the optimization kernels (one header per kernel family under `mjz_lib/mjz_lib/opt/`, aggregated by `opt/alllib.hpp`; `src/minijz/opt/opt_generic.hpp` remains the thin include adapter)
+## 3. opt_ns — the optimization kernels (one header per kernel family under `generic/mjz_lib/opt/` -- the as-if-in-mjz_lib carrier, aggregated by `opt/alllib.hpp`, merge route in `generic/README.md`; `src/minijz/opt/opt_generic.hpp` remains the thin include adapter)
 
 ### 3.1 mark_ns — dead-code elimination (`mark_ns::calculate_live_sites`)
 **Reference.** Mark-sweep reachability over the def/use bipartite

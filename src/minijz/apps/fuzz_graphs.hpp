@@ -2388,6 +2388,27 @@ static void fz_rmasp(std::mt19937_64 &rng, KzRec &R) {
     x = kz_pick(rng, 13); // zero weights live here too
   auto g = gns::make_basic_forest<V>(succs);
   auto got = gns::calculate_minimum_feedback_arc_set_reducible<V>(0, g, w);
+  // the given-dominators form must agree byte for byte: the caller's
+  // idoms (upstream's dom kernel -- the same provider the An layer
+  // uses) ride along, on the irreducible-witness path as much as on
+  // the structured one
+  {
+    std::vector<std::vector<ulen>> preds(n);
+    for (ulen u = 0; u < n; ++u)
+      for (ulen v : succs[u])
+        if (v < n)
+          preds[v].push_back(u);
+    const auto idoms = gns::calculate_dominators_from_entry<V>(
+        0, g, gns::make_basic_forest<V>(preds));
+    const auto gd =
+        gns::calculate_minimum_feedback_arc_set_reducible_given_dominators<V>(
+            0, g, w, idoms);
+    R.ok(gd.reducible == got.reducible &&
+             gd.total_weight == got.total_weight &&
+             gd.packing_weight == got.packing_weight &&
+             gd.removed_arcs == got.removed_arcs && gd.order == got.order,
+         "rmasp: the given-dominators form matches the standalone one");
+  }
   if (cross) {
     // the injected sibling pair owns a cycle with no on-cycle
     // dominator: the contract check must refuse the input

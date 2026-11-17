@@ -1,119 +1,98 @@
-# SUMMARY — checkpoint 31: the dedup campaign (the code-bloat cleanup)
+# SUMMARY — checkpoint 32: the generic localization + the param survey
 
-One strand, one session, three commits: the user's finding — "many
-places have the exact same algorithm implemented inline as the
-algorithm that's in other files" — was made mechanical (a
-normalized 8-line-window scan across src/), confirmed (twin
-clusters: cse/gvn 39 windows, argpromo/fnspec 21, the emitters 26,
-the kc/kv const-table seeding in TWELVE files, the bump-lambda use
-counter in six), and eliminated with byte-identical parity at every
-step. The mjz_lib branch (graph-opt-kernels, six commits) is
-unchanged this round — the twins were COMPILER-side glue around
-kernels that already existed; the dedup made the glue shared too.
+Two commits, one session. The user's directive: pull every mjz_lib
+change into a generic folder INSIDE the compiler repo, written as if
+it was in mjz_lib, such that the String repo (the vendored clone)
+matches upstream — all changes localized for the author to merge —
+then check every component for code-reuse opportunities (kernels
+taking the necessary things as params, "for example a dominator
+interval param", rather than calculating them inline).
 
-## 1. instr.hpp: the IR knowledge hub
+## 1. generic/ is the single carrier (commit 1)
 
-The two kc/kv seeding disciplines, the clone permutation, and the
-use counter are IR knowledge, not pass policy — they moved next to
-w_bin (the ckpt-26 precedent for shared instr knowledge):
+All 32 kernel headers moved VERBATIM (md5-verified) off the String
+clone's `graph-opt-kernels` branch into `generic/mjz_lib/` — the opt
+family (22 headers, aggregated by `opt/alllib.hpp`) and the graph
+family (10 headers). The vendored clone reverted to PRISTINE upstream
+`main` (`git diff origin/main` empty); the four changes that touch
+files upstream already ships ride as patches in
+`generic/merge-patches/`:
 
-* `seed_consts` — ANY Const def keys the vreg, last def wins (the
-  SSA-context rule: canon, dse, ifconv, ldelim + the vn wrappers).
-* `seed_single_def_consts` — only vregs with EXACTLY ONE def (the
-  post-destruction phi-slot freeze rule: a slot whose edge-1 def is
-  `c3 = 5` and edge-2 def is `c3 = t` must not be inlined as 5).
-  Was hand-rolled in emit_plan, stack_alloc, divmagic, reassoc,
-  lcf, mem2reg.
-* `remap_vreg_fields` + `remap_stk_arrays` — the five-field
-  permutation rewrite of the cloning passes (argpromo, fnspec,
-  deadargs). Phi's stale base-var tag and Call's fn index are
-  intentionally not remapped (the deadargs policy, documented once).
-* `bump_uses_of` + `count_operand_uses` — the textual-use counter
-  (a/b2/c2/args, NONE-guarded) that emit_x64, tailrec (twice), lcf,
-  canon, reassoc and the fusion table all hand-rolled. sccp's
-  site-INDEX variant is deliberately not this and stays local.
+* `0001` — `alllib.hpp`'s opt-family `__has_include` hook,
+* `0002` — `graph/algo.hpp`'s ten new-family includes,
+* `0003` — `byte_str/implace_string.hpp`'s missing `template`
+  keyword (a conformance fix g++ 14 warns about on the pristine
+  clone; the compiler builds fine either way),
+* `0004` — the OPTIONAL csr inverse-family fold (the design
+  alternative to inverse.hpp; exactly one carrier, never both).
 
-## 2. emit_plan.hpp: the shared backend policy
+`generic/README.md` documents the layout, the merge route, and the
+in-tree plumbing. The compiler imports both families through
+`src/minijz/graph_lib.hpp` — the single mjz_lib import point, no
+consumer changed. The generic headers keep their upstream-form quoted
+includes (`"csr.hpp"`, `"../graph/csr.hpp"`), so CMake and the
+header-order gate carry the clone's graph module dir on the include
+path (both clone layouts); `include_portability_test.sh` still scans
+only `src/`+`tests/` — inside `generic/` those includes are
+rule-#1-true post-merge, the -I is the in-tree stand-in.
 
-* `make_fuse_table` — the branch-fusion gate (raw use counts, last
-  def index, def counts, the single-use-single-def compare scan).
-  make_emit_plan's phase 5 AND astrun's assign_slots now call the
-  SAME function: the hand-kept mirror whose drift once let another
-  vreg clobber a fused operand's slot (fuzz seed 33) is structurally
-  impossible. The allocation profile is unchanged (three nv vectors
-  + one code vector) — the constexpr pipeline's 4 GiB budget is
-  undisturbed.
-* `mark_referenced_blocks` — the label-reference mask (fallthrough
-  elision + the constant-condition fold), identical policy in the C
-  and asm emitters, now one function.
-* `append_source_range_banner` — the lo/hi source-line banner; the
-  C/asm spellings differ only in the comment syntax, passed as the
-  (open, close) pair.
+## 2. graph/inverse.hpp — the split carrier
 
-## 3. The new support headers
+The branch's csr.hpp rework deleted the three historical inverse
+members and re-implemented them (byte behavior intact) over four
+shared cores, adding thirteen siblings. Shadowing upstream csr.hpp
+from generic/ would have been an order-dependent ODR trap, so the
+thirteen NET-NEW members (four payload cores, the square
+forward/both siblings, the universe octet) live in
+`generic/mjz_lib/graph/inverse.hpp`, verbatim from the rework; the
+three historical stay in upstream csr.hpp. `phis.hpp` gained
+`#include "inverse.hpp"` — the only content delta besides the new
+file (on the branch the universe transpose lived in the reworked
+csr.hpp).
 
-* `opt/scalar/vn_sites.hpp` — cse/gvn's verbatim glue: vn_u (the
-  NONE->none_v bridge), vn_fill_bin_site (the pure-Bin
-  classification: dst gate, nt-gated div/mod, the commutative
-  family, the operand rows), vn_rewrite_completed_map (the second
-  pass: resolve chains over every operand field, Phi args included —
-  sound because ren[v]=w implies w's def dominates every edge-use
-  of v). The passes differ only in WHICH entry kinds they admit
-  (cse: Bins; gvn: Bins + consts + complete phis).
-* `opt/interprocedural/ipa_sites.hpp` — the call-site census
-  (f, i, g over fns[0..n0)), the Const-behind-a-vreg lookup, and
-  the arity gate (argpromo accepts >=1 site, fnspec >=2 — the gate
-  is the caller's, the scan is shared).
+## 3. The param survey (commit 2)
 
-## 4. The loop family + the small twins
+Verdict first: the opt family was ALREADY param-driven by design —
+vn/mem/ssa take `dominator_tree`, inv takes the `dom_begin/dom_end`
+interval pair (licm passes An's `A.ib/A.ie` today — literally the
+user's "dominator interval param"), layout takes cfg's reachable
+mask, phis takes dominance frontiers — and the compiler's An layer
+is 100% kernel-built (`make_dominator_forest_given_dominators`,
+`calculate_dominance_frontiers_given_dominators`; zero hand-rolled
+orders, masks, or dominators anywhere in src/).
 
-* loop_shape.hpp: `innermost_headers_by_nest` (was THREE copies:
-  loop_scan's inline block, lcf_header_list, unr_header_list — the
-  pair-swap order is behavior), `loop_single_exit_target` (the
-  only-exit-departs-the-header gate), `loop_zero_trip_exit` (the
-  `br X` terminator rewrite). The unroll decomposition of ckpt 25
-  had kept these local to stay byte-identical; the dedup moved them
-  with the same guarantee.
-* lcf_eval1 moved to lcf_sim.hpp (the simulator's identical eval
-  lambda deleted); the builder's And/Or short-circuit diamonds
-  merged (only the first cbr's polarity differs; block/vreg
-  allocation order preserved exactly); emit_c's two in-file xorbase
-  copies hoisted to one definition.
+The ONE genuine inline site: rmas's
+`calculate_minimum_feedback_arc_set_reducible` computed immediate
+dominators internally (plus a preds forest) every call. It gained a
+`..._given_dominators` sibling (the family's `*_given_*` naming) that
+takes the caller's idoms; the 3-arg form builds the table inline —
+same preds scan, same upstream dom kernel — and forwards. Callers
+that already hold idoms (the compiler's An layer, any future
+loop-family consumer) skip the rebuild.
 
-## 5. What was NOT shared (the reasons on record, CONTINUE.md)
+Considered and REJECTED (per standing requirement 1, reasons on
+record in CONTINUE.md): rmas's internal `make_basic_forest(net.succs)`
+conversions (flow-kernel input format over internal data), cut's
+symmetrization forest (built from its own symmetrized edge list),
+matching's bipartite transpose (the Hopcroft-Karp working set),
+`calculate_minimum_equivalent_arc_set`'s internal SCC condensation
+(consumed immediately, no second consumer).
 
-assign_slots' liveness/interference/coloring: the kernel
-interference adds UNCONDITIONAL pairwise entry-def edges (seed
-804's fix) which would change the degree sort and thus slot ids;
-the kernel liveness would need per-instr site-table vectors inside
-the CONSTEXPR pipeline (the 4 GiB budget). The fuse gate — the
-sound half — IS shared. divmagic/reassoc's rebuild tails are
-look-alikes around different inner logic (over-abstraction).
-bc_defs/instr is the deliberate bytecode/IR mirror. sccp's uses[]
-pushes site indices, not counts.
+## 4. Verification
 
-## 6. The standing requirements (the user's directive)
+Commit 1 (localization): parity 146/146 byte-identical vs the
+pre-move baseline (rebuilt from clean HEAD first — the sandbox had
+recycled); selftest 208/208, units 6482/6482, header order 116/116 +
+umbrella, includes 527/527, kernel fuzz 3000 seeds all components 0
+fails, e2e fuzz 600, stress ALL PASS. Commit 2 (the param split):
+parity 146/146 again; fz_rmasp now SELF-DIFFERENTIALS the two forms
+every seed (the given-dominators call vs the standalone call vs the
+exact 2^V sweep — 35408 checks, 0 fails, was 23536); the rest of the
+battery green.
 
-CONTINUE.md now carries two standing rules: (1) the code-bloat
-cleanup / deduplication pass runs BEFORE every finalized commit
-(diff-scan the touched files; reuse first; proved-identical
-semantics or it stays local, difference documented); (2) code
-quality and fuzz testing for EVERY component (contract comment,
-fuzzer entry or differential window, full battery).
-
-## 7. Verification
-
-Each of the three commits: 146 parity runs byte-identical vs the
-pre-campaign baseline; differential fuzz identical modulo timing
-(wave 1: 1-600 + 20000-20500; wave 2: 1-500 + 20000-20400; wave 3:
-1-300); kernel fuzz clean; selftest 208/208, units 6476/6476,
-header order 116/116 + umbrella, includes 515/515, audit table
-identical, stress ALL PASS. Net ~-250 code lines; ~350 lines of
-duplication converted to shared single-definition code; the dup
-scan's biggest clusters are gone (39->6, 21->0, 26->6, 12->2
-definitions, 6->1).
-
-The queue after this (OPT_CHECKLIST.md): unswitch (~389), argpromo
-(~387, twins already gone), tailrec's tce_merge (~385),
-unswitch_shape (429) — rotate_impl.hpp is the template, and the
-standing dedup requirement now applies to every decomposition.
+The String clone: pristine `main`, `origin/main` at ce6ea95; the
+local branch `graph-opt-kernels` (tip 2cb6c7d) keeps the same content
+as commits for diff-based review. The queue after this
+(OPT_CHECKLIST.md) is unchanged: unswitch, argpromo, tailrec's
+tce_merge, unswitch_shape — rotate_impl.hpp the template, both
+standing requirements in force.

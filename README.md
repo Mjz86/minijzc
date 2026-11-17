@@ -1581,3 +1581,49 @@ every step.
   order 116/116 + umbrella, includes 515/515, audit table
   identical, stress ALL PASS. Net ~-250 code lines, ~350 lines of
   duplication converted to shared single-definition code.
+
+## 16. checkpoint 32: the generic localization + the param survey — DONE
+
+The user's directive: pull every mjz_lib change into a generic folder
+inside this repo, written as if it was in mjz_lib, such that the
+String repo (the vendored clone) matches upstream — all changes
+localized for the author to merge — then check every component for
+code-reuse opportunities (kernels taking the necessary things as
+params, "for example a dominator interval param", rather than
+calculating inline).
+
+* **`generic/` is the single carrier**: all 32 kernel headers moved
+  VERBATIM (md5-verified) off the String clone's `graph-opt-kernels`
+  branch; the clone reverted to PRISTINE upstream `main`; the four
+  upstream-file changes ride as patches in `generic/merge-patches/`
+  (the alllib opt hook, the algo includes, the implace_string
+  `template` conformance fix, the OPTIONAL csr family fold).
+  `generic/README.md` documents the layout, the merge route, and the
+  in-tree plumbing (graph_lib.hpp stays the single mjz_lib import
+  point; CMake and the header-order gate carry the clone's graph
+  module dir so the upstream-form quoted includes resolve).
+* **`graph/inverse.hpp` is the split carrier** for the thirteen
+  net-new inverse-family members (four payload cores + the square
+  forward/both siblings + the universe octet), verbatim from the
+  branch's csr.hpp rework; the three historical members stay in
+  upstream csr.hpp — nothing is shadowed, no ODR hazard. phis.hpp
+  gained the one `#include "inverse.hpp"` line (the only content
+  delta besides the new file).
+* **the param survey's verdict**: the opt family was ALREADY
+  param-driven by design (vn/mem/ssa take `dominator_tree`, inv
+  takes the `dom_begin/dom_end` interval pair — licm passes An's
+  `A.ib/A.ie` today, layout takes cfg's reachable mask, phis takes
+  dominance frontiers) and the An layer is 100% kernel-built. The
+  one genuine inline site — rmas's reducible FAS computing idoms
+  internally — gained the `..._given_dominators` sibling (the
+  family's `*_given_*` naming); the 3-arg form builds and forwards,
+  and fz_rmasp self-differentials the two forms every seed (35408
+  checks, 0 fails). The rejected candidates are on record in
+  CONTINUE.md (rmas's internal flow-input conversions, cut's
+  symmetrization, matching's working-set transpose, min-equivalent's
+  internal SCC condensation).
+* **the verification**: 146 parity runs byte-identical at BOTH
+  commits (vs the pre-move baseline, rebuilt from clean HEAD);
+  kernel fuzz clean (rmasp now self-differential); selftest 208/208,
+  units 6482/6482, header order 116/116 + umbrella, includes
+  527/527, e2e fuzz 600, stress ALL PASS.

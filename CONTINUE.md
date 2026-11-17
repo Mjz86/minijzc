@@ -1,12 +1,45 @@
-# CONTINUE — next steps after checkpoint 31 (the dedup campaign)
+# CONTINUE — next steps after checkpoint 32 (the generic localization)
 
-Read SUMMARY.md (same zip root) first. The main repo is 16 commits
-ahead of origin/main; mjz_lib rides branch `graph-opt-kernels` (six
-commits, diffable against main). This file is the resume manual.
+Read SUMMARY.md (same zip root) first. The main repo is 22 commits
+ahead of origin/main; the vendored String clone sits PRISTINE on
+upstream `main` (nothing under `mjz_lib/` is modified — the user's
+directive), and every mjz_lib addition this repo carries lives in
+`generic/` written as-if-in-mjz_lib (merge route: `generic/README.md`;
+the local branch `graph-opt-kernels`, tip 2cb6c7d, keeps the same
+content as commits for diff review). This file is the resume manual.
 
-## What this checkpoint shipped: the code-bloat cleanup
+## What checkpoint 32 shipped: the generic localization + the params
 
-The user's finding: "many places have the EXACT same algorithm
+1. **generic/ is the single carrier.** All 32 kernel headers moved
+   VERBATIM (md5-verified) into `generic/mjz_lib/{opt,graph}/`; the
+   clone reverted to pristine upstream `main`; the four
+   upstream-file changes ride as patches in `generic/merge-patches/`
+   (alllib hook, algo includes, the implace_string `template`
+   conformance fix, the OPTIONAL csr family fold — never both that
+   and graph/inverse.hpp). inverse.hpp itself is the split carrier
+   for the thirteen net-new inverse-family members (the three
+   historical stay in upstream csr.hpp; shadowing would be an
+   order-dependent ODR trap). graph_lib.hpp imports both families
+   (single import point); CMake + the header-order gate carry the
+   clone's graph module dir for the upstream-form quoted includes.
+2. **The param-driven survey** (the user's example: "a dominator
+   interval param"). The opt family was ALREADY param-driven (vn/
+   mem/ssa take dominator_tree; inv takes dom_begin/dom_end — licm
+   passes An's A.ib/A.ie; layout takes cfg's reachable mask; phis
+   takes DFs), and An is 100% kernel-built. The one genuine inline
+   site — rmas's reducible FAS computing idoms internally — gained
+   the `..._given_dominators` sibling; the 3-arg form builds and
+   forwards; fz_rmasp self-differentials the two forms every seed
+   (35408 checks, 0 fails).
+3. **Rejected on record**: rmas's internal make_basic_forest(net.
+   succs) conversions (flow input format over internal data), cut's
+   symmetrization forest, matching's bipartite transpose (the
+   Hopcroft-Karp working set), min-equivalent's internal SCC
+   condensation (no second consumer).
+
+## What checkpoint 31 shipped: the code-bloat cleanup
+
+The user's finding: "many places have the exact same algorithm
 implemented inline as the algorithm that's in other files." A
 mechanical scan (normalized 8-line windows across src/) confirmed
 it; three commits removed the twins with byte-identical parity at
@@ -88,7 +121,8 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
    instr.hpp); but if a SECOND compiler ever grows, they are the
    first kernels to lift. The loop-family gates
    (loop_single_exit_target et al.) are candidates for
-   mjz_lib/opt/shape.hpp once a second consumer exists.
+   generic/mjz_lib/opt/shape.hpp once a second consumer exists
+   (rmas's given_dominators form is ready for the same consumers).
 3. **The LLVM-gap backlog** (OPT_CHECKLIST section A/B): PRE/LCM,
    loop-access/dependence, SCEV unification; DSE's chains are DONE.
    Machine layer: block placement (layout kernels are the
@@ -106,11 +140,17 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
    "$line" ]; then eval "$line" || exit $?; fi; done < "$3"; fi;
    exit 0  — then chmod +x it and point build/CMakeCache.txt's
    CMAKE_COMMAND:INTERNAL at it.
+1b) CMakeLists include dirs changed while cmake is the shim? inject
+   into the baked build tree (ckpt 32 added the graph module dirs):
+   append the new -I paths to CXX_INCLUDES in
+   build/CMakeFiles/minijz.dir/flags.make AND
+   build/CMakeFiles/minijz_unit_tests.dir/flags.make, and sed the
+   matching -I token in build/CTestTestfile.cmake's cx_check lines.
 2) rebuild (touch the TUs: the shim skips cmake_depends):
    bash scripts/rebuild.sh
 3) the battery:
    ./build/minijz --selftest          # 208
-   ./build/minijz_unit_tests          # 6476
+   ./build/minijz_unit_tests          # 6482
    ./build/minijz --demo              # 206
    ./build/minijz --fuzz-kernels=30000   # all 60 components
    ./build/minijz --fuzz=800              # e2e window
@@ -119,7 +159,7 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
 
 ## The gates that protect the tree
 
-bash scripts/include_portability_test.sh    # 515/515
+bash scripts/include_portability_test.sh    # 527/527
 bash scripts/header_order_test.sh           # 116 + umbrella
 python3 scripts/regen_audit_results.py      # identical unless a new
                                            # pass fires on the audit
