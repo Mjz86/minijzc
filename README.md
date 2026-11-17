@@ -499,7 +499,10 @@ the ctest/CLI toggle names):
   (`divmagic`), CSE (`cse`, dominator-scoped), value / correlated value
   propagation + range analysis + constraint elimination (`trapelim`
   range proofs + `sccp`), load/store forwarding + redundant load /
-  store elimination (`ldelim`), mem2reg / SROA / DSE (`mem2reg`),
+  store elimination (`ldelim`), **dead-store elimination, the
+  in-window killing-store rules (`dse`: exact const-keyed slots,
+  same-value + overwrite, the trap/observation window policy)**,
+  mem2reg / SROA (`mem2reg`),
   inlining (`inline`), interprocedural constant propagation + IPSCCP
   (`constcall`), pure-call CSE (`callcse`), LICM (`licm`), loop
   unrolling (`unroll`), tail-call elimination (`tailrec` + `scctco`),
