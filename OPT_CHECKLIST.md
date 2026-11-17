@@ -49,6 +49,11 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
 - [x] opt/mem2reg.hpp — done earlier on this branch (round seven:
       the slim driver + mem2reg_impl.hpp, M2RCtx + the m2r_* phase
       functions; the queue entry above was stale)
+- [x] opt/interprocedural/scctco.hpp — scctco_member 392 lines ->
+      scctco_impl.hpp (round nine: SccCtx + the member phases, plus
+      Fn::resucc deduped); the 735-line file's other half below
+- [x] opt/interprocedural/scctco_fold.hpp — scctco_fold 362 lines ->
+      17-line driver + scctco_fold_impl.hpp (round nine, part 2)
 - [x] opt/loop/rotate.hpp — opt_rotate 405 lines -> 25-line driver +
       rotate_impl.hpp (round eight): RotCtx (the shape tables, the
       def/read classification, the commit's value maps), the gates
@@ -70,6 +75,24 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
       stress ALL PASS)
 
 ## Queue (priority = biggest first; sizes re-measured 2026-11-17)
+
+NOTE (ckpt 31, 2026-11-17): the scctco_member and scctco_fold queue
+entries are DONE (round nine, moved to the done list above). The
+dedup wave of this checkpoint also SHRANK several queue files (the
+kc/kv seedings, the bump counters, the ipa twins, the loop-family
+gates): re-measure before starting. The standing dedup requirement
+(now in CONTINUE.md) applies to every decomposition: BEFORE the
+commit, diff-scan the touched files for inline twins of code that
+already exists (scripts/../dup_scan.py pattern or the mjz_lib kernel
+inventory) and reuse FIRST.
+
+- [ ] opt/loop/unswitch.hpp — ~389 lines (468-line file, pre-dedup)
+- [ ] opt/interprocedural/argpromo.hpp — ~387 lines (pre-dedup; the
+      ipa_sites/remap wave already removed ~70 lines of twins)
+- [ ] opt/interprocedural/tailrec.hpp — tce_merge ~385 lines
+      (797-line file, also on the >700-line file list)
+- [ ] opt/loop/unswitch_shape.hpp — 429-line file (shared shape
+      matcher, check function sizes when reached)
 
 NOTE (branch generic-ssa, 2026-11-14): the SSA-construction core that
 mem2reg shares with ssa_construct was extracted into the generic
@@ -154,16 +177,6 @@ audit table regenerated identically, full battery green (selftest
 207, ctest 44, units 6385, header order 102/102, includes 431/431,
 check-format clean on clang-format 16).
 
-- [ ] opt/interprocedural/scctco.hpp — scctco_member ~392 lines
-      (735-line file, also on the >700-line file list)
-- [ ] opt/loop/unswitch.hpp — ~389 lines (468-line file)
-- [ ] opt/interprocedural/argpromo.hpp — ~387 lines (465-line file)
-- [ ] opt/interprocedural/tailrec.hpp — tce_merge ~385 lines
-      (797-line file, also on the >700-line file list)
-- [ ] opt/interprocedural/scctco_fold.hpp — ~450-line file, function
-      size to re-measure when reached
-- [ ] opt/loop/unswitch_shape.hpp — 429-line file (shared shape
-      matcher, check function sizes when reached)
 
 ## After the opt/ queue: >700-line files elsewhere
 

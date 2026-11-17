@@ -1,123 +1,119 @@
-# SUMMARY — checkpoint 30: the backend kernels lifted + DSE
+# SUMMARY — checkpoint 31: the dedup campaign (the code-bloat cleanup)
 
-Three strands, one session: the backend's analysis components became
-library kernels (regalloc's liveness/interference, emit_plan's
-RPO/trace layout, stack_alloc's closure/escape scan), the
-OPT_CHECKLIST's rotate got the decomposition treatment, and the
-LLVM-gap backlog's DSE landed as a new pass — kernel in mjz_lib,
-window policy in the compiler. The mjz_lib work now rides a TRACKED
-BRANCH (graph-opt-kernels, six commits) — the diff is reviewable
-with `git diff main..graph-opt-kernels` inside the vendored copy.
+One strand, one session, three commits: the user's finding — "many
+places have the exact same algorithm implemented inline as the
+algorithm that's in other files" — was made mechanical (a
+normalized 8-line-window scan across src/), confirmed (twin
+clusters: cse/gvn 39 windows, argpromo/fnspec 21, the emitters 26,
+the kc/kv const-table seeding in TWELVE files, the bump-lambda use
+counter in six), and eliminated with byte-identical parity at every
+step. The mjz_lib branch (graph-opt-kernels, six commits) is
+unchanged this round — the twins were COMPILER-side glue around
+kernels that already existed; the dedup made the glue shared too.
 
-## 1. opt/liveness.hpp + opt/layout.hpp + opt/escape.hpp — the backend analyses, generic
+## 1. instr.hpp: the IR knowledge hub
 
-The founding rule applied to the BACKEND's own algorithms (the
-component-extraction arc: opt_ns 18 sections, then ssa_ns, now the
-backend trio):
+The two kc/kv seeding disciplines, the clone permutation, and the
+use counter are IR knowledge, not pass policy — they moved next to
+w_bin (the ckpt-26 precedent for shared instr knowledge):
 
-* LIVENESS (`calculate_block_liveness` + `calculate_interference_rows`):
-  the backward round-robin fixpoint (live-out = the union of
-  successor live-ins; sites scanned backward def-kills-use) and the
-  interference rows (a def conflicts with everything live after it;
-  the entry defs pairwise always — fuzz seed 804's founding
-  `mov %rsi,%rbx` bug, now documented in the KERNEL). regalloc.hpp
-  materializes tables (the fuse/kc visibility reader stays) and
-  calls; the coloring and home policy are untouched.
-* LAYOUT (`calculate_reverse_postorder` + `calculate_trace_layout`):
-  the slot-order DFS RPO (loop headers precede bodies) and the trace
-  chains (smallest-score open successor, ties to the earliest slot —
-  a binary backend's false arm falls through). N-ary on purpose: a
-  3-way branch chains by the same rule. emit_plan's phases 1-3 are
-  now three calls with the pred-count score.
-* ESCAPE (`calculate_copy_closure` + `scan_position_escapes`): the
-  monotone alias fixpoint and the positional scan (safety flags per
-  operand position; missing flags are unsafe — the analysis fails
-  closed). stack_alloc's whole job is now the POSITION POLICY table
-  (which operand of which kind may see a handle), materialized once
-  for all candidates.
+* `seed_consts` — ANY Const def keys the vreg, last def wins (the
+  SSA-context rule: canon, dse, ifconv, ldelim + the vn wrappers).
+* `seed_single_def_consts` — only vregs with EXACTLY ONE def (the
+  post-destruction phi-slot freeze rule: a slot whose edge-1 def is
+  `c3 = 5` and edge-2 def is `c3 = t` must not be inlined as 5).
+  Was hand-rolled in emit_plan, stack_alloc, divmagic, reassoc,
+  lcf, mem2reg.
+* `remap_vreg_fields` + `remap_stk_arrays` — the five-field
+  permutation rewrite of the cloning passes (argpromo, fnspec,
+  deadargs). Phi's stale base-var tag and Call's fn index are
+  intentionally not remapped (the deadargs policy, documented once).
+* `bump_uses_of` + `count_operand_uses` — the textual-use counter
+  (a/b2/c2/args, NONE-guarded) that emit_x64, tailrec (twice), lcf,
+  canon, reassoc and the fusion table all hand-rolled. sccp's
+  site-INDEX variant is deliberately not this and stays local.
 
-Fuzzers `opt.liveness` (vs the gen/kill equations swept in the
-OPPOSITE order — a different algorithm, not a copy — plus a
-var-major pairwise interference enumeration with a fresh per-site
-live-after rescan), `opt.trace` (vs a RECURSIVE DFS RPO + the greedy
-replica + structural invariants), `opt.escape` (vs a BFS closure +
-a var-major scan). All three: byte-identical 146-run parity for the
-adapters, 30k seeds clean.
+## 2. emit_plan.hpp: the shared backend policy
 
-## 2. rotate decomposed (round eight)
+* `make_fuse_table` — the branch-fusion gate (raw use counts, last
+  def index, def counts, the single-use-single-def compare scan).
+  make_emit_plan's phase 5 AND astrun's assign_slots now call the
+  SAME function: the hand-kept mirror whose drift once let another
+  vreg clobber a fused operand's slot (fuzz seed 33) is structurally
+  impossible. The allocation profile is unchanged (three nv vectors
+  + one code vector) — the constexpr pipeline's 4 GiB budget is
+  undisturbed.
+* `mark_referenced_blocks` — the label-reference mask (fallthrough
+  elision + the constant-condition fold), identical policy in the C
+  and asm emitters, now one function.
+* `append_source_range_banner` — the lo/hi source-line banner; the
+  C/asm spellings differ only in the comment syntax, passed as the
+  (open, close) pair.
 
-opt_rotate 405 lines -> 25-line driver + rotate_impl.hpp: RotCtx,
-the gates (rot_shape_ok / rot_exit_ok / rot_header_phis_ok /
-rot_collect_hbody), the classification (rot_mark_def_sets,
-rot_after_region, rot_classify_reads), the value maps (rot_gmap/
-lmap/rmap/xmap, the generic rot_rw, rot_test_cbr), and the commit
-tail (rot_mint_vregs preserving the OBSERVABLE gv/lv-then-pv/xv
-allocation order; rot_emit_pre/header/latch/exit + the in-loop/F/
-verbatim arms; rot_succ_rewire). Verified byte-identical: 146-run
-parity, both committed fuzz windows (16131-16330 rotation-shaped,
-14731-14930 random-cfg) identical modulo timing, audit identical.
-OPT_CHECKLIST: rotate marked done; the stale mem2reg NEXT UP entry
-corrected (that was round seven's work, already done).
+## 3. The new support headers
 
-## 3. DSE — the in-window dead-store pass (the LLVM-gap backlog)
+* `opt/scalar/vn_sites.hpp` — cse/gvn's verbatim glue: vn_u (the
+  NONE->none_v bridge), vn_fill_bin_site (the pure-Bin
+  classification: dst gate, nt-gated div/mod, the commutative
+  family, the operand rows), vn_rewrite_completed_map (the second
+  pass: resolve chains over every operand field, Phi args included —
+  sound because ren[v]=w implies w's def dominates every edge-use
+  of v). The passes differ only in WHICH entry kinds they admit
+  (cse: Bins; gvn: Bins + consts + complete phis).
+* `opt/interprocedural/ipa_sites.hpp` — the call-site census
+  (f, i, g over fns[0..n0)), the Const-behind-a-vreg lookup, and
+  the arity gate (argpromo accepts >=1 site, fnspec >=2 — the gate
+  is the caller's, the scan is shared).
 
-`opt/scalar/dse.hpp` (tier 1, directly after ldelim — forwarded
-loads are Copies, transparent here, so the windows are as wide as
-they can get) over `opt_ns::dse_ns::calculate_dead_stores`
-(mjz_lib/opt/dse.hpp):
+## 4. The loop family + the small twins
 
-* THE GATE: a single-proven handle, a KNOWN CONST index, a known
-  const length, index in [0, L) — the slot key is EXACT and the
-  access cannot trap. Both are load-bearing: a trap reports kind AND
-  line, so a MOVED trap is an observable change.
-* THE WINDOW: Div/Mod, gate-failing accesses, Print/Input/Call/
-  Ret/Exit/Bkpt/Alloc break it; Const/Copy/plain-Bin/Phi/Len are
-  transparent.
-* THE RULES (in order, one per pair — both firing would leave the
-  slot unwritten): SAME-VALUE (a redundant re-write; the SURVIVOR
-  keeps the entry, so a chain of equal stores all dies against the
-  first) and OVERWRITE (a fresh store kills the unread remembered
-  store).
-* TWO INTEGRATION BUGS CAUGHT BEFORE COMMIT: the kernel's dead
-  ordinals are ALL-EVENT ordinals — the first draft paired them
-  through a stores-only array and dropped the WRONG instruction (the
-  --opt-diff IR dump caught it; the kernel was right, the client
-  mapping was wrong); and sum_ostats (the per-fn merge) did not know
-  the new counters. The fuzzer's differential gate also caught one
-  wrong REFERENCE formulation (same-valued stores ahead are
-  TRANSPARENT to the overwrite scan — the survivor-chain semantics)
-  before any integration: the gns.rmasp precedent holding.
+* loop_shape.hpp: `innermost_headers_by_nest` (was THREE copies:
+  loop_scan's inline block, lcf_header_list, unr_header_list — the
+  pair-swap order is behavior), `loop_single_exit_target` (the
+  only-exit-departs-the-header gate), `loop_zero_trip_exit` (the
+  `br X` terminator rewrite). The unroll decomposition of ckpt 25
+  had kept these local to stay byte-identical; the dedup moved them
+  with the same guarantee.
+* lcf_eval1 moved to lcf_sim.hpp (the simulator's identical eval
+  lambda deleted); the builder's And/Or short-circuit diamonds
+  merged (only the first cbr's polarity differs; block/vreg
+  allocation order preserved exactly); emit_c's two in-file xorbase
+  copies hoisted to one definition.
 
-Witness: `a[i]=7; print a[i]; a[0]=1; a[0]=2; print a[0]; a[1]=3;
-print a[1]; a[1]=4; a[1]=3; print a[1]` (the runtime index keeps
-mem2reg away) -> DSE 2+0, both kills the trace predicts, oracle ==
-ssa == lower == vm.
+## 5. What was NOT shared (the reasons on record, CONTINUE.md)
 
-## The branch tracking (the user's ask)
+assign_slots' liveness/interference/coloring: the kernel
+interference adds UNCONDITIONAL pairwise entry-def edges (seed
+804's fix) which would change the degree sort and thus slot ids;
+the kernel liveness would need per-instr site-table vectors inside
+the CONSTEXPR pipeline (the 4 GiB budget). The fuse gate — the
+sound half — IS shared. divmagic/reassoc's rebuild tails are
+look-alikes around different inner logic (over-abstraction).
+bc_defs/instr is the deliberate bytecode/IR mirror. sccp's uses[]
+pushes site indices, not counts.
 
-mjz_lib is its own git repo, now on branch `graph-opt-kernels`:
-six commits (the graph headers, the CSR rework, the 18 opt kernels,
-the backend trio, the dse kernel), 32 files / +7,300 lines over
-main — `git -C mjz_lib diff main..graph-opt-kernels` is the review
-surface, and the .git rides in the zip so the history ships. The
-main repo is 13 commits ahead of origin/main (not pushed, per the
-protocol).
+## 6. The standing requirements (the user's directive)
 
-## The battery (all green)
+CONTINUE.md now carries two standing rules: (1) the code-bloat
+cleanup / deduplication pass runs BEFORE every finalized commit
+(diff-scan the touched files; reuse first; proved-identical
+semantics or it stays local, difference documented); (2) code
+quality and fuzz testing for EVERY component (contract comment,
+fuzzer entry or differential window, full battery).
 
-selftest 208/208 | units 6476/6476 | demo 206/206 | kernel campaign
-60 components x 30,000 seeds (44.3M checks; opt.liveness 2.0M,
-opt.dse 581k), 0 failures | e2e differential fuzz ~5,100 seeds across
-four windows (1-1477, 10000-11200 pre-DSE; 1-1300, 20000-21200
-post-DSE), 0 mismatches | 146-run byte-identical parity for every
-refactor | fuzz windows 16131-16330 + 14731-14930 identical modulo
-timing (pre-DSE) | stress ALL PASS | bugrepros 10/10 | audit table
-regenerated IDENTICAL | header order 112 + umbrella | includes
-499/499.
+## 7. Verification
 
-## The build shortcut (unchanged from checkpoint 29)
+Each of the three commits: 146 parity runs byte-identical vs the
+pre-campaign baseline; differential fuzz identical modulo timing
+(wave 1: 1-600 + 20000-20500; wave 2: 1-500 + 20000-20400; wave 3:
+1-300); kernel fuzz clean; selftest 208/208, units 6476/6476,
+header order 116/116 + umbrella, includes 515/515, audit table
+identical, stress ALL PASS. Net ~-250 code lines; ~350 lines of
+duplication converted to shared single-definition code; the dup
+scan's biggest clusters are gone (39->6, 21->0, 26->6, 12->2
+definitions, 6->1).
 
-The cmake shim + scripts/rebuild.sh; the recipe is in CONTINUE.md.
-clang-format 16 was NOT available this session (the cosmetic gate is
-recorded in OPT_CHECKLIST's protocol; the new code follows the tree
-style by hand).
+The queue after this (OPT_CHECKLIST.md): unswitch (~389), argpromo
+(~387, twins already gone), tailrec's tce_merge (~385),
+unswitch_shape (429) — rotate_impl.hpp is the template, and the
+standing dedup requirement now applies to every decomposition.

@@ -1529,3 +1529,55 @@ refactor, zero behavior change.
   hand-shaped nested-brace blocks wholesale — recorded in
   OPT_CHECKLIST.md's protocol), header order 102/102 + umbrella
   (taildup_impl.hpp is the 102nd), includes 431/431.
+
+## 15. checkpoint 31: the dedup campaign (the code-bloat cleanup) — DONE
+
+(follows checkpoints 29-30 — the backend-kernel lift, rotate round
+eight, scctco round nine, DSE — whose ledgers live in SUMMARY.md)
+
+The user's finding, made mechanical: "many places have the exact
+same algorithm implemented inline as the algorithm that's in other
+files." A normalized 8-line-window scan across src/ found the twin
+clusters (cse/gvn 39 windows, argpromo/fnspec 21, emit_c/x64 26,
+the kc/kv seedings in TWELVE files, the bump-lambda use counter in
+six); three commits collapsed them with byte-identical parity at
+every step.
+
+* **instr.hpp is the IR knowledge hub now**: `seed_consts` +
+  `seed_single_def_consts` (the any-def/last-wins vs the
+  ndefs==1-gated disciplines — emit_plan's phi-slot freeze rule
+  documented once), `remap_vreg_fields` + `remap_stk_arrays` (the
+  clone-permutation rewrite), `bump_uses_of` +
+  `count_operand_uses` (the textual-use counter).
+* **the fusion gate lives once**: emit_plan's `make_fuse_table` is
+  called by BOTH make_emit_plan and astrun's `assign_slots` — the
+  hand-kept mirror whose drift once miscompiled (fuzz seed 33) is
+  structurally impossible now. Plus `mark_referenced_blocks` (the
+  label mask) and `append_source_range_banner`, shared by the C and
+  asm backends.
+* **new support headers**: `opt/scalar/vn_sites.hpp` (cse/gvn's
+  verbatim glue: vn_u, vn_fill_bin_site, vn_rewrite_completed_map),
+  `opt/interprocedural/ipa_sites.hpp` (the call-site census, the
+  Const-behind-a-vreg lookup, the arity gate).
+* **loop_shape.hpp** gained the lcf/unroll shared gates
+  (`innermost_headers_by_nest`, `loop_single_exit_target`,
+  `loop_zero_trip_exit`); lcf_eval1 moved to lcf_sim.hpp; the
+  builder's And/Or diamonds merged (only the first cbr's polarity
+  differs); emit_c's two in-file xorbase copies hoisted to one.
+* **the rejected dedups are on record** (CONTINUE.md): assign_slots'
+  liveness/coloring stays local (the kernel's unconditional
+  pairwise entry edges would change the degree sort; the constexpr
+  budget forbids the site tables), divmagic/reassoc's rebuild tails
+  are look-alikes around different logic (over-abstraction),
+  bc_defs/instr is the deliberate two-layer mirror, sccp's
+  site-index variant is not the counter.
+* **two STANDING REQUIREMENTS added** (CONTINUE.md): the dedup pass
+  runs before every finalized commit, and every component ships
+  with its quality contract + fuzz coverage.
+* **the verification**: 146 parity runs byte-identical at each of
+  the three commits; differential fuzz 1-600 + 20000-20500 (waves
+  1-2) and 1-500 + 20000-20400 (wave 3) identical modulo timing;
+  kernel fuzz clean; selftest 208/208, units 6476/6476, header
+  order 116/116 + umbrella, includes 515/515, audit table
+  identical, stress ALL PASS. Net ~-250 code lines, ~350 lines of
+  duplication converted to shared single-definition code.
