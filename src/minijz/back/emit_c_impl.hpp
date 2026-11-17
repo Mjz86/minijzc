@@ -67,24 +67,27 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
         if (o != NONE && o < nv)
           ++nuse[o];
     }
+  // the (v ^ INT64_MIN) unsigned-compare base matcher, shared by the
+  // elide pre-pass and the branch pretty-printer below (one definition --
+  // the ckpt-31 dedup wave; the two used-to-be copies could drift)
+  auto xorbase = [&](uint32_t o) -> uint32_t {
+    if (o == NONE || o >= nv || cdefi[o] == NONE)
+      return NONE;
+    const Instr &X = fn.code[cdefi[o]];
+    if (X.k != K::Bin || X.b != B::Xor)
+      return NONE;
+    if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
+      return NONE;
+    if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN)
+      return X.a;
+    if (P.kc[X.a] && P.kv[X.a] == INT64_MIN)
+      return X.b2;
+    return NONE;
+  };
   std::vector<char> elide(fn.code.size(), 0); // xor elided by the pretty form
   { // pre-pass: every fused Cbr whose compare matches the (v^MIN vs const)
     // unsigned pattern and whose xor operand has this compare as its ONLY
     // use -> the xor assignment is elided (the if reads v directly)
-    auto xorbase = [&](uint32_t o) -> uint32_t {
-      if (o == NONE || o >= nv || cdefi[o] == NONE)
-        return NONE;
-      const Instr &X = fn.code[cdefi[o]];
-      if (X.k != K::Bin || X.b != B::Xor)
-        return NONE;
-      if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
-        return NONE;
-      if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN)
-        return X.a;
-      if (P.kc[X.a] && P.kv[X.a] == INT64_MIN)
-        return X.b2;
-      return NONE;
-    };
     for (uint32_t b0 = 0; b0 < fn.nblocks(); ++b0)
       for (uint32_t i0 = fn.blocks[b0].begin; i0 < fn.blocks[b0].end; ++i0) {
         const Instr &C = fn.code[i0];
@@ -190,27 +193,7 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
   // ---- source-location banner: which source lines this fn came from ----
   // ("a rough idea of what happens": the emitted body below is annotated
   // with line:col comments whenever the source location CHANGES)
-  {
-    uint32_t lo = NONE, hi = 0;
-    for (const Instr &I : fn.code)
-      if (I.src != NONE) {
-        if (lo == NONE || I.src < lo)
-          lo = I.src;
-        if (I.src > hi)
-          hi = I.src;
-      }
-    if (lo != NONE && SM.ok() && lo <= SM.src.size()) {
-      char b2[96];
-      if (is_main)
-        std::snprintf(b2, sizeof b2, "  /* main: source lines %u..%u */\n",
-                      (unsigned)SM.line(lo), (unsigned)SM.line(hi));
-      else
-        std::snprintf(b2, sizeof b2, "  /* fn %s: source lines %u..%u */\n",
-                      std::string(fname).c_str(), (unsigned)SM.line(lo),
-                      (unsigned)SM.line(hi));
-      s += b2;
-    }
-  }
+  append_source_range_banner(s, fn, SM, is_main, fname, "  /* ", " */\n");
   // declarations: every slot WRITTEN by a non-dead instruction needs one
   // (written-but-unread slots still exist: e.g. a kept-for-trap Alloc whose
   // handle is never used). Read-only slots cannot exist post-SSA.
@@ -243,30 +226,8 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
                   (long long)fn.stk_arrays[k].len);
     s += buf;
   }
-  // referenced labels (so fallthrough-only blocks need no label at all)
-  std::vector<char> refd(fn.nblocks(), 0);
-  for (uint32_t b : P.order)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      const Instr &I = fn.code[i];
-      if (P.dead[i])
-        continue;
-      if (I.k == K::Br && I.t != P.next[b])
-        refd[I.t] = 1;
-      if (I.k == K::Cbr) {
-        if (P.fuse[i] == NONE && I.a < nv && P.kc[I.a]) {
-          uint32_t tgt = (P.kv[I.a] != 0) ? I.t : I.f; // constant condition
-          if (tgt != P.next[b])
-            refd[tgt] = 1;
-        } else if (I.f == P.next[b]) {
-          refd[I.t] = 1; // `if (cond) goto L_t;` false arm falls through
-        } else if (I.t == P.next[b]) {
-          refd[I.f] = 1; // `if (!(cond)) goto L_f;` true arm falls through
-        } else {
-          refd[I.t] = 1;
-          refd[I.f] = 1;
-        }
-      }
-    }
+  // referenced labels (the shared mask: fallthrough-only blocks need none)
+  const std::vector<char> refd = mark_referenced_blocks(fn, P);
   bool saw_exit = false;
   // body, in layout order: one successor falls through, goto elided.
   // A /* line:col */ comment appears whenever the source location of the
@@ -406,20 +367,6 @@ MJZ_EMIT_FN std::string emit_c_fn(const Fn &fn, uint32_t fidx, bool is_main,
           { // unsigned-compare pretty-printer: (v ^ INT64_MIN) < (K ^ MIN)
             // as SIGNED compare on the xor'd values is exactly the UNSIGNED
             // compare v < K — emit it in that readable form
-            auto xorbase = [&](uint32_t o) -> uint32_t {
-              if (o == NONE || o >= nv || cdefi[o] == NONE)
-                return NONE;
-              const Instr &X = fn.code[cdefi[o]];
-              if (X.k != K::Bin || X.b != B::Xor)
-                return NONE;
-              if (X.a == NONE || X.a >= nv || X.b2 == NONE || X.b2 >= nv)
-                return NONE;
-              if (P.kc[X.b2] && P.kv[X.b2] == INT64_MIN)
-                return X.a;
-              if (P.kc[X.a] && P.kv[X.a] == INT64_MIN)
-                return X.b2;
-              return NONE;
-            };
             auto flip = [](B o) -> B {
               switch (o) {
               case B::Lt:

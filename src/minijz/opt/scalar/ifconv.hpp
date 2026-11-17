@@ -25,13 +25,9 @@ constexpr bool opt_ifconv(Fn &fn, OptStats &os) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nv)
     return false;
-  std::vector<char> kc(nv, 0);
-  std::vector<val_t> kv(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv) {
-      kc[I.dst] = 1;
-      kv[I.dst] = I.c;
-    }
+  std::vector<char> kc{};
+  std::vector<val_t> kv{};
+  seed_consts(fn, nv, kc, kv);
   // def lookup
   std::vector<uint32_t> defi(nv, NONE), defb(nv, NONE);
   for (uint32_t b = 0; b < nb; ++b)

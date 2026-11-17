@@ -81,13 +81,9 @@ constexpr bool opt_ldelim(Fn &fn, const An &A, OptStats &os) {
     return false;
   AliasInfo AI = alias_analyze(fn);
   // known constants (index operands key by VALUE, not by vreg)
-  std::vector<char> kc(nv, 0);
-  std::vector<val_t> kv(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv) {
-      kc[I.dst] = 1;
-      kv[I.dst] = I.c;
-    }
+  std::vector<char> kc{};
+  std::vector<val_t> kv{};
+  seed_consts(fn, nv, kc, kv);
   // ---- the event stream (the wrapper's half of the kernel contract):
   // per block, in program order, which sites the dominator-scoped
   // table must kill / query / re-record, and which blocks drop the

@@ -279,17 +279,7 @@ constexpr bool m2r_sweep_dead_allocs(Fn &fn, M2RCtx &X, OptStats &os) {
 // ---- keys: the sole-def Const table ---------------------------------------
 constexpr void m2r_key_consts(Fn &fn, M2RCtx &X) {
   const uint32_t nv = X.nv;
-  std::vector<uint32_t> ndefs(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.dst != NONE && I.dst < nv)
-      ++ndefs[I.dst];
-  X.kc.assign(nv, 0);
-  X.kv.assign(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv && ndefs[I.dst] == 1) {
-      X.kc[I.dst] = 1;
-      X.kv[I.dst] = I.c;
-    }
+  seed_single_def_consts(fn, nv, X.kc, X.kv);
 }
 
 // ---- classify: liftable / dead / neither ----------------------------------

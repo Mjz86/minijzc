@@ -126,16 +126,10 @@ constexpr void lcf_count_defs_uses(Fn &fn, LcfScan &S) {
     }
 }
 
+// kc/kv under the single-def gate (instr.hpp's shared seeding; the block
+// scan it replaced iterated the same instrs in the same order)
 constexpr void lcf_mark_consts(Fn &fn, LcfScan &S) {
-  for (uint32_t b = 0; b < S.nb; ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      const Instr &I = fn.code[i];
-      if (I.k == K::Const && I.dst != NONE && I.dst < S.nv &&
-          S.ndefs[I.dst] == 1) {
-        S.kc[I.dst] = 1;
-        S.kv[I.dst] = I.c;
-      }
-    }
+  seed_single_def_consts(fn, S.nv, S.kc, S.kv);
 }
 
 constexpr void lcf_header_list(const An &A, LcfScan &S) {
@@ -766,26 +760,6 @@ constexpr bool lcf_body_chain(Fn &fn, const LcfScan &S, const LcfLoop &L,
     cur = fn.succ0(cur);
   }
   return cur == L.h;
-}
-
-constexpr bool lcf_eval1(std::vector<val_t> &val, const Instr &I) {
-  switch (I.k) {
-  case K::Const:
-    val[I.dst] = I.c;
-    return true;
-  case K::Copy:
-    val[I.dst] = val[I.a];
-    return true;
-  case K::Bin: {
-    Rv r = w_bin(I.b, val[I.a], val[I.b2]);
-    if (r.trap)
-      return false;
-    val[I.dst] = r.v;
-    return true;
-  }
-  default:
-    return false;
-  }
 }
 
 constexpr bool lcf_sim_header_pass(Fn &fn, const LcfLoop &L,

@@ -2,6 +2,7 @@
 // === astrun.hpp ========================================
 // the AST oracle interpreter (the reference semantics).
 
+#include "../back/emit_plan.hpp" // make_fuse_table (assign_slots)
 #include "../front/ast.hpp"
 #include "../ir/instr.hpp"
 
@@ -378,12 +379,14 @@ constexpr void assign_slots(Fn &fn) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nb || !nv)
     return;
-  // Branch-fusion awareness (mirrors make_emit_plan's fusion decision
-  // EXACTLY, kept local and allocation-lean: three nv-sized vectors + one
-  // code-sized vector, so the constexpr pipeline's 4 GiB evaluation budget
-  // is not disturbed by the full plan's extra vectors). A Cbr whose
-  // comparison will be folded into the branch text is read by TWO kinds of
-  // backends and both must stay sound:
+  // Branch-fusion awareness: the SHARED gate (back/emit_plan.hpp's
+  // make_fuse_table -- the ckpt-31 dedup wave replaced this file's
+  // hand-kept mirror of the plan's fusion decision with the call, so the
+  // two can never drift again; same allocation profile: three nv-sized
+  // vectors + one code-sized vector, keeping the constexpr pipeline's
+  // 4 GiB evaluation budget undisturbed). A Cbr whose comparison will be
+  // folded into the branch text is read by TWO kinds of backends and both
+  // must stay sound:
   //  * the C backend folds the compare away and reads the comparison's
   //    OPERANDS at the branch — their live ranges extend past the (dead)
   //    compare. Missing this let another vreg reuse (clobber) the operand
@@ -393,40 +396,7 @@ constexpr void assign_slots(Fn &fn) {
   //    branches on its RESULT — so I.a stays live to the branch as well.
   // Marking both (operands + result) is the conservative union; skipping
   // const-inlined operands would only shave slots, never correctness.
-  std::vector<uint32_t> raw(nv, 0), def_idx(nv, NONE), ndefs(nv, 0);
-  std::vector<uint32_t> fuse(fn.code.size(), NONE);
-  for (uint32_t i = 0; i < fn.code.size(); ++i) {
-    const Instr &I = fn.code[i];
-    if (I.a != NONE && I.a < nv)
-      raw[I.a]++;
-    if (I.b2 != NONE && I.b2 < nv)
-      raw[I.b2]++;
-    if (I.c2 != NONE && I.c2 < nv)
-      raw[I.c2]++;
-    for (uint32_t v : I.args)
-      if (v < nv)
-        raw[v]++;
-    if (I.dst != NONE && I.dst < nv) {
-      ++ndefs[I.dst];
-      def_idx[I.dst] = i;
-    }
-  }
-  for (uint32_t i = 0; i < fn.code.size(); ++i) {
-    const Instr &I = fn.code[i];
-    if (I.k != K::Cbr || I.a == NONE || I.a >= nv)
-      continue;
-    uint32_t d = def_idx[I.a];
-    // single USE is not enough post-destruction (phi slots have one use but
-    // per-edge defs); require a single DEF — same condition as the plan
-    if (d == NONE || raw[I.a] != 1 || ndefs[I.a] != 1)
-      continue;
-    const Instr &D = fn.code[d];
-    bool is_cmp =
-        D.k == K::Bin && (D.b == B::Lt || D.b == B::Le || D.b == B::Gt ||
-                          D.b == B::Ge || D.b == B::Eq || D.b == B::Ne);
-    if (is_cmp)
-      fuse[i] = d;
-  }
+  const std::vector<uint32_t> fuse = make_fuse_table(fn, nv).fuse;
   auto each_use = [&](uint32_t i, auto &&f) {
     const Instr &I = fn.code[i];
     if (I.k == K::Cbr && i < fuse.size() && fuse[i] != NONE) {

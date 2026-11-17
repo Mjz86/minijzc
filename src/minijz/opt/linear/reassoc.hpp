@@ -72,14 +72,7 @@ constexpr bool opt_reassoc(Fn &fn, OptStats &os) {
       for (uint32_t v : I.args)
         bump(v);
     }
-  for (uint32_t b = 0; b < nb; ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      const Instr &I = fn.code[i];
-      if (I.k == K::Const && I.dst != NONE && I.dst < nv && ndefs[I.dst] == 1) {
-        kc[I.dst] = 1;
-        kv[I.dst] = I.c;
-      }
-    }
+  seed_single_def_consts(fn, nv, kc, kv);
   bool changed = false;
   std::vector<Instr> nc{};
   nc.reserve(fn.code.size());

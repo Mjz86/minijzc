@@ -65,17 +65,9 @@ constexpr void analyze_stack_allocs(Fn &fn) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nv)
     return;
-  std::vector<uint32_t> ndefs(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.dst != NONE && I.dst < nv)
-      ++ndefs[I.dst];
-  std::vector<char> kc(nv, 0);
-  std::vector<val_t> kv(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv && ndefs[I.dst] == 1) {
-      kc[I.dst] = 1;
-      kv[I.dst] = I.c;
-    }
+  std::vector<char> kc{};
+  std::vector<val_t> kv{};
+  seed_single_def_consts(fn, nv, kc, kv);
   // ---- the kernel tables, materialized ONCE for every candidate -----------
   // copy_src/copy_dst: the identity-preserving moves. operands/safe: per
   // site, the read positions with the handle-position policy (1 = a member

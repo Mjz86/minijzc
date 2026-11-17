@@ -40,27 +40,23 @@
 #include "../../ir/sweep.hpp"
 #include "../analysis/an.hpp"
 #include "../opt_generic.hpp"
+#include "vn_sites.hpp"
 
 constexpr bool opt_gvn(Fn &fn, const An &A, OptStats &os) {
   if (A.n != fn.nblocks() || !fn.nblocks())
     return false;
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  // known constants: operands key by VALUE, not by vreg (cse's rule), so
-  // i*7 hits i*7 even when the 7s are different temps
-  std::vector<char> kconst(nv, 0);
-  std::vector<val_t> kval(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv) {
-      kconst[I.dst] = 1;
-      kval[I.dst] = I.c;
-    }
+  // known constants (the shared seeding): operands key by VALUE, not by
+  // vreg (cse's rule), so i*7 hits i*7 even when the 7s are different temps
+  std::vector<char> kconst{};
+  std::vector<val_t> kval{};
+  seed_consts(fn, nv, kconst, kval);
   // ---- the site tables (the wrapper's whole job): the three entry
-  // kinds, their policies (pure Bins with nt-gated div/mod; phis with
-  // BOTH incomings present -- a degenerate phi is phi-degen's business;
-  // consts that do not define a PARAMETER vreg), and the operand/pred
-  // rows. The walk, the scoped table, resolution and the taint rule
-  // are the kernel's.
-  auto U = [](uint32_t v) { return v == NONE ? opt_ns::none_v : (uintlen_t)v; };
+  // kinds, their policies (pure Bins with nt-gated div/mod -- the SHARED
+  // vn_fill_bin_site; phis with BOTH incomings present -- a degenerate
+  // phi is phi-degen's business; consts that do not define a PARAMETER
+  // vreg), and the operand/pred rows. The walk, the scoped table,
+  // resolution and the taint rule are the kernel's.
   const uint32_t n = (uint32_t)fn.code.size();
   std::vector<opt_ns::vn_site_t<V>> sinfo(n);
   std::vector<std::vector<uintlen_t>> sargs(n), spreds(n);
@@ -69,7 +65,7 @@ constexpr bool opt_gvn(Fn &fn, const An &A, OptStats &os) {
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
       sites_of_block[b].push_back(i);
       const Instr &I = fn.code[i];
-      sinfo[i].dst = U(I.dst);
+      sinfo[i].dst = vn_u(I.dst);
       if (I.dst == NONE || I.dst >= nv)
         continue;
       if (I.k == K::Const) {
@@ -86,47 +82,18 @@ constexpr bool opt_gvn(Fn &fn, const An &A, OptStats &os) {
         if (I.a == NONE || I.b2 == NONE)
           continue;
         sinfo[i].tag = opt_ns::vn_phi_v;
-        sargs[i] = {U(I.a), U(I.b2)};
-        spreds[i] = {U(I.t), U(I.f)};
+        sargs[i] = {vn_u(I.a), vn_u(I.b2)};
+        spreds[i] = {vn_u(I.t), vn_u(I.f)};
         continue;
       }
-      if (I.k != K::Bin)
-        continue;
-      if (I.b == B::Div || I.b == B::Mod)
-        if (!I.nt)
-          continue; // may trap: keep (nt: proven safe, pure)
-      sinfo[i].tag = opt_ns::vn_bin_v;
-      sinfo[i].op = (uintlen_t)I.b;
-      const bool comm = I.b == B::Add || I.b == B::Mul || I.b == B::Eq ||
-                        I.b == B::Ne || I.b == B::And || I.b == B::Or ||
-                        I.b == B::Xor || I.b == B::MulHi;
-      sinfo[i].flags = comm ? opt_ns::vn_comm_v : 0;
-      sargs[i] = {U(I.a), U(I.b2)};
+      vn_fill_bin_site(I, nv, sinfo[i], sargs[i]);
     }
   const opt_ns::vn_result_t<V> R = opt_ns::value_number<V>(
       nv, A.dom_tree, sites_of_block, sinfo, sargs, spreds, kconst, kval);
   if (!R.hits)
     return false;
-  auto resolve = [&](uint32_t v) -> uint32_t {
-    while (v != NONE && v < nv && R.ren[v] != opt_ns::none_v)
-      v = (uint32_t)R.ren[v];
-    return v;
-  };
-  // second pass: rewrite EVERY operand (Phi args included) with the
-  // COMPLETED map -- sound because ren[v] = w implies w's def dominates
-  // v's def, which dominates every (edge-)use of v
-  for (uint32_t b = 0; b < fn.nblocks(); ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      Instr &I = fn.code[i];
-      if (I.a != NONE)
-        I.a = resolve(I.a);
-      if (I.b2 != NONE)
-        I.b2 = resolve(I.b2);
-      if (I.c2 != NONE)
-        I.c2 = resolve(I.c2);
-      for (uint32_t &av : I.args)
-        av = resolve(av);
-    }
+  // second pass with the COMPLETED map (the shared rewrite)
+  vn_rewrite_completed_map(fn, nv, R);
   // sweep dropped instrs, preserving block ranges
   os.gvns += (uint32_t)R.hits;
   sweep_survivors(fn, R.keep);

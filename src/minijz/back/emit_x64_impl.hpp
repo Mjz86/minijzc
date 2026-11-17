@@ -187,27 +187,7 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
     s += "mjz_f" + std::to_string(fidx) + ":\n";
   }
   // ---- source-location banner (mirrors the C backend's) ------------------
-  {
-    uint32_t lo = NONE, hi = 0;
-    for (const Instr &I : fn.code)
-      if (I.src != NONE) {
-        if (lo == NONE || I.src < lo)
-          lo = I.src;
-        if (I.src > hi)
-          hi = I.src;
-      }
-    if (lo != NONE && SM.ok() && lo <= SM.src.size()) {
-      char b2[96];
-      if (is_main)
-        std::snprintf(b2, sizeof b2, "  # main: source lines %u..%u\n",
-                      (unsigned)SM.line(lo), (unsigned)SM.line(hi));
-      else
-        std::snprintf(b2, sizeof b2, "  # fn %s: source lines %u..%u\n",
-                      std::string(fname).c_str(), (unsigned)SM.line(lo),
-                      (unsigned)SM.line(hi));
-      s += b2;
-    }
-  }
+  append_source_range_banner(s, fn, SM, is_main, fname, "  # ", "\n");
   s += "  pushq %rbp\n  movq %rsp, %rbp\n";
   for (uint32_t c = 0; c < 5; ++c)
     if (RP.usedmask & ((uint32_t)1 << c))
@@ -244,30 +224,8 @@ MJZ_EMIT_FN std::string emit_x64_fn(const Fn &fn, uint32_t fidx, bool is_main,
   // NOTE: no slot zero-init — SSA dominance guarantees every read of a slot
   // is preceded (on its path) by the write of its def; undef phi args were
   // materialized as explicit `Const 0` copies during SSA destruction.
-  // referenced labels (fallthrough-only blocks need none)
-  std::vector<char> refd(fn.nblocks(), 0);
-  for (uint32_t b : P.order)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      const Instr &I = fn.code[i];
-      if (P.dead[i])
-        continue;
-      if (I.k == K::Br && I.t != P.next[b])
-        refd[I.t] = 1;
-      if (I.k == K::Cbr) {
-        if (P.fuse[i] == NONE && I.a < nv && P.kc[I.a]) {
-          uint32_t tgt = (P.kv[I.a] != 0) ? I.t : I.f; // constant condition
-          if (tgt != P.next[b])
-            refd[tgt] = 1;
-        } else if (I.f == P.next[b]) {
-          refd[I.t] = 1; // `jcc .Lb_t` false arm falls through
-        } else if (I.t == P.next[b]) {
-          refd[I.f] = 1; // inverted `jcc .Lb_f` true arm falls through
-        } else {
-          refd[I.t] = 1;
-          refd[I.f] = 1;
-        }
-      }
-    }
+  // referenced labels (the shared mask: fallthrough-only blocks need none)
+  const std::vector<char> refd = mark_referenced_blocks(fn, P);
   bool saw_exit = false;
   // A `# line:col` comment appears whenever the source location of the
   // emitted instructions CHANGES (one comment per source statement group;

@@ -50,6 +50,29 @@
 inline constexpr uint64_t LCF_TRIP_BUDGET = (uint64_t)1 << 21; // ~2.1M trips
 inline constexpr uint64_t LCF_SIM_BUDGET = 40000000ull;        // sim steps
 
+// the one-instruction pure evaluator, shared by the simulator (below)
+// and lcf_impl's header pass (lcf_sim_header_pass) -- the ckpt-31
+// dedup wave lifted it here when the two copies were found identical
+constexpr bool lcf_eval1(std::vector<val_t> &val, const Instr &I) {
+  switch (I.k) {
+  case K::Const:
+    val[I.dst] = I.c;
+    return true;
+  case K::Copy:
+    val[I.dst] = val[I.a];
+    return true;
+  case K::Bin: {
+    Rv r = w_bin(I.b, val[I.a], val[I.b2]);
+    if (r.trap)
+      return false;
+    val[I.dst] = r.v;
+    return true;
+  }
+  default:
+    return false;
+  }
+}
+
 // ---- lcf_sim_fold: fold one loop by exact simulation ---------------------
 // Call contract (lcf.hpp enforces the loop shape before calling):
 //   * h's cbr tested an SSA value; body is the in-loop arm
@@ -171,25 +194,7 @@ constexpr bool lcf_sim_fold(Fn &fn, OptStats &os, const LcfSimIn &In) {
     std::vector<val_t> nxt(hphis.size());
     bool trap = false, done = false;
     uint64_t steps = 0;
-    auto eval = [&](const Instr &I) -> bool {
-      switch (I.k) {
-      case K::Const:
-        val[I.dst] = I.c;
-        return true;
-      case K::Copy:
-        val[I.dst] = val[I.a];
-        return true;
-      case K::Bin: {
-        Rv r = w_bin(I.b, val[I.a], val[I.b2]);
-        if (r.trap)
-          return false;
-        val[I.dst] = r.v;
-        return true;
-      }
-      default:
-        return false;
-      }
-    };
+    auto eval = [&](const Instr &I) -> bool { return lcf_eval1(val, I); };
     for (uint64_t it = 0; it < LCF_TRIP_BUDGET && !trap && !done; ++it) {
       for (uint32_t i = fn.blocks[h].begin; i + 1 < fn.blocks[h].end; ++i) {
         if (fn.code[i].k == K::Phi)

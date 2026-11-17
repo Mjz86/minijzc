@@ -73,13 +73,9 @@ constexpr bool opt_dse(Fn &fn, const An &A, OptStats &os) {
     return false;
   const AliasInfo AI = alias_analyze(fn);
   // known constants (SSA: one def per vreg -- a Const def keys it)
-  std::vector<char> kc(nv, 0);
-  std::vector<val_t> kv(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv) {
-      kc[I.dst] = 1;
-      kv[I.dst] = I.c;
-    }
+  std::vector<char> kc{};
+  std::vector<val_t> kv{};
+  seed_consts(fn, nv, kc, kv);
   // the const allocation lengths (unknown = -1): an Alloc whose
   // length operand is a known const
   std::vector<val_t> alloc_len(AI.nallocs, -1);

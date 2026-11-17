@@ -315,3 +315,44 @@ constexpr uint32_t new_anon_vreg(Fn &fn, uint32_t base) {
   fn.version_no.push_back(0x10000 + (uint32_t)fn.version_base.size());
   return v;
 }
+
+// ---- the known-constant tables (kc/kv), seeded once, shared everywhere ----
+// TWELVE passes used to hand-roll one of the two disciplines below (the
+// dedup wave of ckpt 31 collapsed them; the sync hazard -- two copies
+// drifting apart -- is why they live next to Fn instead of in each pass):
+//   * seed_consts: ANY Const def keys the vreg, the LAST def wins. Under
+//     SSA (pre-destruction) each vreg has one def, so "any" and "last"
+//     coincide; post-destruction callers use it when only the latest
+//     Const matters (loop scans).
+//   * seed_single_def_consts: only vregs with EXACTLY ONE def total. The
+//     post-destruction phi slots hold one def per incoming edge -- a slot
+//     whose edge-1 def is `c3 = 5` and edge-2 def is `c3 = t` must NOT be
+//     inlined as the constant 5 (that freezes the other path's value and
+//     miscompiles the loop test). emit_plan's kc/kv rule; the same gate
+//     guards divmagic, reassoc, lcf's mark, stack_alloc and mem2reg.
+constexpr void seed_consts(const Fn &fn, uint32_t nv, std::vector<char> &kc,
+                           std::vector<val_t> &kv) {
+  kc.assign(nv, 0);
+  kv.assign(nv, 0);
+  for (const Instr &I : fn.code)
+    if (I.k == K::Const && I.dst != NONE && I.dst < nv) {
+      kc[I.dst] = 1;
+      kv[I.dst] = I.c;
+    }
+}
+
+constexpr void seed_single_def_consts(const Fn &fn, uint32_t nv,
+                                      std::vector<char> &kc,
+                                      std::vector<val_t> &kv) {
+  std::vector<uint32_t> ndefs(nv, 0);
+  for (const Instr &I : fn.code)
+    if (I.dst != NONE && I.dst < nv)
+      ++ndefs[I.dst];
+  kc.assign(nv, 0);
+  kv.assign(nv, 0);
+  for (const Instr &I : fn.code)
+    if (I.k == K::Const && I.dst != NONE && I.dst < nv && ndefs[I.dst] == 1) {
+      kc[I.dst] = 1;
+      kv[I.dst] = I.c;
+    }
+}

@@ -176,17 +176,9 @@ constexpr bool opt_divmagic(Fn &fn, OptStats &os) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
   if (!nv)
     return false;
-  std::vector<uint32_t> ndefs(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.dst != NONE && I.dst < nv)
-      ++ndefs[I.dst];
-  std::vector<char> kc(nv, 0);
-  std::vector<val_t> kv(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv && ndefs[I.dst] == 1) {
-      kc[I.dst] = 1;
-      kv[I.dst] = I.c;
-    }
+  std::vector<char> kc{};
+  std::vector<val_t> kv{};
+  seed_single_def_consts(fn, nv, kc, kv);
   bool changed = false;
   std::vector<Instr> nc{};
   nc.reserve(fn.code.size());

@@ -41,9 +41,13 @@
 //      (regalloc.hpp); the register audit (regaudit_impl.hpp); the slot
 //      allocator assign_slots (astrun.hpp) mirrors the fusion gate.
 
+#include "../base/srcmap.hpp"
 #include "../ir/instr.hpp"
 #include "../opt/opt_generic.hpp"
 
+#include <cstdio>
+#include <string>
+#include <string_view>
 #include <vector>
 
 struct EmitPlan {
@@ -55,6 +59,135 @@ struct EmitPlan {
   std::vector<uint32_t> fuse{};  // per instr: Cbr -> fused compare def idx
   std::vector<char> dead{};      // per instr: skip (pure & unused / inlined)
 };
+
+// ---- the branch-fusion gate, shared by make_emit_plan (phase 5) and the
+// VM's slot allocator (runtime/astrun.hpp's assign_slots) ------------------
+// BOTH consumers must agree on WHICH Cbr folds its comparison into the
+// branch text: the C backend reads the comparison's OPERANDS at the branch
+// (their live ranges extend past the dead compare), while the VM branches
+// on the RESULT -- a disagreement let another vreg reuse (clobber) a fused
+// operand's slot mid-range (fuzz seed 33). The algorithm lived inline in
+// both files until the ckpt-31 dedup wave; it lives once now. Kept
+// allocation-lean (three nv vectors + one code vector) so the constexpr
+// slot allocator's evaluation budget is not disturbed.
+struct FuseTable {
+  std::vector<uint32_t> raw{};     // per vreg: textual use count
+  std::vector<uint32_t> def_idx{}; // per vreg: LAST def index
+  std::vector<uint32_t> ndefs{};   // per vreg: def count
+  std::vector<uint32_t> fuse{};    // per instr: Cbr -> fused compare def
+};
+constexpr FuseTable make_fuse_table(const Fn &fn, uint32_t nv) {
+  FuseTable T{};
+  const uint32_t nb = fn.nblocks();
+  T.raw.assign(nv, 0);
+  T.def_idx.assign(nv, NONE);
+  T.ndefs.assign(nv, 0);
+  for (uint32_t i = 0; i < fn.code.size(); ++i)
+    if (fn.code[i].dst != NONE && fn.code[i].dst < nv)
+      ++T.ndefs[fn.code[i].dst];
+  for (uint32_t i = 0; i < fn.code.size(); ++i) {
+    const Instr &I = fn.code[i];
+    if (I.a != NONE && I.a < nv)
+      T.raw[I.a]++;
+    if (I.b2 != NONE && I.b2 < nv)
+      T.raw[I.b2]++;
+    if (I.c2 != NONE && I.c2 < nv)
+      T.raw[I.c2]++;
+    for (uint32_t v : I.args)
+      if (v < nv)
+        T.raw[v]++;
+    if (I.dst != NONE && I.dst < nv)
+      T.def_idx[I.dst] = i;
+  }
+  // branch fusion: cbr on a single-use comparison. Single USE is not
+  // enough post-destruction: a phi slot has one use (this branch) but one
+  // def per incoming edge; fusing "the" def would pick an arbitrary edge's
+  // comparison. Require a single DEF too.
+  T.fuse.assign(fn.code.size(), NONE);
+  for (uint32_t b = 0; b < nb; ++b)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+      const Instr &I = fn.code[i];
+      if (I.k != K::Cbr || I.a == NONE || I.a >= nv)
+        continue;
+      uint32_t d = T.def_idx[I.a];
+      if (d == NONE || T.raw[I.a] != 1 || T.ndefs[I.a] != 1)
+        continue;
+      const Instr &D = fn.code[d];
+      bool is_cmp =
+          D.k == K::Bin && (D.b == B::Lt || D.b == B::Le || D.b == B::Gt ||
+                            D.b == B::Ge || D.b == B::Eq || D.b == B::Ne);
+      if (is_cmp)
+        T.fuse[i] = d;
+    }
+  return T;
+}
+
+// ---- the label-reference mask, shared by both text backends ----------------
+// Which blocks need a label in the emitted text: a branch target that is
+// NOT the fallthrough neighbor (P.next). The constant-condition fold
+// (unfused Cbr on a known const picks its arm statically) and the
+// fallthrough elision are identical policy in the C and the asm emitter
+// -- emit_c_impl and emit_x64_impl hand-rolled identical copies until the
+// ckpt-31 dedup wave lifted them here.
+inline std::vector<char> mark_referenced_blocks(const Fn &fn,
+                                                const EmitPlan &P) {
+  const uint32_t nb = fn.nblocks();
+  const uint32_t nv = (uint32_t)P.kc.size();
+  std::vector<char> refd(nb, 0);
+  for (uint32_t b : P.order)
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
+      const Instr &I = fn.code[i];
+      if (P.dead[i])
+        continue;
+      if (I.k == K::Br && I.t != P.next[b])
+        refd[I.t] = 1;
+      if (I.k == K::Cbr) {
+        if (P.fuse[i] == NONE && I.a < nv && P.kc[I.a]) {
+          uint32_t tgt = (P.kv[I.a] != 0) ? I.t : I.f; // constant condition
+          if (tgt != P.next[b])
+            refd[tgt] = 1;
+        } else if (I.f == P.next[b]) {
+          refd[I.t] = 1; // the false arm falls through, label the true arm
+        } else if (I.t == P.next[b]) {
+          refd[I.f] = 1; // the true arm falls through, label the false arm
+        } else {
+          refd[I.t] = 1;
+          refd[I.f] = 1;
+        }
+      }
+    }
+  return refd;
+}
+
+// ---- the source-location banner, shared by both text backends --------------
+// "which source lines this fn came from": the lo/hi scan over I.src and the
+// one-line comment. The C and asm spellings differ ONLY in the comment
+// syntax, passed as the (open, close) pair -- the identical scan was
+// hand-rolled in both emitters until the ckpt-31 dedup wave.
+inline void append_source_range_banner(std::string &s, const Fn &fn,
+                                       const SrcMap &SM, bool is_main,
+                                       std::string_view fname, const char *open,
+                                       const char *close) {
+  uint32_t lo = NONE, hi = 0;
+  for (const Instr &I : fn.code)
+    if (I.src != NONE) {
+      if (lo == NONE || I.src < lo)
+        lo = I.src;
+      if (I.src > hi)
+        hi = I.src;
+    }
+  if (lo != NONE && SM.ok() && lo <= SM.src.size()) {
+    char b2[96];
+    if (is_main)
+      std::snprintf(b2, sizeof b2, "%smain: source lines %u..%u%s", open,
+                    (unsigned)SM.line(lo), (unsigned)SM.line(hi), close);
+    else
+      std::snprintf(b2, sizeof b2, "%sfn %s: source lines %u..%u%s", open,
+                    std::string(fname).c_str(), (unsigned)SM.line(lo),
+                    (unsigned)SM.line(hi), close);
+    s += b2;
+  }
+}
 
 inline EmitPlan make_emit_plan(const Fn &fn) {
   EmitPlan P{};
@@ -90,61 +223,10 @@ inline EmitPlan make_emit_plan(const Fn &fn) {
   // (e.g. `c3 = 5` on the entry edge, `c3 = t` on the back edge): inlining
   // the one Const def at every use would freeze the slot's other-path
   // values to that constant and miscompile the loop test.
-  P.kc.assign(nv, 0);
-  P.kv.assign(nv, 0);
-  {
-    std::vector<uint32_t> ndefs(nv, 0);
-    for (const Instr &I : fn.code)
-      if (I.dst != NONE && I.dst < nv)
-        ++ndefs[I.dst];
-    for (const Instr &I : fn.code)
-      if (I.k == K::Const && I.dst != NONE && I.dst < nv && ndefs[I.dst] == 1) {
-        P.kc[I.dst] = 1;
-        P.kv[I.dst] = I.c;
-      }
-  }
-  // raw use counts + def index (for fusion decisions); ndefs also gates
-  // fusion (see the comment at the fuse loop below)
-  std::vector<uint32_t> raw(nv, 0);
-  std::vector<uint32_t> def_idx(nv, NONE);
-  std::vector<uint32_t> ndefs(nv, 0);
-  for (uint32_t i = 0; i < fn.code.size(); ++i)
-    if (fn.code[i].dst != NONE && fn.code[i].dst < nv)
-      ++ndefs[fn.code[i].dst];
-  for (uint32_t i = 0; i < fn.code.size(); ++i) {
-    const Instr &I = fn.code[i];
-    if (I.a != NONE && I.a < nv)
-      raw[I.a]++;
-    if (I.b2 != NONE && I.b2 < nv)
-      raw[I.b2]++;
-    if (I.c2 != NONE && I.c2 < nv)
-      raw[I.c2]++;
-    for (uint32_t v : I.args)
-      if (v < nv)
-        raw[v]++;
-    if (I.dst != NONE && I.dst < nv)
-      def_idx[I.dst] = i;
-  }
-  // branch fusion: cbr on a single-use comparison
-  P.fuse.assign(fn.code.size(), NONE);
-  for (uint32_t b = 0; b < nb; ++b)
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i) {
-      const Instr &I = fn.code[i];
-      if (I.k != K::Cbr || I.a == NONE || I.a >= nv)
-        continue;
-      uint32_t d = def_idx[I.a];
-      // single USE is not enough post-destruction: a phi slot has one use
-      // (this branch) but one def per incoming edge; fusing "the" def would
-      // pick an arbitrary edge's comparison. Require a single DEF too.
-      if (d == NONE || raw[I.a] != 1 || ndefs[I.a] != 1)
-        continue;
-      const Instr &D = fn.code[d];
-      bool is_cmp =
-          D.k == K::Bin && (D.b == B::Lt || D.b == B::Le || D.b == B::Gt ||
-                            D.b == B::Ge || D.b == B::Eq || D.b == B::Ne);
-      if (is_cmp)
-        P.fuse[i] = d;
-    }
+  seed_single_def_consts(fn, nv, P.kc, P.kv);
+  // branch fusion: the shared gate (make_fuse_table below) -- astrun's
+  // slot allocator calls the SAME function, so the mirror can never drift
+  P.fuse = make_fuse_table(fn, nv).fuse;
   // textual uses (consts inlined, fused cbrs read the comparison operands)
   P.uses.assign(nv, 0);
   for (uint32_t b = 0; b < nb; ++b)

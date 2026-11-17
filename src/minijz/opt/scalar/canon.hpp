@@ -51,13 +51,9 @@
 // The pass is idempotent and strictly progress-making (no oscillation).
 constexpr bool opt_canon(Fn &fn, OptStats &os) {
   const uint32_t nv = fn.nvars + (uint32_t)fn.version_base.size();
-  std::vector<char> kc(nv, 0);
-  std::vector<val_t> kv(nv, 0);
-  for (const Instr &I : fn.code)
-    if (I.k == K::Const && I.dst != NONE && I.dst < nv) {
-      kc[I.dst] = 1;
-      kv[I.dst] = I.c;
-    }
+  std::vector<char> kc{};
+  std::vector<val_t> kv{};
+  seed_consts(fn, nv, kc, kv);
   // the orderable operand tag is the GENERIC KERNEL (opt_ns::
   // mixed_sort_key): absent -> 0, known const -> (1<<63)^value,
   // else the vreg id -- the SAME tag discipline vn keys bin
