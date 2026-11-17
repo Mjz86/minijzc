@@ -411,6 +411,8 @@ static bool set_named_pass(PassCfg &p, const std::string &n, bool on,
     p.p_splice = on;
   else if (eq("breq"))
     p.p_breq = on;
+  else if (eq("dse"))
+    p.p_dse = on;
   else if (eq("dce"))
     p.p_dce = on;
   else if (eq("mem2reg"))

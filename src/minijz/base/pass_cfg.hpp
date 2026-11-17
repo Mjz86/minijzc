@@ -56,6 +56,7 @@ struct PassCfg {
   // tier 1
   bool p_mem2reg{true}, p_trapelim{true}, p_licm{true}, p_divmagic{true},
       p_reassoc{true}, p_ldelim{true}, p_jthread{true};
+  bool p_dse{true}; // tier 1: dead stores (the in-window kill rules)
   // tier 2
   bool p_unroll{true}, p_lcf{true}, p_constcall{true}, p_tailrec{true},
       p_cdfold{true}, p_ifconv{true}, p_callcse{true};
@@ -95,6 +96,7 @@ struct PassCfg {
         p_sccp = p_gvn = p_breq = t0;
     p_mem2reg = p_trapelim = p_licm = p_divmagic = p_reassoc = p_ldelim =
         p_jthread = t1;
+    p_dse = t1;
     p_unroll = p_lcf = p_constcall = p_tailrec = p_cdfold = p_ifconv =
         p_callcse = p_deadargs = p_fnspec = p_icf = p_argpromo = t2;
     p_scctco = t2;
@@ -111,14 +113,14 @@ struct PassCfg {
 // (ported from the Branchedmain monolith: fuzz random pass configs need a
 // numeric apply + a description; the CLI keeps its string-based
 // set_named_pass, which covers the same set plus 'inline'.)
-inline constexpr uint32_t PASS_TOGGLE_COUNT = 34;
+inline constexpr uint32_t PASS_TOGGLE_COUNT = 35;
 inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
     "fold",   "copyprop", "canon",     "cse",      "unreach",  "splice",
     "dce",    "mem2reg",  "trapelim",  "licm",     "divmagic", "reassoc",
     "unroll", "lcf",      "constcall", "scctco",   "tailrec",  "cdfold",
     "ifconv", "inline",   "sccp",      "ldelim",   "callcse",  "deadargs",
     "fnspec", "icf",      "jthread",   "argpromo", "gvn",      "unswitch",
-    "lsimp",  "taildup",  "rotate",   "breq"};
+    "lsimp",  "taildup",  "rotate",   "breq",     "dse"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
   case 0:
@@ -223,6 +225,9 @@ constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   case 33:
     p.p_breq = on;
     return true;
+  case 34:
+    p.p_dse = on;
+    return true;
   default:
     return false;
   }
@@ -240,7 +245,7 @@ static std::string describe_cfg(const PassCfg &p) {
       p.p_scctco,   p.p_tailrec,  p.p_cdfold,   p.p_ifconv,   p.do_inline,
       p.p_sccp,     p.p_ldelim,   p.p_callcse,  p.p_deadargs, p.p_fnspec,
       p.p_icf,      p.p_jthread,  p.p_argpromo, p.p_gvn,      p.p_unswitch,
-      p.p_lsimp,    p.p_taildup,  p.p_rotate,   p.p_breq};
+      p.p_lsimp,    p.p_taildup,  p.p_rotate,   p.p_breq,     p.p_dse};
   for (uint32_t i = 0; i < PASS_TOGGLE_COUNT; ++i)
     if (!states[i]) {
       if (!off.empty())
@@ -313,4 +318,6 @@ struct OptStats {
   uint32_t lsimps{};          // lsimp: trivial loop-carried phis dissolved
   uint32_t taildups{};        // taildup: 2-pred tails duplicated into arms
   uint32_t rotations{};       // rotate: test-first loops rotated to test-last
+  uint32_t dse_overwrites{};  // dse: stores killed by a later same-slot store
+  uint32_t dse_sames{};       // dse: stores redundant by the same-value rule
 };

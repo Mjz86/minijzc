@@ -906,6 +906,35 @@ different handle positions. The fuzzer (`opt.escape`) plays the
 closure against a BFS over the explicit copy graph and the scan
 against a var-major enumeration.
 
+
+### 3.21 dse_ns — dead stores, the in-window kill rules (`calculate_dead_stores`)
+**Papers.** Dead-store elimination as a killing-store analysis: Gary
+A. Kildall, *A Unified Approach to Global Program Optimization*, POPL
+1973 (the dataflow frame); the local killing-store window is the
+LLVM `DSE`/`MemorySSA` tradition (the "overwrite" and "same-value"
+rules), and the window discipline (no moved traps, no moved
+observations between the store and its killer) follows the trap-text
+contract: a trap reports kind AND source line, so deleting a store
+whose trap could have fired before a later trap changes the output.
+
+**What was added.** One row of events per block (store/load/break),
+the kill table in the library, the window policy in the client:
+a store takes part only through a single-proven handle with a
+constant in-bounds index (the slot key is then EXACT and the access
+cannot trap); anything that may trap (a division, an access that
+failed the gate), may observe (print/input/call/ret/exit/bkpt/
+alloc), or may write an inexact slot (an obscure or runtime-index
+store) breaks the window and clears the table; consts, copies,
+plain arithmetic and lengths are transparent. The two rules, checked
+in order so a pair fires exactly one: SAME-VALUE (a store of the
+value the slot provably still holds is redundant — the survivor
+keeps the entry, so a chain of equal stores all dies against the
+first) and OVERWRITE (a fresh store to a slot nobody read since
+kills the remembered store). The fuzzer (`opt.dse`) plays the table
+against a spec-coded predecessor/successor scan where same-valued
+stores ahead are transparent — the survivor-chain semantics stated
+inside-out — plus the structural invariants (each store killed at
+most once, every dead site is a store event).
 ---
 
 ## 4. Pass-side algorithms that are policy or rewrite rules
@@ -1021,3 +1050,4 @@ end to end.
 | 40 | Fisher, *Trace Scheduling: A Technique for Global Microcode Compaction*, IEEE TC 1981 | layout_ns (trace chains) |
 | 41 | Choi, Burke & Carini, *Efficient Escape Analysis for Stack Allocation*, POPL 1993 | escape_ns (stack arrays) |
 | 42 | Briggs, Cooper & Torczon, *Improvements to Graph Coloring Register Allocation*, TOPLAS 1994; Hack, *Register Allocation for Programs in SSA Form*, CC 2007 | liveness_ns (interference rows) |
+| 43 | Kildall, *A Unified Approach to Global Program Optimization*, POPL 1973; the LLVM DSE/MemorySSA practice | dse_ns (dead stores) |

@@ -3086,6 +3086,124 @@ static void fz_escape(std::mt19937_64 &rng, KzRec &R) {
 }
 
 // ---------------------------------------------------------------------------
+// 34. opt.dse: the in-window kill table vs a spec-coded predecessor/
+//     successor scan (same-value from the last store behind, overwrite
+//     from the first store ahead, both break- and load-guarded), plus
+//     the structural invariants (dead sites are stores, unique, once)
+// ---------------------------------------------------------------------------
+static void fz_dse(std::mt19937_64 &rng, KzRec &R) {
+  using opt_ns::dse_break_v;
+  using opt_ns::dse_event_t;
+  using opt_ns::dse_load_v;
+  using opt_ns::dse_overwrite_v;
+  using opt_ns::dse_same_v;
+  using opt_ns::dse_store_v;
+  const ulen nblocks = 1 + kz_pick(rng, 4);
+  std::vector<std::vector<dse_event_t>> evs(nblocks);
+  std::vector<ulen> store_at{}; // store-event ordinals, emission order
+  ulen ord = 0;
+  for (ulen b = 0; b < nblocks; ++b) {
+    const ulen n = kz_pick(rng, 13);
+    for (ulen j = 0; j < n; ++j) {
+      dse_event_t e{};
+      const int roll = int(kz_pick(rng, 100));
+      if (roll < 50) {
+        e.kind = dse_store_v;
+        e.group = kz_pick(rng, 2); // tiny spaces: collisions abound
+        e.key = kz_pick(rng, 3);
+        e.val = kz_pick(rng, 3);
+        store_at.push_back(ord);
+      } else if (roll < 75) {
+        e.kind = dse_load_v;
+        e.group = kz_pick(rng, 2);
+        e.key = kz_pick(rng, 3);
+      } else {
+        e.kind = dse_break_v;
+      }
+      evs[b].push_back(e);
+      ++ord;
+    }
+  }
+  const auto dead = opt_ns::calculate_dead_stores<V>(evs);
+  // ---- the reference: the spec, coded as per-store scans ---------------
+  // same-value: the LAST store to the key before E (no break between)
+  // stored E's value. overwrite: E is not same-value-dead, and the FIRST
+  // store to the key after E (no break between) stores a DIFFERENT value
+  // with no load of the key in between.
+  std::vector<char> want_same(ord, 0), want_over(ord, 0);
+  {
+    ulen o = 0;
+    for (const auto &row : evs) {
+      for (ulen j = 0; j < row.size(); ++j, ++o) {
+        if (row[j].kind != dse_store_v)
+          continue;
+        // the last same-key store behind, break-guarded
+        bool have_p = false;
+        opt_ns::dse_event_t p{};
+        for (ulen k = j; k-- > 0;) {
+          if (row[k].kind == dse_break_v)
+            break; // the window died: no predecessor
+          if (row[k].kind == dse_store_v && row[k].group == row[j].group &&
+              row[k].key == row[j].key) {
+            have_p = true;
+            p = row[k];
+            break;
+          }
+        }
+        if (have_p && p.val == row[j].val) {
+          want_same[o] = 1;
+          continue;
+        }
+        // the first LIVE-relevant store ahead, break- and load-guarded:
+        // a same-valued same-key store is same-value-dead itself and
+        // keeps E's entry alive (the survivor's chain), so it is
+        // TRANSPARENT here -- the scan SKIPS it; a different-valued
+        // one kills E unread; a load of the key observes E -- stop
+        for (ulen k = j + 1; k < row.size(); ++k) {
+          if (row[k].kind == dse_break_v)
+            break;
+          if (row[k].kind == dse_load_v && row[k].group == row[j].group &&
+              row[k].key == row[j].key)
+            break; // the slot was observed
+          if (row[k].kind == dse_store_v && row[k].group == row[j].group &&
+              row[k].key == row[j].key) {
+            if (row[k].val != row[j].val) {
+              want_over[o] = 1;
+              break; // the killer found
+            }
+            // same value: transparent -- keep scanning past it
+          }
+        }
+      }
+    }
+  }
+  // ---- compare: every dead report matches the spec, nothing missed -----
+  std::vector<char> got(ord, 0);
+  ulen kover = 0, ksame = 0;
+  for (const auto &d : dead) {
+    R.ok(d.site < ord, "dse: the dead site is an event ordinal");
+    if (d.site >= ord)
+      continue;
+    R.ok(!got[d.site], "dse: every store is killed at most once");
+    got[d.site] = 1;
+    if (d.rule == dse_overwrite_v) {
+      ++kover;
+      R.ok(!!want_over[d.site], "dse: the overwrite rule matches the spec");
+    } else {
+      ++ksame;
+      R.ok(!!want_same[d.site], "dse: the same-value rule matches the spec");
+    }
+  }
+  for (ulen o = 0; o < ord; ++o) {
+    R.ok(!!got[o] == (!!want_same[o] || !!want_over[o]),
+         "dse: the kill table finds every spec-dead store");
+    if (got[o])
+      R.ok(std::find(store_at.begin(), store_at.end(), o) != store_at.end(),
+           "dse: a dead site is a store event");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // the driver: component selection, seeds, workers, the report
 // ---------------------------------------------------------------------------
 // the graph library's component bodies (generators, references, the
@@ -3099,7 +3217,8 @@ static const KzFn KZ_FNS[] = {
     fz_split,     fz_reach, fz_splice, fz_inv,     fz_ren,     fz_trivphi,
     fz_shape,     fz_exits, fz_route,  fz_needs,   fz_alias,   fz_mem,
     fz_iv,        fz_ai,    fz_key,    fz_leak,    fz_ipa,     fz_equi,
-    fz_liveness,  fz_trace, fz_escape, fz_invfam,  fz_scc,     fz_seq,
+    fz_liveness,  fz_trace, fz_escape, fz_dse,     fz_invfam,
+    fz_scc,       fz_seq,
     fz_dsu,       fz_search, fz_dij,  fz_flow,     fz_stcut,   fz_mcf,
     fz_gcut,      fz_dgcut, fz_maxcut, fz_gh,      fz_mst,     fz_match,
     fz_blossom,   fz_bic,   fz_kcore,  fz_euler,    fz_tr,      fz_rmas,

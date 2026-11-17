@@ -422,7 +422,7 @@ void run_demos() {
           "cse %u | canon %u+%u | brs %u | cbr== %u | dead blocks %u | "
           "splices %u | phi-degen %u | dce %u | hoisted %u | INLINED %u | "
           "UNROLLED %u | REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | "
-          "NOTCOMB %u | TRAP-KILL %u | MEM2REG %u | DSE %u | CONSTCALL %u | "
+          "NOTCOMB %u | TRAP-KILL %u | MEM2REG %u+%u | DSE %u+%u | CONSTCALL %u | "
           "DEADALLOC %u | SCC-TCO %u(+%u) | TAILREC %u(+%u) | CDFOLD %u | "
           "IFCONV %u\n"
           "  destroy: edges split %u | copies %u | self %u | cycles %u | "
@@ -438,7 +438,8 @@ void run_demos() {
           (unsigned)os.lcf_sims, (unsigned)os.lcf_gensims, (unsigned)os.lcf_rt,
           (unsigned)os.divmagics, (unsigned)os.notcombs,
           (unsigned)os.traps_killed, (unsigned)os.mem2reg_lifts,
-          (unsigned)os.mem2reg_dses, (unsigned)os.constcalls,
+          (unsigned)os.mem2reg_dses, (unsigned)os.dse_overwrites,
+          (unsigned)os.dse_sames, (unsigned)os.constcalls,
           (unsigned)os.deadallocs, (unsigned)os.scctco,
           (unsigned)os.scctco_folds, (unsigned)os.tces, (unsigned)os.tce_merges,
           (unsigned)os.cdfolds, (unsigned)os.ifconvs, (unsigned)de_c,

@@ -123,6 +123,8 @@ constexpr OptStats sum_ostats(const Program &P) {
     t.lsimps += U.ostats.lsimps;
     t.taildups += U.ostats.taildups;
     t.rotations += U.ostats.rotations;
+    t.dse_overwrites += U.ostats.dse_overwrites;
+    t.dse_sames += U.ostats.dse_sames;
     if (U.ostats.iters > t.iters)
       t.iters = U.ostats.iters;
   }

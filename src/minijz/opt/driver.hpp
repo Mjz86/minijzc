@@ -16,7 +16,7 @@
 //       tier 0 (all levels): local simplification to ITS fixpoint
 //         -- sccp, fold, copyprop, canon, cse, gvn, unreach,
 //            splice, dce (each round; normalize_phis between).
-//       tier 1 (level >= 2): mem2reg, ldelim, taildup,
+//       tier 1 (level >= 2): mem2reg, ldelim, dse, taildup,
 //         trapelim+jthread (ONE shared range analysis per call --
 //         the cost note below), licm, lsimp, divmagic, reassoc,
 //         ifconv; a tier-0 round runs after each tier-1 round.
@@ -64,6 +64,7 @@
 #include "scalar/gvn.hpp"
 #include "scalar/ifconv.hpp"
 #include "scalar/jthread.hpp"
+#include "scalar/dse.hpp"
 #include "scalar/ldelim.hpp"
 #include "scalar/sccp.hpp"
 #include "scalar/splice.hpp"
@@ -200,6 +201,12 @@ constexpr bool optimize(Fn &fn, OptStats &os, An &final_an, PassCfg cfg) {
         dbg_pass(cfg, fn, "ldelim", c);
         ch |= c;
         normalize_phis(fn);
+      }
+      if (cfg.p_dse) {
+        An A = analyze(fn);
+        c = opt_dse(fn, A, os); // in-window dead stores
+        dbg_pass(cfg, fn, "dse", c);
+        ch |= c;
       }
       if (cfg.p_taildup) {
         An A = analyze(fn);

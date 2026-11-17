@@ -83,6 +83,12 @@
 //   * opt/escape.hpp   -- the copy alias closure + the positional
 //                         escape scan (stack_alloc's non-escaping
 //                         array test, any handle-position policy)
+//   * opt/dse.hpp      -- the in-window dead-store kill table: the
+//                         same-value and overwrite rules over exact
+//                         (group, key) slots, with the client's
+//                         window policy (what breaks it: anything
+//                         that may trap, observe, or write inexact)
+//                         as the soundness core
 //
 // THE PROGRAM MODEL (identical to ssa_ns, one paragraph each):
 //   * blocks  0..n_blocks-1; CFG as slot rows (succs_of_block, the

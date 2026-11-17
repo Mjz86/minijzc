@@ -49,7 +49,7 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         "canon %u+%u | brs %u | cbr== %u | cbr~ %u | dead-blk %u | splice %u | "
         "phi-degen %u | dce %u | hoist %u | INLINED %u | UNROLLED %u | "
         "REASSOC %u(-%u) | LCF %u+%u+g%u|rt%u | DIVMAGIC %u | NOTCOMB %u | "
-        "TRAP-KILL %u | MEM2REG %u | DSE %u | SCC-TCO %u(+%u) | "
+        "TRAP-KILL %u | MEM2REG %u+%u | DSE %u+%u | SCC-TCO %u(+%u) | "
         "SCCP %u(+%ubr) | LD-FWD %u | LD-CSE %u | RANGE-CMP %u | "
         "CMP-FACT %u | CALL-CSE %u | DEAD-ARGS %u | FNSPEC %u | ICF %u | "
         "JT %u | ARG-PROMO %u | GVN %u | UNSWITCH %u | LSIMP %u | "
@@ -67,7 +67,8 @@ RunOut compile_report(Program &P, const Cli &C, const std::string &src,
         (unsigned)os.lcf_loops, (unsigned)os.lcf_sims, (unsigned)os.lcf_gensims,
         (unsigned)os.lcf_rt, (unsigned)os.divmagics, (unsigned)os.notcombs,
         (unsigned)os.traps_killed, (unsigned)os.mem2reg_lifts,
-        (unsigned)os.mem2reg_dses, (unsigned)os.scctco,
+        (unsigned)os.mem2reg_dses, (unsigned)os.dse_overwrites,
+        (unsigned)os.dse_sames, (unsigned)os.scctco,
         (unsigned)os.scctco_folds, (unsigned)os.sccp_consts,
         (unsigned)os.sccp_brs, (unsigned)os.ld_fwds, (unsigned)os.ld_cses,
         (unsigned)os.rangecmps, (unsigned)os.cmpfacts, (unsigned)os.callcses,
