@@ -1,81 +1,83 @@
-# SUMMARY — checkpoints 33 + 34: dedup round two + unswitch decomposed
+# SUMMARY — checkpoint 35: tce_merge decomposed (round eleven)
 
-Two commits, one session, both under the user's standing directives:
-keep deduplicating every round (recorded in CONTINUE.md as the
-per-round protocol), and keep working the OPT_CHECKLIST queue.
+One commit this session, under the user's standing directives: the
+per-round dedup pass (CONTINUE.md protocol), the OPT_CHECKLIST queue,
+and the new one — BOTH .git directories ride in the zip from now on.
 
-## 1. The dedup campaign, round two (commit 1 — "dedup:")
+## 1. tce_merge decomposed (tailrec.hpp 745 -> 365 lines)
 
-The window-8/10/12 twin scan re-run after ckpt 31/32; ten waves, all
-proved identical before sharing, byte-identical parity at every step:
+The queue's next monolith after unswitch: `tce_merge`, 357 lines,
+got the round-ten treatment — a 35-line driver stating the phase
+list plus `tce_merge_impl.hpp`, the support layer:
 
-* **`for_each_operand` + `rewrite_operands`** (ir/instr.hpp): the
-  fixed a/b2/c2/args operand traversal, defined once. Eleven
-  hand-rolled mark/chk/one/rw enumerations collapsed across
-  rotate_impl, unswitch (x2), lcf_impl, lcf_rt, lcf_sim, regalloc,
-  astrun, vn_sites' completed-map rewrite, and bump_uses_of's own
-  body. reassoc's bump copy (a ckpt-31 miss) and jthread's use census
-  became plain `bump_uses_of` calls.
-* **`vn_run`** (opt/scalar/vn_sites.hpp): the cse/gvn driver — both
-  passes were verbatim twins outside their site-fill policy and stats
-  counter. cse is now a one-line policy; gvn states its three entry
-  kinds (Bins, non-param consts, complete phis).
-* **`remap_vreg_fields` adoption**: callgraph's and tailrec's inline
-  five-field permutation copies joined the shared primitive (their
-  mapv maps NONE to NONE, so the shared form's guards are vacuous —
-  proved and documented in instr.hpp).
-* **`any_fn_in_closure`** (opt/interprocedural/constcall.hpp): the
-  call-graph closure worklist; closure_has_depth and
-  fn_pure_closure are predicate one-liners over it.
-* **The in-file twins**: vm_step's eleven trap-stop copies -> one
-  `trap_out` lambda; astrun's And/Or mirror arms -> one arm with the
-  polarity flag; emit_c's Load/Store bounds-check emission ->
-  `emit_arr_bounds`; diag's line scan -> `line_of`; parser's if/while
-  `'( expr )'` sequence -> `paren_expr`.
-* **Rejected on record** (CONTINUE.md): intervals' census (deliberately
-  excludes Phi edge args), cmp_txt vs bname (emission subset with a
-  load-bearing default vs the full diagnostic table), deadargs/icf's
-  Call-walk openings, the seed_consts decl prologue.
+* **The shared tce vocabulary** moved with the machinery: the
+  member/site caps, `is_tail_call`, and the budget-init /
+  site-check / trap emitters (tce_self includes the impl header and
+  keeps speaking them).
+* **`TmCtx`**, the per-merge context: k/M/ks, Fm under
+  construction, the sites, the member vmaps, the block layout
+  (bmap_base, the latch chain Mb, T, latch), and the pre-created
+  vregs (selHv/aHv/bHv, siteSEL/siteBL/siteEQ, Mp/Mbv).
+* **The six phases, in exactly the monolith's order** (the vreg
+  allocation order is observable — the audit table keys on vreg
+  ids): `tm_collect_sites` (the gates + the intra-SCC tail-site
+  census; a non-tail intra edge bails — mixed SCCs stay recursive),
+  `tm_alloc` (Fm's shell, the block layout, the pre-creation in the
+  monolith's nesting: selHv/aHv/bHv before the member vmaps,
+  siteBL/siteEQ site-major, Mp/Mbv latch-major), `tm_emit_header`
+  (P0, the H phis, the sel dispatch chain with bug #2's false-arm
+  fix), `tm_emit_members` (the bodies through the vmap via
+  `remap_vreg_fields`; a member's tail Ret becomes
+  [sel'-const; arg pads; budget check; cbr T : chain-next]),
+  `tm_emit_latches` (the DESCENDING-j latch chain — ids from the
+  layout pass, positions from emission, decoupled by design; the
+  trap; Fm's commit), `tm_rewrite_callers` (the sel-const + pad
+  splice before every external call).
 
-Net -60 lines; ~150 lines of duplication converted to single
-definitions.
+**The UsCtx lesson applied proactively**: TmCtx's id fields default
+to NONE exactly like the monolith's locals did (`bInitV = NONE`,
+the NONE-filled vectors) — documented in the struct's contract.
+**No landmine fired**: parity held on the first try, both fuzz
+windows included. The two preserved asymmetries on the impl
+header's landmine ledger: siteSEL is NOT pre-created (allocated at
+the member's Ret emission; the latch phis read it after every
+member is emitted), and site args are PADDED in place during member
+emission so the latch chain can index [sel', a_0..a_{M-1}]
+uniformly.
 
-## 2. Unswitch decomposed (commit 2 — round ten of the continuation)
+## 2. The round's dedup pass — the scan is at its floor
 
-`opt_unswitch` 381 lines -> a 35-line driver + `unswitch_impl.hpp`:
-`UsCtx` (the per-loop context), `us_shape_ok` (the trivial/compound
-pick + the shared gates), `us_exits_ok`, `us_false_region`,
-`us_outside_uses_ok` (the outside-use safety scan), and the commit
-tail (`us_guard_blocks`, `us_emit_guards`, `us_merge_phis`,
-`us_rewire`). The bif path and the shared shape/clone machinery stay
-in unswitch_bif*.hpp / unswitch_shape.hpp.
+Window 8/10/12 over src/ (the tool: /home/z/my-project/scripts/
+dup_scan.py, NOT in the repo): every remaining hit is an on-record
+rejection or a shared-helper call site. Two hits triaged and
+rejected this round on the ckpt-33 seed-decl-prologue precedent
+(the seed CALL is already the shared primitive; the decl/guard
+lines around it are the call cost):
 
-**The round's lesson (the landmine)**: the first draft zero-initialized
-UsCtx's guard-block ids; the monolith initialized them to NONE per
-header. The `&&` compound shape never allocates t1, so
-`if (U.t1 != NONE)` fell through and emitted the `||`-only
-`t1: br H'` into BLOCK 0 — seed 20029's `-O3 --disable=mem2reg` build
-then looped forever (timeout, not wrong output). The 146-run parity
-did NOT catch it (the audit programs never exercise compound-&&); the
-committed differential fuzz window 20000-20300 caught it on the first
-run. Fix: NONE-default every id field (documented in UsCtx's
-contract). Rules recorded in CONTINUE.md: a context struct replacing
-function locals must copy the locals' INITIALIZERS exactly, and the
-wide fuzz windows are part of every decomposition's gate.
+* argpromo/fnspec's 8-line driver prologue (the arity gate +
+  `ipa_collect_call_sites` call — the shared helper's call site,
+  both passes).
+* divmagic/ifconv's nb/nv guard + kc/kv seeding prologue
+  (`seed_consts`' out-param call cost; half the sites seed into
+  context members a pair-returning helper cannot serve).
 
-## 3. Verification (both commits)
+The moved tce_merge code performs no hand-rolled enumerations:
+`count_operand_uses`, `remap_vreg_fields`, `is_tail_call`, and the
+tce_emit_* emitters are all it uses. Post-split scan output: byte
+for byte identical to pre-split — no new windows.
 
-Dedup commit: parity 146/146 byte-identical, fuzz windows 1-300 +
-20000-20300 identical modulo timing, selftest 208/208, units
-6482/6482, header order 116/116 + umbrella, includes 529/529, stress
-ALL PASS. Unswitch commit: parity 146/146 again, both fuzz windows
-again, selftest 208, units 6482, header order 117/117 + umbrella (the
-new impl header), includes 535/535, audit table regenerated
-identically, kernel fuzz 3000 all components 0 fails, e2e fuzz 600
-clean, stress ALL PASS.
+## 3. Verification
 
-The String clone: pristine `main`, `origin/main` at ce6ea95; the local
-branch `graph-opt-kernels` (tip 2cb6c7d) unchanged. The queue after
-this (OPT_CHECKLIST.md): tailrec's tce_merge (~370), argpromo (~408),
-unswitch_shape (433) — the per-round dedup protocol and both standing
-requirements in force.
+Parity 146/146 byte-identical, fuzz windows 1-300 + 20000-20300
+identical modulo timing, selftest 208/208, units 6482/6482, header
+order 118/118 + umbrella (the new impl header), includes 538/538,
+audit table regenerated identically, kernel fuzz 30000 all 60
+components 0 fails, e2e fuzz 800 clean, stress ALL PASS, bugrepros
+10/10.
+
+The String clone: pristine `main`, `origin/main` at ce6ea95; the
+local branch `graph-opt-kernels` (tip 2cb6c7d) unchanged. The
+queue after this (OPT_CHECKLIST.md): argpromo (~415), unswitch_shape
+(433) — the per-round dedup protocol and both standing requirements
+in force. The zip protocol change: BOTH .git dirs (the main repo's
+and mjz_lib's) now ride in the archive, never excluded.

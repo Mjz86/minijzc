@@ -99,6 +99,29 @@ lcf_impl.hpp (ckpt 24), unroll_impl.hpp (ckpt 25).
       535, kernel fuzz 3000 all components 0 fails, e2e fuzz 600,
       stress ALL PASS)
 
+- [x] opt/interprocedural/tailrec.hpp — tce_merge 357 lines -> 35-line
+      driver + tce_merge_impl.hpp (round eleven, ckpt 35): the support
+      layer carries the shared tce vocabulary (the caps, is_tail_call,
+      the budget-init / site-check / trap emitters), TceSite, TmCtx
+      (the per-merge context; id fields default NONE per the UsCtx
+      lesson), and the six phases in the monolith's exact order --
+      tm_collect_sites (the member/arity/site-count gates + the
+      intra-SCC tail-site census; a non-tail intra edge bails),
+      tm_alloc (Fm's shell, the block layout, the vreg pre-creation
+      in the observable allocation order), tm_emit_header (P0 + H +
+      the sel dispatch chain), tm_emit_members (the member bodies
+      through the vmap + the site tail-Ret rewrite with the arg
+      zero-padding), tm_emit_latches (the DESCENDING-j latch chain +
+      the trap + Fm's commit), tm_rewrite_callers (the sel-const +
+      pads splice before every external call). tailrec.hpp: 745 ->
+      365 lines. The siteSEL not-pre-created asymmetry and the
+      pad-in-place protocol are on the impl header's landmine ledger.
+      (verified: 146-run parity byte-identical, fuzz windows 1-300
+      + 20000-20300 identical modulo timing, audit table identical,
+      selftest 208, units 6482, headers 118 + umbrella, includes
+      538, kernel fuzz 30000 all 60 components 0 fails, e2e fuzz
+      800, stress ALL PASS, bugrepros 10/10)
+
 ## Queue (priority = biggest first; sizes re-measured 2026-11-18)
 
 NOTE (ckpt 31, 2026-11-17): the scctco_member and scctco_fold queue
@@ -112,10 +135,7 @@ files for inline twins of code that already exists
 (scripts/../dup_scan.py pattern or the mjz_lib kernel inventory) and
 reuse FIRST.
 
-- [ ] opt/interprocedural/tailrec.hpp — tce_merge ~370 lines
-      (745-line file, also on the >700-line file list; the mapv
-      remap + count_operand_uses twins already shared)
-- [ ] opt/interprocedural/argpromo.hpp — ~408 lines (the ipa_sites /
+- [ ] opt/interprocedural/argpromo.hpp — ~415 lines (the ipa_sites /
       remap wave already removed ~70 lines of twins)
 - [ ] opt/loop/unswitch_shape.hpp — 433-line file (shared shape
       matcher + clone machinery, all three unswitch paths call it;
@@ -211,7 +231,6 @@ check-format clean on clang-format 16).
 - [ ] back/emit_c_impl.hpp
 - [ ] interprocedural/scctco.hpp (covered above)
 - [ ] apps/fuzz_gen.hpp (909)
-- [ ] interprocedural/tailrec.hpp (covered above)
 
 ## Standing traps (from ckpt 23-25, apply to every target)
 

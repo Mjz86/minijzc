@@ -1,6 +1,6 @@
-# CONTINUE — next steps after checkpoint 34 (unswitch decomposed)
+# CONTINUE — next steps after checkpoint 35 (tce_merge decomposed)
 
-Read SUMMARY.md (same zip root) first. The main repo is 24 commits
+Read SUMMARY.md (same zip root) first. The main repo is 25 commits
 ahead of origin/main; the vendored String clone sits PRISTINE on
 upstream `main` (nothing under `mjz_lib/` is modified — the user's
 directive), and every mjz_lib addition this repo carries lives in
@@ -25,6 +25,31 @@ it here — not just before commits:
    mjz_lib kernel inventory for what the new code needs.
 4. **Record**: the round's accepted + rejected dedups land in this
    file's ledger (the section below) with the verification numbers.
+
+## What checkpoint 35 shipped: tce_merge decomposed (round eleven)
+
+tce_merge 357 lines -> 35-line driver + tce_merge_impl.hpp (the
+support layer: the shared tce vocabulary, TceSite, TmCtx, and the six
+tm_* phases in the monolith's exact order). tailrec.hpp: 745 -> 365
+lines. The UsCtx lesson applied proactively — TmCtx's id fields
+default to NONE exactly like the monolith's locals — and NO landmine
+fired: parity held on the first try (146 runs + both fuzz windows).
+The two preserved asymmetries are on the impl header's landmine
+ledger: siteSEL is NOT pre-created (allocated at the member's Ret
+emission), and site args are PADDED in place during member emission
+(the latch chain's sitearg indexes the padded [sel', a_0..a_{M-1}]).
+THE OTHER OBSERVABLE this split must always respect: new_anon_vreg's
+allocation ORDER (the audit table keys on vreg ids) — the phase list
+and tm_alloc's nesting are load-bearing, not stylistic.
+
+The round's dedup pass: the window-8/10/12 scan is at its floor —
+two hits triaged and REJECTED on the ckpt-33 seed-decl-prologue
+precedent (argpromo/fnspec's driver prologue = the arity gate + the
+ipa_collect_call_sites CALL SITE; divmagic/ifconv's nb/nv + kc/kv
+seeding prologue = seed_consts' out-param call cost). The post-split
+scan output is byte-for-byte identical to pre-split. Recorded in the
+ledger below. NEW PROTOCOL RULE (the user's directive): BOTH .git
+directories ride in every zip (see the Protocol section).
 
 ## What checkpoint 34 shipped: unswitch decomposed (round ten)
 
@@ -162,6 +187,16 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
 
 ## Rejected dedups (the reasons on record)
 
+- **argpromo/fnspec's driver prologue** (ckpt 35): the 8-line arity
+  gate + `ipa_collect_call_sites` opening is the shared helper's
+  CALL SITE in both passes — the ckpt-33 seed-decl-prologue
+  precedent (the call cost of a shared primitive stays at the
+  sites). Stays duplicated.
+- **divmagic/ifconv's seeding prologue** (ckpt 35): the nb/nv
+  guards + kc/kv decls around the `seed_consts` call — the same
+  precedent; half the sites seed into context members a
+  pair-returning helper cannot serve. Stays duplicated.
+
 - **intervals.hpp's raw use census** (ckpt 33): it deliberately
   EXCLUDES Phi edge args — is_cmp_def counts scalar comparison uses
   only, so bump_uses_of (which counts args) would change the
@@ -195,11 +230,12 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
 
 ## Where the next work is (priority order)
 
-1. **OPT_CHECKLIST queue** (re-measured after ckpt 34): tailrec's
-   tce_merge (~370, 745-line file, the mapv/remap twins already
-   shared), argpromo (~408), unswitch_shape (433, the shared matcher
-   + clone machinery). REUSE FIRST (the per-round protocol above);
-   the UsCtx-lessons apply (NONE-defaulted ids).
+1. **OPT_CHECKLIST queue** (re-measured after ckpt 35): argpromo
+   (~415), unswitch_shape (433, the shared matcher + clone
+   machinery; check function sizes when reached). REUSE FIRST (the
+   per-round protocol above); the UsCtx lessons apply
+   (NONE-defaulted ids; the allocation-order observability note
+   from ckpt 35's landmine ledger).
 2. **mjz_lib extraction candidates**: the loop-family gates
    (loop_single_exit_target et al.) are candidates for
    generic/mjz_lib/opt/shape.hpp once a second consumer exists
@@ -241,8 +277,8 @@ if the sandbox recycles; it is 60 lines of python, window size 8).
 
 ## The gates that protect the tree
 
-bash scripts/include_portability_test.sh    # 527/527
-bash scripts/header_order_test.sh           # 116 + umbrella
+bash scripts/include_portability_test.sh    # 538/538
+bash scripts/header_order_test.sh           # 118 + umbrella
 python3 scripts/regen_audit_results.py      # identical unless a new
                                            # pass fires on the audit
                                            # programs
@@ -260,9 +296,17 @@ README task-list ledger update -> THE DEDUP PASS over the touched
 files (standing requirement 1) -> full battery green (standing
 requirement 2) -> commit -> `download/NN-*.zip` with fresh
 SUMMARY.md + CONTINUE.md -> archive excluding `./build`,
-`./build-ho`, `*.exe`, `*.out.tmp`, `*.mbc`, and `./fuzz_native`
-artifacts (the mjz_lib .git RIDES IN the zip: the branch tracking
-ships) -> do NOT push origin.
+`./build-ho`, and the `./fuzz_native` ARTIFACTS only (the untracked
+`fz*.exe` / `fz*.out` logs; the 828-file tracked corpus rides along
+-- with .git shipping, the unpacked tree must be a CLEAN checkout,
+`git status` empty at HEAD) -> do NOT push origin.
+
+BOTH .git directories RIDE IN the zip (the user's directive, ckpt
+35): the top-level `./.git` (the full branch history + the working
+tree state ships — `git status` in the unpacked tree reproduces this
+checkpoint exactly) AND `./mjz_lib/.git` (the vendored clone's
+upstream + `graph-opt-kernels` branch tracking). Never exclude
+either.
 
 TRAPS: background processes die with the shell session (run
 synchronously, never `| tail` a build); the `continue`-vs-fall-

@@ -1713,3 +1713,50 @@ shared shape matchers/clone machinery stay where they were
   header), includes 535/535, audit table regenerated identically,
   kernel fuzz 3000 all components 0 fails, e2e fuzz 600 clean,
   stress ALL PASS.
+
+## 19. checkpoint 35: tce_merge decomposed (the code-quality continuation, round eleven) — DONE
+
+The queue's next monolith, `tce_merge` (357 lines inside the 745-line
+tailrec.hpp), got the unswitch round-ten treatment: a 35-line driver
+stating the phase list plus `tce_merge_impl.hpp`, the support layer —
+the shared tce vocabulary (the member/site caps, `is_tail_call`, the
+budget-init / site-check / trap emitters both tce paths speak),
+`TceSite`, `TmCtx` (the per-merge context), and the six phases in
+exactly the monolith's order: `tm_collect_sites` (the gates + the
+intra-SCC tail-site census), `tm_alloc` (Fm's shell, the block
+layout, the vreg pre-creation), `tm_emit_header` (P0 + H + the sel
+dispatch chain), `tm_emit_members`, `tm_emit_latches` (the latch
+chain + trap + Fm's commit), `tm_rewrite_callers`. tailrec.hpp keeps
+tce_self and both drivers; 745 -> 365 lines.
+
+* **the round's dedup pass** (per-round protocol): the window-8/10/12
+  scan over src/ is at its floor — every remaining hit is an
+  on-record rejection (divmagic/reassoc rebuild tails, the
+  bc_defs/instr opcode mirror, emit_c's cmp_txt, deadargs/icf walk
+  openings) or a shared-helper call site newly triaged and rejected
+  on the ckpt-33 seed-decl-prologue precedent (argpromo/fnspec's
+  driver prologue, divmagic/ifconv's nb/nv/kc/kv seeding prologue).
+  The moved code was written reuse-first: `count_operand_uses`,
+  `remap_vreg_fields`, and the tce_emit_* emitters are the only
+  enumerations it performs.
+* **the UsCtx lesson, applied proactively**: TmCtx's id fields
+  default to NONE exactly like the monolith's locals did
+  (`bInitV = NONE`, the NONE-filled Mb/siteSEL/siteBL/siteEQ/Mp/Mbv
+  vectors) — the contract documents that zero-vs-NONE init is
+  observable through the `!= NONE` guards downstream. The other
+  landmine the split must preserve: new_anon_vreg's allocation ORDER
+  is observable (the audit table keys on vreg ids), so the phase
+  list runs in exactly the monolith's sequence and tm_alloc keeps
+  the monolith's nesting (selHv/aHv/bHv before the member vmaps,
+  siteBL/siteEQ site-major, Mp/Mbv latch-major). No landmine fired
+  this round: parity held on the first try.
+* **the zip protocol change** (the user's directive): BOTH .git
+  directories now ride in the archive — the top-level repo's (the
+  branch history ships) and mjz_lib's (the upstream clone's branch
+  tracking). Recorded in CONTINUE.md's protocol section.
+* **the verification**: 146 parity runs byte-identical, fuzz windows
+  1-300 + 20000-20300 identical modulo timing, selftest 208/208,
+  units 6482/6482, header order 118/118 + umbrella (the new impl
+  header), includes 538/538, audit table regenerated identically,
+  kernel fuzz 30000 all 60 components 0 fails, e2e fuzz 800 clean,
+  stress ALL PASS, bugrepros 10/10.
