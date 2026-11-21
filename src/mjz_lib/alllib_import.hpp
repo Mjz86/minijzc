@@ -1,17 +1,23 @@
 // === src/mjz_lib/alllib_import.hpp =========================================
-// The bridge to the String repo (mjz_lib/), for BOTH of its layouts:
+// The bridge to the String repo (mjz_lib/), for BOTH of its layouts and
+// BOTH of its homes:
 //
-//   old:  mjz_lib/alllib_import.hpp           (clone root)
-//   new:  mjz_lib/mjz_lib/alllib_import.hpp   (nested one level)
+//   in-repo, old:  mjz_lib/alllib_import.hpp           (clone root)
+//   in-repo, new:  mjz_lib/mjz_lib/alllib_import.hpp   (nested one level)
+//   sibling, old:  ../mjz_lib/alllib_import.hpp        (clone next to this repo)
+//   sibling, new:  ../mjz_lib/mjz_lib/alllib_import.hpp
 //
 // graph_lib.hpp reaches this file with the quoted include
 // "../mjz_lib/alllib_import.hpp", which standard search rule #1 resolves
 // from the INCLUDER'S directory (src/minijz/) to this file -- no -I flags,
 // no MSVC include-stack rule, no -Wmicrosoft-include. The self-adapting
-// __has_include below then picks whichever layout the clone actually has,
-// so a fresh `git clone https://github.com/Mjz86/String mjz_lib` works with
-// plain g++, CMake, clang++ and clang-cl alike (checked in on purpose: no
-// configure-time generation, no symlinks -- Windows-unfriendly).
+// __has_include below then picks whichever clone actually exists, so a
+// fresh `git clone https://github.com/Mjz86/String mjz_lib` (inside the
+// repo) or `git clone https://github.com/Mjz86/String ../mjz_lib` (next
+// to it) works with plain g++, CMake, clang++ and clang-cl alike (checked
+// in on purpose: no configure-time generation, no symlinks -- Windows-
+// unfriendly). CMakeLists.txt probes the same four locations in the same
+// order when it collects the graph module include dir.
 #pragma once
 #include <atomic> // the shim below needs std::memory_order declared first
 // --- the libc++ std::atomic_ref shim ---------------------------------------
@@ -102,6 +108,12 @@ public:
 #endif // _LIBCPP_VERSION && !__cpp_lib_atomic_ref
 #if __has_include("../../mjz_lib/alllib_import.hpp")
 #include "../../mjz_lib/alllib_import.hpp"
-#else
+#elif __has_include("../../mjz_lib/mjz_lib/alllib_import.hpp")
 #include "../../mjz_lib/mjz_lib/alllib_import.hpp"
+#elif __has_include("../../../mjz_lib/alllib_import.hpp")
+#include "../../../mjz_lib/alllib_import.hpp"
+#elif __has_include("../../../mjz_lib/mjz_lib/alllib_import.hpp")
+#include "../../../mjz_lib/mjz_lib/alllib_import.hpp"
+#else
+#error "mjz_lib (the String clone) not found: clone it either inside this repo (git clone https://github.com/Mjz86/String mjz_lib) or as a sibling next to it (git clone https://github.com/Mjz86/String ../mjz_lib) -- see README.md"
 #endif

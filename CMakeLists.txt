@@ -63,16 +63,23 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # g++, clang++ and MSVC spell the constexpr budget differently (README
-# notes): per-proof limits, applied wherever the cx checks are compiled
+# notes): per-proof limits, applied wherever the cx checks are compiled.
+# clang parses -fconstexpr-steps as a 32-BIT UNSIGNED: anything above
+# 4294967295 is rejected at the driver level with
+#   error: invalid integral value '40000000000' in '-fconstexpr-steps=...'
+# (the value 40000000000 was a typo-class regression -- UINT32_MAX is the
+# largest budget clang accepts; the proofs were tuned to fit well below
+# the old 4000000000 one). gcc/MSVC parse 64-bit budgets, but the same
+# 4294967295 cap is used everywhere for one readable number.
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   # cl.exe: /constexpr:depth<N> and /constexpr:steps<N> (appended directly,
   # no space). cl has no -fconstexpr-anything; passing GNU flags would only
   # spray D9002 warnings.
-  set(MJZ_CX_LIMITS /constexpr:depth8192 /constexpr:steps40000000000)
+  set(MJZ_CX_LIMITS /constexpr:depth8192 /constexpr:steps4294967295)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set(MJZ_CX_LIMITS -fconstexpr-steps=40000000000)
+  set(MJZ_CX_LIMITS -fconstexpr-steps=4294967295)
 else()
-  set(MJZ_CX_LIMITS -fconstexpr-depth=81920 -fconstexpr-ops-limit=40000000000)
+  set(MJZ_CX_LIMITS -fconstexpr-depth=81920 -fconstexpr-ops-limit=4294967295)
 endif()
 
 # MSVC reads the sources as UTF-8 (the comments use em-dashes and other
@@ -102,49 +109,66 @@ option(FUZZ_RANDOM_CONFIGS ON "also fuzz with random pass configurations")
 set(MJZ_CX_CHECKS "1;2;3;4;5;6;7" CACHE STRING "constexpr proof check numbers")
 
 # ---------------------------------------------------------------------------
-# the mjz_lib clone next to this repo (README: git clone .../String mjz_lib).
-# Both upstream layouts are supported: the historical root-level
-# alllib_import.hpp and the current nested mjz_lib/mjz_lib/ one. The
-# committed src/mjz_lib/alllib_import.hpp bridge adapts via __has_include
-# (see its header comment), so no configure-time magic is needed for the
-# import itself -- here we verify the clone exists AND is new enough:
-# the generic/ families include their String dependencies in upstream
-# form ("csr.hpp", "../graph/csr.hpp" -- see generic/README.md), which
-# resolve through the clone's graph module dir. A clone older than the
-# 2026-08 upstream graph refactor has no csr.hpp there, and the failure
-# used to surface six include levels deep as a cryptic
+# the String/mjz_lib clone. TWO supported homes, TWO supported layouts
+# (probed in this exact order -- src/mjz_lib/alllib_import.hpp bridges to
+# the first hit via __has_include, see its header comment):
+#   in-repo:  mjz_lib/alllib_import.hpp          (historical root layout)
+#   in-repo:  mjz_lib/mjz_lib/alllib_import.hpp  (current nested layout)
+#   sibling:  ../mjz_lib/alllib_import.hpp       (clone next to this repo)
+#   sibling:  ../mjz_lib/mjz_lib/alllib_import.hpp
+# No configure-time magic is needed for the import itself -- here we verify
+# SOME clone exists AND is new enough: the generic/ families include their
+# String dependencies in upstream form ("csr.hpp", "../graph/csr.hpp" --
+# see generic/README.md), which resolve through the clone's graph module
+# dir. A clone older than the 2026-08 upstream graph refactor has no
+# csr.hpp there, and the failure used to surface six include levels deep
+# as a cryptic
 #   fatal error: 'csr.hpp' file not found
 # across every TU -- catch it HERE instead, where the remedy is one
 # readable sentence.
 # ---------------------------------------------------------------------------
-if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/alllib_import.hpp AND NOT
-   EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/alllib_import.hpp)
+set(MJZ_LIB_ROOTS "${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/../mjz_lib")
+set(MJZ_LIB_FOUND FALSE)
+foreach(_r ${MJZ_LIB_ROOTS})
+  if(EXISTS "${_r}/alllib_import.hpp" OR EXISTS "${_r}/mjz_lib/alllib_import.hpp")
+    set(MJZ_LIB_FOUND TRUE)
+  endif()
+endforeach()
+if(NOT MJZ_LIB_FOUND)
   message(FATAL_ERROR
-    "mjz_lib not found: 'git clone https://github.com/Mjz86/String mjz_lib'"
-    " inside this repo first (see README.md)")
+    "mjz_lib not found: clone the String repo either inside this repo:\n"
+    "   git clone https://github.com/Mjz86/String mjz_lib\n"
+    "or as a SIBLING next to it:\n"
+    "   git clone https://github.com/Mjz86/String ../mjz_lib\n"
+    "(see README.md)")
 endif()
 
-# the clone's graph module dir (whichever layout it has) -- an include
-# path for the generic/ families' upstream-form quoted includes
-set(MJZ_GRAPH_INC_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/../mjz_lib")
-foreach(_g mjz_lib/mjz_lib/graph mjz_lib/graph)
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_g}/csr.hpp)
-    list(APPEND MJZ_GRAPH_INC_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/${_g})
-  endif()
+# the graph module dir of every clone that carries one, in the bridge's
+# preference order (in-repo first, then the sibling; within a clone the
+# historical root layout, then the nested one) -- include paths for the
+# generic/ families' upstream-form quoted includes
+set(MJZ_GRAPH_INC_DIRS "")
+foreach(_r ${MJZ_LIB_ROOTS})
+  get_filename_component(_r_abs "${_r}" ABSOLUTE)
+  foreach(_g graph mjz_lib/graph)
+    if(EXISTS "${_r_abs}/${_g}/csr.hpp")
+      list(APPEND MJZ_GRAPH_INC_DIRS "${_r_abs}/${_g}")
+    endif()
+  endforeach()
 endforeach()
 if(NOT MJZ_GRAPH_INC_DIRS)
   message(FATAL_ERROR
-    "mjz_lib was found, but its graph module is not: csr.hpp is in neither"
-    " 'mjz_lib/mjz_lib/graph/' nor 'mjz_lib/graph/'. The vendored String"
-    " clone predates the graph family (the generic/ kernels include its"
-    " members), so every TU would die with 'csr.hpp' file not found."
-    " Update the clone from inside this repo:\n"
-    "   git -C mjz_lib remote update\n"
-    "   git -C mjz_lib checkout main\n"
-    "   git -C mjz_lib pull\n"
+    "mjz_lib was found, but no graph module with csr.hpp is: neither the"
+    " in-repo nor the sibling clone carries 'graph/csr.hpp' or"
+    " 'mjz_lib/graph/csr.hpp'. The vendored String clone predates the"
+    " graph family (the generic/ kernels include its members), so every TU"
+    " would die with 'csr.hpp' file not found. Update the clone(s):\n"
+    "   git -C mjz_lib pull   (and/or   git -C ../mjz_lib pull)\n"
     " (or re-clone: rm -rf mjz_lib && "
     "git clone https://github.com/Mjz86/String mjz_lib)")
 endif()
+message(STATUS "minijzc: mjz_lib graph module include dir(s): ${MJZ_GRAPH_INC_DIRS}")
 # the -I-prefixed form for the raw cx-proof compiler invocations below
 # (add_test COMMANDs get no automatic -I, unlike target_include_directories)
 set(MJZ_GRAPH_IARGS "")
@@ -202,8 +226,11 @@ target_include_directories(minijz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                                          # generic/README.md); the clone's
                                          # graph module dir detected above
                                          ${MJZ_GRAPH_INC_DIRS})
-target_compile_options(minijz PRIVATE ${MJZ_EXTRA_FLAGS}
-  $<$<CONFIG:Debug>:${MJZ_CX_LIMITS}>)
+target_compile_options(minijz PRIVATE ${MJZ_EXTRA_FLAGS} ${MJZ_CX_LIMITS})
+# (MJZ_CX_LIMITS is UNCONDITIONAL, not $<CONFIG:Debug>-gated: the String
+# import's constexpr lookup tables and the cx proofs evaluate at compile
+# time in EVERY configuration -- a Release build without the budget dies
+# on clang's default 1M-step limit just the same)
 
 # ---------------------------------------------------------------------------
 # precompiled header: all nine heavy TUs parse the same declaration stack
@@ -249,7 +276,13 @@ target_include_directories(minijz_unit_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
   # generic/'s upstream-form String includes (generic/README.md)
   ${MJZ_GRAPH_INC_DIRS})
-target_compile_options(minijz_unit_tests PRIVATE ${MJZ_EXTRA_FLAGS})
+target_compile_options(minijz_unit_tests PRIVATE ${MJZ_EXTRA_FLAGS}
+  ${MJZ_CX_LIMITS})
+# (MJZ_CX_LIMITS included: this TU pulls the whole minijz.hpp umbrella and
+# with it the String import's constexpr lookup tables -- without the budget
+# it dies on the default 1M-step limit with
+# 'constexpr variable must be initialized by a constant expression ... hit
+# maximum step limit' deep inside byte_str/traits.hpp)
 # deliberately NO precompiled header here: this TU is rebuilt whenever a
 # compiler header changes, and each such rebuild would re-create a ~600 MB
 # umbrella PCH (~21s) to save ~5s of one TU -- a net loss in every loop
