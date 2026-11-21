@@ -104,10 +104,18 @@ set(MJZ_CX_CHECKS "1;2;3;4;5;6;7" CACHE STRING "constexpr proof check numbers")
 # ---------------------------------------------------------------------------
 # the mjz_lib clone next to this repo (README: git clone .../String mjz_lib).
 # Both upstream layouts are supported: the historical root-level
-# allib_import.hpp and the current nested mjz_lib/mjz_lib/ one. The
+# alllib_import.hpp and the current nested mjz_lib/mjz_lib/ one. The
 # committed src/mjz_lib/alllib_import.hpp bridge adapts via __has_include
-# (see its header comment), so no configure-time magic is needed -- here we
-# only verify the clone exists at all.
+# (see its header comment), so no configure-time magic is needed for the
+# import itself -- here we verify the clone exists AND is new enough:
+# the generic/ families include their String dependencies in upstream
+# form ("csr.hpp", "../graph/csr.hpp" -- see generic/README.md), which
+# resolve through the clone's graph module dir. A clone older than the
+# 2026-08 upstream graph refactor has no csr.hpp there, and the failure
+# used to surface six include levels deep as a cryptic
+#   fatal error: 'csr.hpp' file not found
+# across every TU -- catch it HERE instead, where the remedy is one
+# readable sentence.
 # ---------------------------------------------------------------------------
 if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/alllib_import.hpp AND NOT
    EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/alllib_import.hpp)
@@ -115,6 +123,34 @@ if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/alllib_import.hpp AND NOT
     "mjz_lib not found: 'git clone https://github.com/Mjz86/String mjz_lib'"
     " inside this repo first (see README.md)")
 endif()
+
+# the clone's graph module dir (whichever layout it has) -- an include
+# path for the generic/ families' upstream-form quoted includes
+set(MJZ_GRAPH_INC_DIRS "")
+foreach(_g mjz_lib/mjz_lib/graph mjz_lib/graph)
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_g}/csr.hpp)
+    list(APPEND MJZ_GRAPH_INC_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/${_g})
+  endif()
+endforeach()
+if(NOT MJZ_GRAPH_INC_DIRS)
+  message(FATAL_ERROR
+    "mjz_lib was found, but its graph module is not: csr.hpp is in neither"
+    " 'mjz_lib/mjz_lib/graph/' nor 'mjz_lib/graph/'. The vendored String"
+    " clone predates the graph family (the generic/ kernels include its"
+    " members), so every TU would die with 'csr.hpp' file not found."
+    " Update the clone from inside this repo:\n"
+    "   git -C mjz_lib remote update\n"
+    "   git -C mjz_lib checkout main\n"
+    "   git -C mjz_lib pull\n"
+    " (or re-clone: rm -rf mjz_lib && "
+    "git clone https://github.com/Mjz86/String mjz_lib)")
+endif()
+# the -I-prefixed form for the raw cx-proof compiler invocations below
+# (add_test COMMANDs get no automatic -I, unlike target_include_directories)
+set(MJZ_GRAPH_IARGS "")
+foreach(_d ${MJZ_GRAPH_INC_DIRS})
+  list(APPEND MJZ_GRAPH_IARGS -I${_d})
+endforeach()
 
 # ---------------------------------------------------------------------------
 # warning/tuning flags (kept OUT of the default build: the battery must
@@ -163,11 +199,46 @@ target_include_directories(minijz PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                                          ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
                                          # the generic/ families include their
                                          # String deps in upstream form (see
-                                         # generic/README.md); both clone layouts
-                                         ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
-                                         ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph)
+                                         # generic/README.md); the clone's
+                                         # graph module dir detected above
+                                         ${MJZ_GRAPH_INC_DIRS})
 target_compile_options(minijz PRIVATE ${MJZ_EXTRA_FLAGS}
   $<$<CONFIG:Debug>:${MJZ_CX_LIMITS}>)
+
+# ---------------------------------------------------------------------------
+# precompiled header: all nine heavy TUs parse the same declaration stack
+# before a line of their own code -- the mjz_lib import (graph_lib.hpp),
+# the generic/ kernel families and every pass interface (opt_generic.hpp),
+# ~4s each at -O0 -g -- and the unit-test TU parses all of that too. One
+# PCH pays the stack once and memory-maps it into every consumer; each
+# TU's own #includes of the same headers become no-ops (#pragma once), so
+# the preprocessed token stream is EXACTLY what it was without the PCH.
+# Codegen can shift local-constant pool layout by a byte or two (verified
+# function-by-function: same instructions, displaced jump distances), so
+# objects are not byte-identical -- but behavior is, and the full gate
+# battery (selftest/units/fuzz/regr/native parity) was run green on the
+# PCH build to prove it.
+#
+# WHY opt_generic.hpp and not the src/minijz.hpp umbrella: under
+# MJZ_MULTI_CPP the app-layer headers (cli.hpp -> cx_tours.hpp,
+# fuzz_kernels.hpp, ...) define their functions with PLAIN external
+# linkage, compiled into the ONE designated TU that includes them
+# (MJZ_CX_TOUR_FN et al. are empty in this mode). Force-including the
+# umbrella into every TU would define cx_tour()/run_kernel_fuzz()/...
+# nine times and die at link. opt_generic.hpp is the largest header every
+# heavy TU already includes (verified: it is exactly the common include
+# intersection of the nine), so the PCH can only ever hold what every TU
+# parsed anyway.
+#
+# tu/main.cpp is the exception by design (the thin entry parses only the
+# CLI -- app_api, no mjz_lib); SKIP_PRECOMPILE_HEADERS keeps it thin
+# instead of force-feeding it the whole compiler.
+# ---------------------------------------------------------------------------
+if(MINIJZ_MULTI_CPP)
+  target_precompile_headers(minijz PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/minijz/opt/opt_generic.hpp)
+  set_source_files_properties(src/tu/main.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
 
 # ---------------------------------------------------------------------------
 # unit tests for the library functions (incl. a function-level fuzzer)
@@ -177,9 +248,12 @@ target_include_directories(minijz_unit_tests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
   # generic/'s upstream-form String includes (generic/README.md)
-  ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
-  ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph)
+  ${MJZ_GRAPH_INC_DIRS})
 target_compile_options(minijz_unit_tests PRIVATE ${MJZ_EXTRA_FLAGS})
+# deliberately NO precompiled header here: this TU is rebuilt whenever a
+# compiler header changes, and each such rebuild would re-create a ~600 MB
+# umbrella PCH (~21s) to save ~5s of one TU -- a net loss in every loop
+# (the minijz target above amortizes its PCH across nine TUs instead).
 
 enable_testing()
 
@@ -200,8 +274,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
       ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
       # generic/'s upstream-form String includes (generic/README.md)
-      ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
-      ${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph)
+      ${MJZ_GRAPH_INC_DIRS})
     target_compile_options(cx_obj_${k} PRIVATE ${MJZ_CX_LIMITS})
     add_test(NAME cx_check_${k}
       COMMAND ${CMAKE_COMMAND}
@@ -214,9 +287,7 @@ else()
     add_test(NAME cx_check_${k}
       COMMAND ${CMAKE_CXX_COMPILER} -std=c++${MINIJZ_CXX_STANDARD} -O0
         -I${CMAKE_CURRENT_SOURCE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/src
-        -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib
-        -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/mjz_lib/graph
-        -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib/graph
+        -I${CMAKE_CURRENT_SOURCE_DIR}/mjz_lib ${MJZ_GRAPH_IARGS}
         -DMJZ_CX_CHECK=${k} ${MJZ_CX_LIMITS}
         -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/constexpr_check.cpp
         -o ${CMAKE_CURRENT_BINARY_DIR}/cx${k}.o)

@@ -19,8 +19,8 @@ struct IpaSite {
 // every Call in fns[0..n0) to a callee in the same window (the clones
 // appended beyond n0 are NOT scanned -- each pass census runs on the
 // original program)
-inline std::vector<IpaSite> ipa_collect_call_sites(const std::vector<Fn> &fns,
-                                                   uint32_t n0) {
+constexpr std::vector<IpaSite> ipa_collect_call_sites(const std::vector<Fn> &fns,
+                                                     uint32_t n0) {
   std::vector<IpaSite> sites{};
   for (uint32_t f = 0; f < n0; ++f) {
     const Fn &F = fns[f];
@@ -37,7 +37,7 @@ inline std::vector<IpaSite> ipa_collect_call_sites(const std::vector<Fn> &fns,
 
 // the defining Const of an SSA vreg in F (params have no def -> false);
 // a vreg defined by a non-Const is NOT a known constant
-inline bool ipa_def_const(const Fn &F, uint32_t v, val_t &out) {
+constexpr bool ipa_def_const(const Fn &F, uint32_t v, val_t &out) {
   const uint32_t nv = F.nvars + (uint32_t)F.version_base.size();
   if (v == NONE || v >= nv)
     return false;
@@ -55,7 +55,7 @@ inline bool ipa_def_const(const Fn &F, uint32_t v, val_t &out) {
 // g's site count + whether ANY site's arity disagrees with nparams --
 // the caller applies its own acceptance gate (argpromo: >= 1 site;
 // fnspec: >= 2)
-inline std::pair<uint32_t, bool>
+constexpr std::pair<uint32_t, bool>
 ipa_count_sites_of(const std::vector<Fn> &fns,
                    const std::vector<IpaSite> &sites, uint32_t g,
                    uint32_t nparams) {
