@@ -141,6 +141,24 @@ root-level `alllib_import.hpp` and the current nested
 bridge adapts via `__has_include`, so a fresh clone needs zero extra
 steps — no symlinks, no configure-time generation.
 
+The clone must also be CURRENT enough to carry the graph module: the
+`generic/` kernel families include their String dependencies in upstream
+form (`"csr.hpp"`, ...), which live in the clone's `graph/` dir only
+since the upstream graph refactor. CMake verifies this at configure
+time — a stale clone stops with the exact `git -C mjz_lib pull`
+remedy instead of dying six include levels deep with
+`fatal error: 'csr.hpp' file not found` in every TU.
+
+The multi-TU build precompiles the shared declaration stack
+(`opt/opt_generic.hpp` — the mjz_lib import plus every pass interface,
+the common include intersection of the nine heavy TUs) into one PCH and
+memory-maps it into each: the heavy TUs compile about twice as fast and
+`tu/main.cpp` stays thin (`SKIP_PRECOMPILE_HEADERS` — the PCH would
+force-feed it the whole compiler). The preprocessed token stream is
+unchanged by construction; objects can shift local-constant layout by a
+byte or two, and the full gate battery (selftest / units / fuzz / regr /
+native parity) runs green on the PCH build.
+
 **Compiler preference:** if nothing is pinned (`-DCMAKE_CXX_COMPILER`,
 `$CXX`, toolchain), CMake looks for `clang++` first and uses it when
 present (README note, now implemented); otherwise the platform default.

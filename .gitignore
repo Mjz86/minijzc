@@ -53,3 +53,5 @@ build/
 /build-win
 /build-ninja/CMakeFiles
 /build-ninja
+# every preset binaryDir (build-ninja, build-gcc, build-clang, ...)
+/build-*
