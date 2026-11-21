@@ -68,7 +68,8 @@ constexpr std::vector<Fn> fns_of(const Program &P, int which) {
 }
 // summed optimization statistics across all functions (iters: max)
 #ifdef MJZ_MULTI_CPP
-OptStats sum_ostats(const Program &P); // tu/runners.cpp (prog/printers_impl.hpp)
+OptStats
+sum_ostats(const Program &P); // tu/runners.cpp (prog/printers_impl.hpp)
 #else
 constexpr OptStats sum_ostats(const Program &P); // body: prog/printers_impl.hpp
 #endif

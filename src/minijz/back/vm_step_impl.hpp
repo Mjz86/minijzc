@@ -308,8 +308,8 @@ MJZ_RUNNER_FN bool vm_step_op(VmCtx &S) {
   return true;
 }
 
-MJZ_RUNNER_FN RunOut vm_run(const std::vector<uint8_t> &c,
-                            uint64_t step_limit, const std::vector<val_t> &ins) {
+MJZ_RUNNER_FN RunOut vm_run(const std::vector<uint8_t> &c, uint64_t step_limit,
+                            const std::vector<val_t> &ins) {
   VmCtx S{};
   if (!vm_init(S, c, step_limit, ins))
     return S.R;

@@ -41,8 +41,8 @@ constexpr uintlen_t vn_u(uint32_t v) {
 // may-trap div-mod without the nt proof). fills tag/op/flags and the
 // operand row (a, b2).
 constexpr bool vn_fill_bin_site(const Instr &I, uint32_t nv,
-                                 opt_ns::vn_site_t<V> &si,
-                                 std::vector<uintlen_t> &sa) {
+                                opt_ns::vn_site_t<V> &si,
+                                std::vector<uintlen_t> &sa) {
   if (I.k != K::Bin || I.dst == NONE || I.dst >= nv)
     return false;
   if (I.b == B::Div || I.b == B::Mod)
@@ -61,7 +61,7 @@ constexpr bool vn_fill_bin_site(const Instr &I, uint32_t nv,
 // rewrite EVERY operand with the COMPLETED map (Phi args included) --
 // the second pass both passes run after the kernel walk
 constexpr void vn_rewrite_completed_map(Fn &fn, uint32_t nv,
-                                         const opt_ns::vn_result_t<V> &R) {
+                                        const opt_ns::vn_result_t<V> &R) {
   auto resolve = [&](uint32_t v) -> uint32_t {
     while (v != NONE && v < nv && R.ren[v] != opt_ns::none_v)
       v = (uint32_t)R.ren[v];

@@ -8,8 +8,8 @@
 
 #include "emit_plan.hpp"
 
-MJZ_PRINTER_FN std::vector<char> mark_referenced_blocks(
-    const Fn &fn, const EmitPlan &P) {
+MJZ_PRINTER_FN std::vector<char> mark_referenced_blocks(const Fn &fn,
+                                                        const EmitPlan &P) {
   const uint32_t nb = fn.nblocks();
   const uint32_t nv = (uint32_t)P.kc.size();
   std::vector<char> refd(nb, 0);
@@ -38,9 +38,11 @@ MJZ_PRINTER_FN std::vector<char> mark_referenced_blocks(
   return refd;
 }
 
-MJZ_PRINTER_FN void append_source_range_banner(
-    std::string &s, const Fn &fn, const SrcMap &SM, bool is_main,
-    std::string_view fname, const char *open, const char *close) {
+MJZ_PRINTER_FN void append_source_range_banner(std::string &s, const Fn &fn,
+                                               const SrcMap &SM, bool is_main,
+                                               std::string_view fname,
+                                               const char *open,
+                                               const char *close) {
   uint32_t lo = NONE, hi = 0;
   for (const Instr &I : fn.code)
     if (I.src != NONE) {

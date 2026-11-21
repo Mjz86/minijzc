@@ -551,8 +551,8 @@ constexpr Rv w_mulhi(val_t a, val_t b) { // high 64 bits of the unsigned prod
 // proofs (tests/constexpr_check.cpp, cx_tours.hpp's static_asserts) still
 // call run_prog/emit_bytecode/vm_run/run_ast in constant expressions.
 #ifdef MJZ_MULTI_CPP
-#define MJZ_RUNNER_FN   // plain external linkage; *_impl.hpp in tu/runners.cpp
-#define MJZ_PRINTER_FN  // ditto, for the runtime-only printer layer
+#define MJZ_RUNNER_FN  // plain external linkage; *_impl.hpp in tu/runners.cpp
+#define MJZ_PRINTER_FN // ditto, for the runtime-only printer layer
 #else
 #define MJZ_RUNNER_FN constexpr
 #define MJZ_PRINTER_FN inline

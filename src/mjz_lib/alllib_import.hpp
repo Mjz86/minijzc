@@ -4,8 +4,8 @@
 //
 //   in-repo, old:  mjz_lib/alllib_import.hpp           (clone root)
 //   in-repo, new:  mjz_lib/mjz_lib/alllib_import.hpp   (nested one level)
-//   sibling, old:  ../mjz_lib/alllib_import.hpp        (clone next to this repo)
-//   sibling, new:  ../mjz_lib/mjz_lib/alllib_import.hpp
+//   sibling, old:  ../mjz_lib/alllib_import.hpp        (clone next to this
+//   repo) sibling, new:  ../mjz_lib/mjz_lib/alllib_import.hpp
 //
 // graph_lib.hpp reaches this file with the quoted include
 // "../mjz_lib/alllib_import.hpp", which standard search rule #1 resolves
@@ -115,5 +115,6 @@ public:
 #elif __has_include("../../../mjz_lib/mjz_lib/alllib_import.hpp")
 #include "../../../mjz_lib/mjz_lib/alllib_import.hpp"
 #else
-#error "mjz_lib (the String clone) not found: clone it either inside this repo (git clone https://github.com/Mjz86/String mjz_lib) or as a sibling next to it (git clone https://github.com/Mjz86/String ../mjz_lib) -- see README.md"
+#error                                                                         \
+    "mjz_lib (the String clone) not found: clone it either inside this repo (git clone https://github.com/Mjz86/String mjz_lib) or as a sibling next to it (git clone https://github.com/Mjz86/String ../mjz_lib) -- see README.md"
 #endif

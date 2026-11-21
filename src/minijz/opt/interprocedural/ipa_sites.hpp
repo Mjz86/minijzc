@@ -19,8 +19,8 @@ struct IpaSite {
 // every Call in fns[0..n0) to a callee in the same window (the clones
 // appended beyond n0 are NOT scanned -- each pass census runs on the
 // original program)
-constexpr std::vector<IpaSite> ipa_collect_call_sites(const std::vector<Fn> &fns,
-                                                     uint32_t n0) {
+constexpr std::vector<IpaSite>
+ipa_collect_call_sites(const std::vector<Fn> &fns, uint32_t n0) {
   std::vector<IpaSite> sites{};
   for (uint32_t f = 0; f < n0; ++f) {
     const Fn &F = fns[f];

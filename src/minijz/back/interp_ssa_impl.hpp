@@ -7,8 +7,7 @@
 
 #include "interp_ssa.hpp"
 
-MJZ_RUNNER_FN RunOut run_prog(const std::vector<Fn> &fns,
-                              uint64_t step_limit,
+MJZ_RUNNER_FN RunOut run_prog(const std::vector<Fn> &fns, uint64_t step_limit,
                               const std::vector<val_t> &ins) {
   RunOut R{};
   R.ins = ins;

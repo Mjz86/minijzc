@@ -123,10 +123,9 @@ constexpr FuseTable make_fuse_table(const Fn &fn, uint32_t nv) {
 #ifdef MJZ_MULTI_CPP
 // the three bodies compiled ONCE in tu/runners.cpp (back/emit_plan_impl.hpp)
 std::vector<char> mark_referenced_blocks(const Fn &fn, const EmitPlan &P);
-void append_source_range_banner(std::string &s, const Fn &fn,
-                                const SrcMap &SM, bool is_main,
-                                std::string_view fname, const char *open,
-                                const char *close);
+void append_source_range_banner(std::string &s, const Fn &fn, const SrcMap &SM,
+                                bool is_main, std::string_view fname,
+                                const char *open, const char *close);
 EmitPlan make_emit_plan(const Fn &fn);
 #else
 inline std::vector<char> mark_referenced_blocks(const Fn &fn,
@@ -144,7 +143,6 @@ inline EmitPlan make_emit_plan(const Fn &fn);
 // one-line comment. The C and asm spellings differ ONLY in the comment
 // syntax, passed as the (open, close) pair -- the identical scan was
 // hand-rolled in both emitters until the ckpt-31 dedup wave.
-
 
 // ---- 13.5a. C backend
 // -------------------------------------------------------- Emits C valid as

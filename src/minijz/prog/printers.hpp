@@ -57,13 +57,11 @@ inline std::string text_of(const RunOut &R);
 #include "printers_impl.hpp"
 #endif
 
-
 // ---- unified line diff (LCS) ------------------------------------------------
 // Small texts only (IR dumps of one fn): the O(n*m) table is fine at these
 // sizes. Shared by the debugger's `opt diff` and the CLI's --opt-diff.
 // Output: unified-diff style hunks with `ctx` lines of context, '-' old
 // lines, '+' new lines; empty string when the texts are equal.
-
 
 constexpr bool same_run(const RunOut &a, const RunOut &b) {
   return a.trapped == b.trapped && a.timeout == b.timeout && a.out == b.out;
@@ -79,4 +77,3 @@ constexpr bool same_run(const RunOut &a, const RunOut &b) {
 // ============================================================================
 
 // canonical text of an in-process RunOut — comparable with native stdout
-
