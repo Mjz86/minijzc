@@ -676,9 +676,9 @@ constexpr void m2r_replay(Fn &fn, M2RCtx &X) {
         } else if (I.k == K::Load) {
           uint32_t h = (I.a != NONE && I.a < nv) ? AI.single[I.a] : NONE;
           if (h != NONE && X.cls[h].lift) {
-            const uint32_t rd = (uint32_t)X.R.reaching_def[site];
+            const auto rd = X.R.reaching_def[site];
             I.k = K::Copy;
-            I.a = rd == ssa_ns::ssa_none_v ? NONE : site_vreg[rd];
+            I.a = rd == ssa_ns::ssa_none_v ? NONE : site_vreg[uint32_t(rd)];
             I.b2 = NONE;
             ++site;
           }
