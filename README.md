@@ -124,12 +124,15 @@ every TU — the thin entry alone dropped from ~21 s to ~1 s.)
 git clone https://github.com/Mjz86/String mjz_lib   # inside this repo
 # cmake --preset windows-llvm  ..
 #cmake --build build-win -j  
+# cmake --preset windows-ninja  -S . -B build-ninja 
+# cmake --build build-ninja  -j --preset windows-ninja      
 cmake -S . -B build && cmake --build build -j        # default: multi-cpp
 ./build/minijz --selftest        # demos + fuzz(200) + native gate
 ctest --test-dir build -L cx -j4 --output-on-failure  # the 6 constexpr proofs
 ctest --test-dir build -L fuzz --output-on-failure    # differential fuzz
 ctest --test-dir build -R unit --output-on-failure    # (or ./build/minijz_unit_tests)
 ctest --test-dir build -L regr --output-on-failure    # bug repros + stress + header order + include portability + a scripted debugger session
+
 ```
 
 The String clone works under BOTH upstream layouts (the historical
