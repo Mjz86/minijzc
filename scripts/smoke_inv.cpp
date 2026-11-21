@@ -29,48 +29,63 @@ int main() {
   show("universe backward",
        gns::make_basic_inv_forest_universe_backward<V>(rows, 3));
   // payloads
-  std::vector<std::vector<uintlen_t>> data = {{10}, {21, 22}, {31}, {43}, {51, 52}};
+  std::vector<std::vector<uintlen_t>> data = {
+      {10}, {21, 22}, {31}, {43}, {51, 52}};
   auto [fb, bij] = gns::map_make_basic_inv_forest_edges_bijection<V>(rows);
   std::printf("square bij (backward):");
-  for (auto b : bij) std::printf(" %zu", size_t(b));
+  for (auto b : bij)
+    std::printf(" %zu", size_t(b));
   auto [fbf, bijf] =
       gns::map_make_basic_inv_forest_edges_bijection_forward<V>(rows);
   std::printf(" | forward:");
-  for (auto b : bijf) std::printf(" %zu", size_t(b));
+  for (auto b : bijf)
+    std::printf(" %zu", size_t(b));
   std::printf("\n");
-  auto [fd, dd] = gns::map_make_basic_inv_forest_edges_data<V, uintlen_t>(rows, data);
+  auto [fd, dd] =
+      gns::map_make_basic_inv_forest_edges_data<V, uintlen_t>(rows, data);
   std::printf("square data (backward):");
-  for (auto d : dd) std::printf(" %zu", size_t(d));
+  for (auto d : dd)
+    std::printf(" %zu", size_t(d));
   auto [fdf, ddf] =
-      gns::map_make_basic_inv_forest_edges_data_forward<V, uintlen_t>(rows, data);
+      gns::map_make_basic_inv_forest_edges_data_forward<V, uintlen_t>(rows,
+                                                                      data);
   std::printf(" | forward:");
-  for (auto d : ddf) std::printf(" %zu", size_t(d));
+  for (auto d : ddf)
+    std::printf(" %zu", size_t(d));
   std::printf("\n");
   auto [fdb, restb] =
-      gns::map_make_basic_inv_forest_edges_data_bijection<V, uintlen_t>(rows, data);
+      gns::map_make_basic_inv_forest_edges_data_bijection<V, uintlen_t>(rows,
+                                                                        data);
   auto &[ddb, bijb] = restb;
   std::printf("square both (backward): data");
-  for (auto d : ddb) std::printf(" %zu", size_t(d));
+  for (auto d : ddb)
+    std::printf(" %zu", size_t(d));
   std::printf(" bij");
-  for (auto b : bijb) std::printf(" %zu", size_t(b));
+  for (auto b : bijb)
+    std::printf(" %zu", size_t(b));
   std::printf("\n");
   auto [fuf, restuf] =
-      gns::map_make_basic_inv_forest_edges_data_bijection_universe<V, uintlen_t>(
+      gns::map_make_basic_inv_forest_edges_data_bijection_universe<V,
+                                                                   uintlen_t>(
           rows, data, 3);
   auto &[duf, biuf] = restuf;
   std::printf("universe both (forward): data");
-  for (auto d : duf) std::printf(" %zu", size_t(d));
+  for (auto d : duf)
+    std::printf(" %zu", size_t(d));
   std::printf(" bij");
-  for (auto b : biuf) std::printf(" %zu", size_t(b));
+  for (auto b : biuf)
+    std::printf(" %zu", size_t(b));
   std::printf("\n");
   auto [fub, restub] =
       gns::map_make_basic_inv_forest_edges_data_bijection_universe_backward<
           V, uintlen_t>(rows, data, 3);
   auto &[dub, biub] = restub;
   std::printf("universe both (backward): data");
-  for (auto d : dub) std::printf(" %zu", size_t(d));
+  for (auto d : dub)
+    std::printf(" %zu", size_t(d));
   std::printf(" bij");
-  for (auto b : biub) std::printf(" %zu", size_t(b));
+  for (auto b : biub)
+    std::printf(" %zu", size_t(b));
   std::printf("\n");
   auto [fu_d, du] =
       gns::map_make_basic_inv_forest_edges_data_universe<V, uintlen_t>(rows,

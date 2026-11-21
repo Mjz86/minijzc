@@ -102,7 +102,8 @@ constexpr bool opt_dse(Fn &fn, const An &A, OptStats &os) {
       }
       if (part) {
         const opt_ns::dse_event_t ev{
-            .kind = (I.k == K::Store) ? opt_ns::dse_store_v : opt_ns::dse_load_v,
+            .kind =
+                (I.k == K::Store) ? opt_ns::dse_store_v : opt_ns::dse_load_v,
             .group = AI.single[I.a],
             .key = (uintlen_t)(int64_t)kv[I.b2],
             .val = (I.k == K::Store && I.c2 != NONE && I.c2 < nv)

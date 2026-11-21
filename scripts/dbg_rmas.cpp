@@ -97,8 +97,8 @@ int main(int argc, char **argv) {
     for (ulen v = 0; v < n; ++v) {
       bool want = u != v && reach[u][v];
       if (want && (!vis[v] || v == u))
-        std::printf("  LOST %zu->%zu (had %d kept %d)\n", size_t(u),
-                    size_t(v), int(reach[u][v]), int(vis[v]));
+        std::printf("  LOST %zu->%zu (had %d kept %d)\n", size_t(u), size_t(v),
+                    int(reach[u][v]), int(vis[v]));
       if (!want && v != u && vis[v] && vis[v] != reach[u][v])
         std::printf("  EXTRA %zu->%zu\n", size_t(u), size_t(v));
     }

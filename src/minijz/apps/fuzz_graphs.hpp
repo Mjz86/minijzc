@@ -2403,8 +2403,7 @@ static void fz_rmasp(std::mt19937_64 &rng, KzRec &R) {
     const auto gd =
         gns::calculate_minimum_feedback_arc_set_reducible_given_dominators<V>(
             0, g, w, idoms);
-    R.ok(gd.reducible == got.reducible &&
-             gd.total_weight == got.total_weight &&
+    R.ok(gd.reducible == got.reducible && gd.total_weight == got.total_weight &&
              gd.packing_weight == got.packing_weight &&
              gd.removed_arcs == got.removed_arcs && gd.order == got.order,
          "rmasp: the given-dominators form matches the standalone one");

@@ -123,11 +123,9 @@ int main(int argc, char **argv) {
   std::vector<ulen> w(m);
   for (auto &x : w)
     x = kz_pick(rng, 13);
-  printf("seed %ld: n=%zu m=%zu cross=%d\n", seed, succs.size(), m,
-         (int)cross);
+  printf("seed %ld: n=%zu m=%zu cross=%d\n", seed, succs.size(), m, (int)cross);
   for (ulen e = 0; e < m; ++e)
-    printf("  arc %zu: %zu -> %zu  w=%zu\n", e, arcs[e].from, arcs[e].to,
-           w[e]);
+    printf("  arc %zu: %zu -> %zu  w=%zu\n", e, arcs[e].from, arcs[e].to, w[e]);
   auto g = gns::make_basic_forest<V>(succs);
   auto got = gns::calculate_minimum_feedback_arc_set_reducible<V>(0, g, w);
   auto exact = gns::calculate_minimum_feedback_arc_set<V>(g, w);
@@ -138,7 +136,6 @@ int main(int argc, char **argv) {
   for (ulen e : exact.removed_arcs)
     printf(" %zu", e);
   printf("\n");
-  printf("MATCH: %s\n",
-         got.total_weight == exact.total_weight ? "yes" : "NO");
+  printf("MATCH: %s\n", got.total_weight == exact.total_weight ? "yes" : "NO");
   return 0;
 }

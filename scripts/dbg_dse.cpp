@@ -9,8 +9,8 @@ using namespace mjz;
 
 static void dump_one(long seed, int comp) {
   std::mt19937_64 rng(uint64_t(seed) * 0x9E3779B97F4A7C15ull +
-                     uint64_t(comp) * 0xBF58476D1CE4E5B9ull +
-                     0xD1B54A32D192ED03ull);
+                      uint64_t(comp) * 0xBF58476D1CE4E5B9ull +
+                      0xD1B54A32D192ED03ull);
   using opt_ns::dse_break_v;
   using opt_ns::dse_event_t;
   using opt_ns::dse_load_v;
@@ -100,13 +100,12 @@ static void dump_one(long seed, int comp) {
                   (unsigned long long)e.val);
       if (e.kind == dse_store_v)
         std::printf("   kernel=%s spec=%s",
-                    got[o] ? (rule[o] == opt_ns::dse_overwrite_v
-                                  ? "OVERWRITE-dead"
-                                  : "SAME-dead")
-                           : "alive",
-                    want_over[o]
-                        ? "OVERWRITE-dead"
-                        : (want_same[o] ? "SAME-dead" : "alive"));
+                    got[o]
+                        ? (rule[o] == opt_ns::dse_overwrite_v ? "OVERWRITE-dead"
+                                                              : "SAME-dead")
+                        : "alive",
+                    want_over[o] ? "OVERWRITE-dead"
+                                 : (want_same[o] ? "SAME-dead" : "alive"));
       std::printf("\n");
       ++o;
     }

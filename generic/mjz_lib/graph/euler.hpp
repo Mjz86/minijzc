@@ -29,8 +29,7 @@ namespace mjz::graph_ns {
 // never returns a partial tour). The edge list is the tour's arcs in
 // walk order; the node list is implied (end of arc k = head of the
 // walk; `first_node` is given).
-template <version_t version_v>
-struct euler_result_t {
+template <version_t version_v> struct euler_result_t {
   bool ok{};
   uintlen_t first_node{};
   std::vector<uintlen_t> edges{}; // the tour's arcs, walk order
@@ -74,8 +73,7 @@ MJZ_CX_FN bool euler_one_piece_(const basic_forest_t<version_v, R> &graph,
 
 // ---- the directed circuit --------------------------------------------------
 template <version_t version_v, class R>
-MJZ_CX_FN euler_result_t<version_v>
-calculate_eulerian_circuit_directed(
+MJZ_CX_FN euler_result_t<version_v> calculate_eulerian_circuit_directed(
     const basic_forest_t<version_v, R> &graph) noexcept {
   euler_result_t<version_v> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
@@ -136,8 +134,7 @@ calculate_eulerian_circuit_directed(
 
 // ---- the directed path -----------------------------------------------------
 template <version_t version_v, class R>
-MJZ_CX_FN euler_result_t<version_v>
-calculate_eulerian_path_directed(
+MJZ_CX_FN euler_result_t<version_v> calculate_eulerian_path_directed(
     const basic_forest_t<version_v, R> &graph) noexcept {
   euler_result_t<version_v> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
@@ -214,8 +211,8 @@ namespace detail {
 // representation is the contract)
 template <version_t version_v, class R>
 MJZ_CX_FN void euler_consume_twin_(std::vector<char> &used,
-                                    const basic_forest_t<version_v, R> &graph,
-                                    uintlen_t u, uintlen_t e) noexcept {
+                                   const basic_forest_t<version_v, R> &graph,
+                                   uintlen_t u, uintlen_t e) noexcept {
   const uintlen_t v =
       uintlen_t(*(std::ranges::begin(graph.edges) + intlen_t(e)));
   auto rows = graph.range();           // targets
@@ -229,14 +226,12 @@ MJZ_CX_FN void euler_consume_twin_(std::vector<char> &used,
       return;
     }
   }
-  asserts(asserts.expect_rn, false,
-          "undirected walks need symmetric rows");
+  asserts(asserts.expect_rn, false, "undirected walks need symmetric rows");
 }
 } // namespace detail
 
 template <version_t version_v, class R>
-MJZ_CX_FN euler_result_t<version_v>
-calculate_eulerian_circuit_undirected(
+MJZ_CX_FN euler_result_t<version_v> calculate_eulerian_circuit_undirected(
     const basic_forest_t<version_v, R> &graph) noexcept {
   euler_result_t<version_v> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
@@ -246,11 +241,11 @@ calculate_eulerian_circuit_undirected(
     for (uintlen_t v : rows[u]) {
       if (v >= n || v == u)
         continue; // self loops are walked but never skew degrees
-      deg[u]++; // u's OWN row counts each incident edge exactly once
-                // -- the TRUE undirected degree. (A cross-increment
-                // deg[v]++ would count every edge twice in the pair
-                // representation and mute the parity test -- the bug
-                // the component fuzzer pinned on the path graph.)
+      deg[u]++;   // u's OWN row counts each incident edge exactly once
+                  // -- the TRUE undirected degree. (A cross-increment
+                  // deg[v]++ would count every edge twice in the pair
+                  // representation and mute the parity test -- the bug
+                  // the component fuzzer pinned on the path graph.)
     }
   }
   for (uintlen_t u = 0; u < n; ++u)
@@ -304,8 +299,7 @@ calculate_eulerian_circuit_undirected(
 }
 
 template <version_t version_v, class R>
-MJZ_CX_FN euler_result_t<version_v>
-calculate_eulerian_path_undirected(
+MJZ_CX_FN euler_result_t<version_v> calculate_eulerian_path_undirected(
     const basic_forest_t<version_v, R> &graph) noexcept {
   euler_result_t<version_v> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
@@ -379,5 +373,5 @@ calculate_eulerian_path_undirected(
   return ret;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_euler_FILE_

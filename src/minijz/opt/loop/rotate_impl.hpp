@@ -185,8 +185,8 @@ constexpr bool rot_collect_hbody(Fn &fn, RotCtx &R) {
          fn.code[fn.blocks[R.h].begin + R.nphi].k == K::Phi)
     ++R.nphi;
   R.hbody.clear();
-  for (uint32_t i = fn.blocks[R.h].begin + R.nphi;
-       i + 1 < fn.blocks[R.h].end; ++i)
+  for (uint32_t i = fn.blocks[R.h].begin + R.nphi; i + 1 < fn.blocks[R.h].end;
+       ++i)
     R.hbody.push_back(i);
   if (R.hbody.size() > ROT_BODY_MAX)
     return false;
@@ -244,8 +244,7 @@ constexpr bool rot_classify_reads(Fn &fn, RotCtx &R) {
   for (uint32_t b = 0; b < R.nb && !R.bad; ++b) {
     if (!R.inL[b] || b == R.h)
       continue;
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && !R.bad;
-         ++i) {
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && !R.bad; ++i) {
       const Instr &I = fn.code[i];
       if (I.k == K::Phi) { // args are uses keyed to the pred edges
         if (R.is_hbdef[I.a])
@@ -264,8 +263,7 @@ constexpr bool rot_classify_reads(Fn &fn, RotCtx &R) {
   for (uint32_t b = 0; b < R.nb && !R.bad; ++b) {
     if (R.inL[b] || b == R.pre)
       continue;
-    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && !R.bad;
-         ++i) {
+    for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end && !R.bad; ++i) {
       const Instr &I = fn.code[i];
       if (I.k == K::Phi) {
         // arg a is keyed to pred t; arg b2 to pred f. A loop value can
@@ -417,7 +415,7 @@ constexpr void rot_mint_vregs(Fn &fn, RotCtx &R) {
 constexpr void rot_emit_pre(Fn &fn, RotCtx &R, std::vector<Instr> &nc,
                             uint32_t ob, uint32_t oe) {
   for (uint32_t i = ob; i + 1 < oe; ++i)
-    nc.push_back(fn.code[i]); // pre's own instrs (phis untouched)
+    nc.push_back(fn.code[i]);  // pre's own instrs (phis untouched)
   for (uint32_t i : R.hbody) { // the guard copy: the 1st header run
     Instr c = fn.code[i];
     rot_rw(c, [&](uint32_t v) { return rot_gmap(R, v); });
@@ -434,8 +432,7 @@ constexpr void rot_emit_header(Fn &fn, RotCtx &R, std::vector<Instr> &nc,
     if (c.k == K::Phi) {  // arg that is a MOVED def re-routes to the
       // def's fresh header phi -- the value it carries per position,
       // which is what the back edge must deliver
-      if (c.t == R.latch && c.a < R.nv && R.is_hbdef[c.a] &&
-          R.pv[c.a] != NONE)
+      if (c.t == R.latch && c.a < R.nv && R.is_hbdef[c.a] && R.pv[c.a] != NONE)
         c.a = R.pv[c.a];
       if (c.f == R.latch && c.b2 < R.nv && R.is_hbdef[c.b2] &&
           R.pv[c.b2] != NONE)

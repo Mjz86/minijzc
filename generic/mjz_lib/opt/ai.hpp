@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_ai_FILE_
 #define MJZ_SRC_OPT_ai_FILE_
 #include "interval.hpp"
@@ -41,9 +40,9 @@ template <version_t version_v> struct ai_result_t {
 template <version_t version_v, class CB>
 MJZ_CX_FN ai_result_t<version_v>
 solve_forward(uintlen_t nb, uintlen_t nv, const auto &preds,
-              const auto &widen_at, uintlen_t entry_block,
-              uintlen_t plain_cap, uintlen_t widen_cap,
-              uintlen_t narrow_rounds, const CB &cb) noexcept {
+              const auto &widen_at, uintlen_t entry_block, uintlen_t plain_cap,
+              uintlen_t widen_cap, uintlen_t narrow_rounds,
+              const CB &cb) noexcept {
   ai_result_t<version_v> R{};
   if (!nb || !nv)
     return R;

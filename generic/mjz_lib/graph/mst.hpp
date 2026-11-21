@@ -33,14 +33,14 @@ namespace mjz::graph_ns {
 // total fits.
 template <version_t version_v, class weight_t>
 struct minimum_spanning_forest_result_t {
-  weight_t total{};                 // the sum over the forest (unique)
-  std::vector<uintlen_t> edges{};   // the chosen input edge ids
+  weight_t total{};               // the sum over the forest (unique)
+  std::vector<uintlen_t> edges{}; // the chosen input edge ids
 };
 
 // ---- Kruskal ---------------------------------------------------------------
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN minimum_spanning_forest_result_t<version_v, weight_t>
 calculate_minimum_spanning_forest_kruskal(
     const basic_forest_t<version_v, R> &graph,
@@ -52,11 +52,9 @@ calculate_minimum_spanning_forest_kruskal(
   for (uintlen_t e = 0; e < nedges; ++e)
     by_weight[e] = e;
   auto it_w = std::ranges::begin(weights);
-  std::ranges::sort(by_weight, std::ranges::less{},
-                    [&](uintlen_t e) noexcept {
-                      return pair_t<weight_t, uintlen_t>{
-                          weight_t(*(it_w + intlen_t(e))), e};
-                    });
+  std::ranges::sort(by_weight, std::ranges::less{}, [&](uintlen_t e) noexcept {
+    return pair_t<weight_t, uintlen_t>{weight_t(*(it_w + intlen_t(e))), e};
+  });
   disjoint_set_union_t<version_v, std::vector<uintlen_t>> dsu{};
   dsu.parent_then_rank.assign(n, 0);
   dsu.init(n);
@@ -84,9 +82,9 @@ calculate_minimum_spanning_forest_kruskal(
 }
 
 // ---- Prim (dense) ----------------------------------------------------------
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN minimum_spanning_forest_result_t<version_v, weight_t>
 calculate_minimum_spanning_forest_prim(
     const basic_forest_t<version_v, R> &graph,
@@ -153,9 +151,9 @@ calculate_minimum_spanning_forest_prim(
 }
 
 // ---- Boruvka ---------------------------------------------------------------
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN minimum_spanning_forest_result_t<version_v, weight_t>
 calculate_minimum_spanning_forest_boruvka(
     const basic_forest_t<version_v, R> &graph,
@@ -230,5 +228,5 @@ calculate_minimum_spanning_forest_boruvka(
   return ret;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_mst_FILE_

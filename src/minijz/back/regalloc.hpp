@@ -122,9 +122,8 @@ MJZ_EMIT_FN RaPlan ra_plan(const Fn &fn, const EmitPlan &P) {
     def_of_site[i] = (d == NONE) ? opt_ns::none_v : ulen(d);
   }
   // ---- liveness + interference: the library kernels ----------------------
-  const auto liv =
-      opt_ns::calculate_block_liveness<V>(succ_rows, block_sites, args_of_site,
-                                       def_of_site, skip_site, nv, 64);
+  const auto liv = opt_ns::calculate_block_liveness<V>(
+      succ_rows, block_sites, args_of_site, def_of_site, skip_site, nv, 64);
   std::vector<ulen> entry_defs{};
   for (uint32_t p = 0; p < fn.nparams && p < nv; ++p)
     entry_defs.push_back(p);

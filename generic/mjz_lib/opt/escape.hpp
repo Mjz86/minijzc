@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_escape_FILE_
 #define MJZ_SRC_OPT_escape_FILE_
 #include "base.hpp"
@@ -56,9 +55,10 @@ namespace mjz::opt_ns {
 // client (a different backend with different handle positions passes
 // different flags, not a different kernel). none_v and junk operands
 // are invisible: they are never members of a well-formed closure.
-MJZ_CX_FN std::vector<char> calculate_copy_closure(
-    const auto &copy_src, const auto &copy_dst, const auto &seeds,
-    uintlen_t n_vars) noexcept {
+MJZ_CX_FN std::vector<char> calculate_copy_closure(const auto &copy_src,
+                                                   const auto &copy_dst,
+                                                   const auto &seeds,
+                                                   uintlen_t n_vars) noexcept {
   std::vector<char> ali(n_vars, 0);
   for (const auto &ss : seeds) {
     const uintlen_t v = uintlen_t(ss);

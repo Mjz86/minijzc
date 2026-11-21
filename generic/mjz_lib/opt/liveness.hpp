@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_liveness_FILE_
 #define MJZ_SRC_OPT_liveness_FILE_
 #include "base.hpp"
@@ -117,10 +116,11 @@ MJZ_CX_FN block_liveness_t calculate_block_liveness(
 }
 
 template <version_t version_v>
-MJZ_CX_FN std::vector<std::vector<uintlen_t>> calculate_interference_rows(
-    const auto &block_sites, const auto &args_of_site, const auto &def_of_site,
-    const auto &skip_site, const block_liveness_t &liv, uintlen_t n_vars,
-    uintlen_t entry, const auto &entry_defs) noexcept {
+MJZ_CX_FN std::vector<std::vector<uintlen_t>>
+calculate_interference_rows(const auto &block_sites, const auto &args_of_site,
+                            const auto &def_of_site, const auto &skip_site,
+                            const block_liveness_t &liv, uintlen_t n_vars,
+                            uintlen_t entry, const auto &entry_defs) noexcept {
   const uintlen_t nb = uintlen_t(liv.live_out.size());
   std::vector<std::vector<uintlen_t>> adj(n_vars);
   auto edge = [&](uintlen_t a, uintlen_t b) noexcept {

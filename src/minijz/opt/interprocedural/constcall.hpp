@@ -125,8 +125,8 @@ constexpr bool closure_has_depth(const std::vector<Fn> &fns, uint32_t fi) {
 }
 // transitive purity over the call graph (cycle-safe DFS)
 constexpr bool fn_pure_closure(const std::vector<Fn> &fns, uint32_t fi) {
-  return !any_fn_in_closure(
-      fns, fi, [](const Fn &F) { return !fn_local_pure(F); });
+  return !any_fn_in_closure(fns, fi,
+                            [](const Fn &F) { return !fn_local_pure(F); });
 }
 
 // exact SSA execution of one pure fn; mirrors run_prog's semantics: phis are

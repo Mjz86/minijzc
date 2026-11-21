@@ -14,8 +14,8 @@ static inline ulen kz_pick(std::mt19937_64 &r, ulen n) {
 static inline bool kz_chance(std::mt19937_64 &r, int pct) {
   return int(r() % 100) < pct;
 }
-static std::vector<std::vector<ulen>>
-kzg_reducible(std::mt19937_64 &rng, ulen n_target) {
+static std::vector<std::vector<ulen>> kzg_reducible(std::mt19937_64 &rng,
+                                                    ulen n_target) {
   std::vector<std::vector<ulen>> rows(n_target);
   ulen nodes = 1;
   int selfs = int(kz_pick(rng, 4));
@@ -188,9 +188,8 @@ int main(int argc, char **argv) {
     for (ulen x = 0; x < n + 2; ++x)
       for (ulen e : net_edge_of[x])
         net_caps.push_back(w[e]);
-    auto flow = gns::calculate_maximum_flow<V>(S, T,
-                                               gns::make_basic_forest<V>(net),
-                                               net_caps);
+    auto flow = gns::calculate_maximum_flow<V>(
+        S, T, gns::make_basic_forest<V>(net), net_caps);
     auto &side = flow.cut_side;
     for (ulen u = 0; u < n; ++u)
       for (ulen e : edge_ids[u]) {
@@ -321,10 +320,9 @@ int main(int argc, char **argv) {
       self(self, cost + w[target]);
       --depth;
       del_back[target] = 0;
-      std::sort(branch_path.begin(), branch_path.end(),
-                [&](ulen a, ulen b) {
-                  return w[a] != w[b] ? w[a] < w[b] : a < b;
-                });
+      std::sort(branch_path.begin(), branch_path.end(), [&](ulen a, ulen b) {
+        return w[a] != w[b] ? w[a] < w[b] : a < b;
+      });
       for (ulen f : branch_path) {
         cut_arc[f] = 1;
         ++depth;

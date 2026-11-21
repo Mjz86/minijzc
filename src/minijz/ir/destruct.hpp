@@ -35,8 +35,8 @@
 //   documented inline below and are the load-bearing part.
 
 #include "../base/pass_cfg.hpp"
-#include "instr.hpp" // Fn (was masked by the old an.hpp include)
 #include "../opt/opt_generic.hpp"
+#include "instr.hpp" // Fn (was masked by the old an.hpp include)
 #include "stats.hpp"
 #include "sweep.hpp"
 

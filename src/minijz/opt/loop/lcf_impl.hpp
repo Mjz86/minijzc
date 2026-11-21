@@ -36,11 +36,11 @@
 #include "../../ir/instr.hpp"
 #include "../../ir/phi_norm.hpp"
 #include "../analysis/an.hpp"
-#include "../opt_generic.hpp" // the shape kernels (header preds, exits)
 #include "../linear/linform.hpp"
-#include "lcf_rt.hpp"     // LcfEvo + LcfRtIn + lcf_rt_fold
-#include "lcf_sim.hpp"    // LcfSimIn + lcf_sim_fold + the budgets
-#include "loop_shape.hpp" // HPhi (the shared header-phi record)
+#include "../opt_generic.hpp" // the shape kernels (header preds, exits)
+#include "lcf_rt.hpp"         // LcfEvo + LcfRtIn + lcf_rt_fold
+#include "lcf_sim.hpp"        // LcfSimIn + lcf_sim_fold + the budgets
+#include "loop_shape.hpp"     // HPhi (the shared header-phi record)
 
 // ---- the series algebra (a^n, S(n), T(n), all mod 2^64) -----------------
 // lcf_pow has no callers today (kept: it documents the a^N in K1 and is

@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_layout_FILE_
 #define MJZ_SRC_OPT_layout_FILE_
 #include "base.hpp"
@@ -57,8 +56,9 @@ namespace mjz::opt_ns {
 // none_v at every chain end and for unreachable/unplaced blocks).
 // WHAT a chain means for text (fallthroughs, label placement) is
 // client policy.
-MJZ_CX_FN std::vector<uintlen_t> calculate_reverse_postorder(
-    const auto &succs_rows, const auto &reach, uintlen_t entry) noexcept {
+MJZ_CX_FN std::vector<uintlen_t>
+calculate_reverse_postorder(const auto &succs_rows, const auto &reach,
+                            uintlen_t entry) noexcept {
   const uintlen_t nb = uintlen_t(succs_rows.size());
   std::vector<uintlen_t> rpo{};
   if (!nb || entry >= nb || !reach[entry])
@@ -91,12 +91,14 @@ MJZ_CX_FN std::vector<uintlen_t> calculate_reverse_postorder(
 
 struct trace_layout_t {
   std::vector<uintlen_t> order{}; // reachable blocks, emission order
-  std::vector<uintlen_t> next{};  // per block: the block emitted after it / none_v
+  std::vector<uintlen_t>
+      next{}; // per block: the block emitted after it / none_v
 };
 
-MJZ_CX_FN trace_layout_t calculate_trace_layout(
-    const auto &succs_rows, const auto &reach, const auto &score_of_block,
-    const auto &rpo) noexcept {
+MJZ_CX_FN trace_layout_t calculate_trace_layout(const auto &succs_rows,
+                                                const auto &reach,
+                                                const auto &score_of_block,
+                                                const auto &rpo) noexcept {
   const uintlen_t nb = uintlen_t(succs_rows.size());
   trace_layout_t t{};
   t.next.assign(nb, none_v);

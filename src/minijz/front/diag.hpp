@@ -63,7 +63,7 @@ inline std::string diag_message(std::string_view src, const char *what,
 // trap) hand-rolled this scan twice until the ckpt-33 dedup; callers
 // check pos validity FIRST (the scan assumes 0 < pos <= src.size()).
 inline std::pair<uint32_t, uint32_t> line_of(std::string_view src,
-                                              uint32_t pos) {
+                                             uint32_t pos) {
   uint32_t lo = 0, line = 1;
   for (uint32_t i = 0; i < pos && i < src.size(); ++i)
     if (src[i] == '\n') {

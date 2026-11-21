@@ -74,7 +74,7 @@
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
 #include "loop_shape.hpp"
-#include "rotate_impl.hpp"   // RotCtx + the per-phase support layer
+#include "rotate_impl.hpp"    // RotCtx + the per-phase support layer
 #include "unswitch_shape.hpp" // exit_inventory
 
 constexpr bool opt_rotate(Fn &fn, const An &A, OptStats &os) {
@@ -85,17 +85,17 @@ constexpr bool opt_rotate(Fn &fn, const An &A, OptStats &os) {
     return false;
   for (uint32_t h : S.headers) {
     RotCtx R{fn, A, S, h};
-    rot_prepare(fn, R); // inL: the loop membership flags
-    if (!rot_shape_ok(fn, R) ||      // the canonical shape + the
-                                     // dedicated preheader
-        !rot_exit_ok(fn, R) ||       // the only-exit + X-single-pred
-                                     // + X-phi-free gates
+    rot_prepare(fn, R);               // inL: the loop membership flags
+    if (!rot_shape_ok(fn, R) ||       // the canonical shape + the
+                                      // dedicated preheader
+        !rot_exit_ok(fn, R) ||        // the only-exit + X-single-pred
+                                      // + X-phi-free gates
         !rot_header_phis_ok(fn, R) || // h's phis keyed (pre, latch)
-        !rot_collect_hbody(fn, R))   // the saved terminator + the
-                                     // non-phi body + the cap
+        !rot_collect_hbody(fn, R))    // the saved terminator + the
+                                      // non-phi body + the cap
       continue;
-    rot_mark_def_sets(fn, R);  // the HDEF set + loopdef
-    rot_after_region(fn, R);   // F: reachable from X loop-free
+    rot_mark_def_sets(fn, R);       // the HDEF set + loopdef
+    rot_after_region(fn, R);        // F: reachable from X loop-free
     if (!rot_classify_reads(fn, R)) // loop_read / f_read + the
                                     // outside-use safety scan
       continue;

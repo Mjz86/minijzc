@@ -68,8 +68,7 @@ inline void vn_rewrite_completed_map(Fn &fn, uint32_t nv,
   };
   for (uint32_t b = 0; b < fn.nblocks(); ++b)
     for (uint32_t i = fn.blocks[b].begin; i < fn.blocks[b].end; ++i)
-      rewrite_operands(fn.code[i],
-                       [&](uint32_t &v) { v = resolve(v); });
+      rewrite_operands(fn.code[i], [&](uint32_t &v) { v = resolve(v); });
 }
 
 // ---- the shared cse/gvn driver --------------------------------------------

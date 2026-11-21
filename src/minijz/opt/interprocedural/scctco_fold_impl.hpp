@@ -111,15 +111,15 @@ struct SfCtx {
   uint32_t H{}, nparams{}, trapb{};
   OptStats &os;
   uint8_t dbg{};
-  uint32_t V{NONE}, trip_phi{NONE}; // the carried value + the trip counter
-  uint32_t root{NONE}, latch{NONE}; // D (block 0) + the back-edge pred
-  uint32_t V0{NONE}, Vl{NONE};      // V's root-edge / latch-edge args
-  std::vector<uint32_t> def_of{};   // dst -> instr index
-  uint64_t c{0};                    // the count-down step
+  uint32_t V{NONE}, trip_phi{NONE};  // the carried value + the trip counter
+  uint32_t root{NONE}, latch{NONE};  // D (block 0) + the back-edge pred
+  uint32_t V0{NONE}, Vl{NONE};       // V's root-edge / latch-edge args
+  std::vector<uint32_t> def_of{};    // dst -> instr index
+  uint64_t c{0};                     // the count-down step
   std::vector<char> reach{}, back{}; // from H / the loop proper
-  uint64_t T{0};                    // the exact first-trapping input
+  uint64_t T{0};                     // the exact first-trapping input
   constexpr SfCtx(Fn &f_, uint32_t H_, uint32_t nparams_, uint32_t trapb_,
-                    OptStats &os_, uint8_t dbg_)
+                  OptStats &os_, uint8_t dbg_)
       : f(f_), H(H_), nparams(nparams_), trapb(trapb_), os(os_), dbg(dbg_) {}
 };
 
@@ -497,8 +497,7 @@ constexpr bool sf_emit(Fn &f, SfCtx &C) {
         Instr{.k = K::Bin, .b = B::Lt, .dst = g1, .a = C.V0, .b2 = z0});
     gb.push_back(
         Instr{.k = K::Bin, .b = B::Ge, .dst = g2, .a = C.V0, .b2 = KC});
-    gb.push_back(
-        Instr{.k = K::Bin, .b = B::Or, .dst = gc, .a = g1, .b2 = g2});
+    gb.push_back(Instr{.k = K::Bin, .b = B::Or, .dst = gc, .a = g1, .b2 = g2});
     gb.push_back(Instr{.k = K::Cbr, .a = gc, .t = C.trapb, .f = FOLD + 1});
     uint32_t base = (uint32_t)f.code.size();
     f.code.insert(f.code.end(), gb.begin(), gb.end());

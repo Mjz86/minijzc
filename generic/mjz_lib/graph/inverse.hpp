@@ -60,10 +60,12 @@ namespace mjz::graph_ns {
 //     or identity back to the source row. BOTH: data and bijection.
 //
 //   2 universes x 2 fill orders x 4 payloads = 16 entry points:
-//     square:   make_basic_inv_forest                       (backward, plain -- csr.hpp)
-//               map_make_basic_inv_forest_edges_data        (backward, data -- csr.hpp)
-//               map_make_basic_inv_forest_edges_bijection   (backward, bij -- csr.hpp)
-//               map_make_basic_inv_forest_edges_data_bijection (backward, both)
+//     square:   make_basic_inv_forest                       (backward, plain --
+//     csr.hpp)
+//               map_make_basic_inv_forest_edges_data        (backward, data --
+//               csr.hpp) map_make_basic_inv_forest_edges_bijection   (backward,
+//               bij -- csr.hpp) map_make_basic_inv_forest_edges_data_bijection
+//               (backward, both)
 //               + the four _forward siblings
 //     universe: make_basic_inv_forest_universe              (forward, plain)
 //               + the _backward plain sibling, and the four
@@ -313,8 +315,8 @@ MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<T>>
 map_make_basic_inv_forest_edges_data_forward(
     const auto &range_of_range, auto &&range_of_edge_datas) noexcept {
   return detail::make_inv_forest_data_impl_<version_v, true, T>(
-      range_of_range, std::forward<decltype(range_of_edge_datas)>(
-                          range_of_edge_datas),
+      range_of_range,
+      std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),
       uintlen_t(std::ranges::size(range_of_range)));
 }
 
@@ -332,8 +334,8 @@ MJZ_CX_FN pair_t<treversal_result_t<version_v>,
 map_make_basic_inv_forest_edges_data_bijection(
     const auto &range_of_range, auto &&range_of_edge_datas) noexcept {
   return detail::make_inv_forest_data_bij_impl_<version_v, false, T>(
-      range_of_range, std::forward<decltype(range_of_edge_datas)>(
-                          range_of_edge_datas),
+      range_of_range,
+      std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),
       uintlen_t(std::ranges::size(range_of_range)));
 }
 
@@ -343,8 +345,8 @@ MJZ_CX_FN pair_t<treversal_result_t<version_v>,
 map_make_basic_inv_forest_edges_data_bijection_forward(
     const auto &range_of_range, auto &&range_of_edge_datas) noexcept {
   return detail::make_inv_forest_data_bij_impl_<version_v, true, T>(
-      range_of_range, std::forward<decltype(range_of_edge_datas)>(
-                          range_of_edge_datas),
+      range_of_range,
+      std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),
       uintlen_t(std::ranges::size(range_of_range)));
 }
 
@@ -369,9 +371,9 @@ make_basic_inv_forest_universe_backward(const auto &range_of_range,
 
 template <version_t version_v, typename T>
 MJZ_CX_FN pair_t<treversal_result_t<version_v>, std::vector<T>>
-map_make_basic_inv_forest_edges_data_universe(
-    const auto &range_of_range, auto &&range_of_edge_datas,
-    uintlen_t node_count) noexcept {
+map_make_basic_inv_forest_edges_data_universe(const auto &range_of_range,
+                                              auto &&range_of_edge_datas,
+                                              uintlen_t node_count) noexcept {
   return detail::make_inv_forest_data_impl_<version_v, true, T>(
       range_of_range,
       std::forward<decltype(range_of_edge_datas)>(range_of_edge_datas),

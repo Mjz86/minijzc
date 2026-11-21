@@ -49,32 +49,32 @@ constexpr bool opt_gvn(Fn &fn, const An &A, OptStats &os) {
   // div/mod -- the SHARED vn_fill_bin_site; phis with BOTH incomings
   // present -- a degenerate phi is phi-degen's business; consts that
   // do not define a PARAMETER vreg), and the operand/pred rows
-  const bool did = vn_run(
-      fn, A, hits,
-      [&fn](const Instr &I, uint32_t nv, opt_ns::vn_site_t<V> &si,
-            std::vector<uintlen_t> &sa, std::vector<uintlen_t> &sp) {
-        if (I.dst == NONE || I.dst >= nv)
-          return;
-        if (I.k == K::Const) {
-          if (I.dst < fn.nparams)
-            return; // param-defining placeholder (fnspec clones): keep
-          si.tag = opt_ns::vn_const_v;
-          si.c = I.c;
-          return;
-        }
-        if (I.k == K::Phi) {
-          // phis carry <= 2 incomings: I.a from pred I.t, I.b2 from pred
-          // I.f. A degenerate phi (a missing incoming, NONE) is
-          // phi-degen's business, not ours.
-          if (I.a == NONE || I.b2 == NONE)
-            return;
-          si.tag = opt_ns::vn_phi_v;
-          sa = {vn_u(I.a), vn_u(I.b2)};
-          sp = {vn_u(I.t), vn_u(I.f)};
-          return;
-        }
-        vn_fill_bin_site(I, nv, si, sa);
-      });
+  const bool did =
+      vn_run(fn, A, hits,
+             [&fn](const Instr &I, uint32_t nv, opt_ns::vn_site_t<V> &si,
+                   std::vector<uintlen_t> &sa, std::vector<uintlen_t> &sp) {
+               if (I.dst == NONE || I.dst >= nv)
+                 return;
+               if (I.k == K::Const) {
+                 if (I.dst < fn.nparams)
+                   return; // param-defining placeholder (fnspec clones): keep
+                 si.tag = opt_ns::vn_const_v;
+                 si.c = I.c;
+                 return;
+               }
+               if (I.k == K::Phi) {
+                 // phis carry <= 2 incomings: I.a from pred I.t, I.b2 from pred
+                 // I.f. A degenerate phi (a missing incoming, NONE) is
+                 // phi-degen's business, not ours.
+                 if (I.a == NONE || I.b2 == NONE)
+                   return;
+                 si.tag = opt_ns::vn_phi_v;
+                 sa = {vn_u(I.a), vn_u(I.b2)};
+                 sp = {vn_u(I.t), vn_u(I.f)};
+                 return;
+               }
+               vn_fill_bin_site(I, nv, si, sa);
+             });
   if (!did)
     return false;
   os.gvns += hits;

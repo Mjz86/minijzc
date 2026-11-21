@@ -117,8 +117,8 @@ int main(int argc, char **argv) {
   std::printf("== euler seed %ld: n=%zu me=%zu\n", seed, size_t(nn),
               size_t(me));
   for (ulen ei = 0; ei < me; ++ei)
-    std::printf("  edge %zu: %zu-%zu\n", size_t(ei),
-                size_t(S.edges[ei].first), size_t(S.edges[ei].second));
+    std::printf("  edge %zu: %zu-%zu\n", size_t(ei), size_t(S.edges[ei].first),
+                size_t(S.edges[ei].second));
   // the reference conditions
   std::vector<ulen> deg(nn, 0);
   for (ulen u = 0; u < nn; ++u)
@@ -166,7 +166,8 @@ int main(int argc, char **argv) {
   for (ulen u = 0; u < nn; ++u)
     for (ulen e : g.index_range()[u])
       std::printf("  arc %zu: %zu -> %zu (edge %zu)\n", size_t(e), size_t(u),
-                  size_t(g.get_edge_to(e)), size_t(S.slot_edge[u][0] == kz_none() ? 0 : 0));
+                  size_t(g.get_edge_to(e)),
+                  size_t(S.slot_edge[u][0] == kz_none() ? 0 : 0));
   auto circ = gns::calculate_eulerian_circuit_undirected<V>(g);
   auto path = gns::calculate_eulerian_path_undirected<V>(g);
   std::printf("circ: ok=%d first=%zu edges:", int(circ.ok),

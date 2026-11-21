@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_route_FILE_
 #define MJZ_SRC_OPT_route_FILE_
 #include "base.hpp"
@@ -57,7 +56,7 @@ inline constexpr uintlen_t route_dead_v = none_v;
 inline constexpr uintlen_t route_born_base_v = 2;
 struct route_site_t {
   uintlen_t W{};
-  std::vector<uintlen_t> preds{};  // the join's preds, row order
+  std::vector<uintlen_t> preds{};   // the join's preds, row order
   std::vector<uintlen_t> proutes{}; // their routes at birth
 };
 struct route_plan_t {
@@ -137,10 +136,10 @@ MJZ_CX_FN route_plan_t calculate_supplier_routes(
 // site needs its preds' suppliers, recursively -- pushed in pred
 // order so the LAST pred's closure is processed first (the
 // original 2-pred emission order, generalized).
-MJZ_CX_FN void calculate_route_needs(
-    uintlen_t n_sources, uintlen_t n_vals, const auto &sites,
-    const auto &reads, std::vector<std::vector<char>> &need,
-    std::vector<std::vector<uintlen_t>> &bvals) noexcept {
+MJZ_CX_FN void
+calculate_route_needs(uintlen_t n_sources, uintlen_t n_vals, const auto &sites,
+                      const auto &reads, std::vector<std::vector<char>> &need,
+                      std::vector<std::vector<uintlen_t>> &bvals) noexcept {
   need.assign(n_sources, std::vector<char>(n_vals, 0));
   bvals.assign(sites.size(), {});
   for (const auto &rr : reads) {

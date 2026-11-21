@@ -81,7 +81,8 @@ int main(int argc, char **argv) {
   auto g = gns::make_basic_forest<V>(rows);
   auto got = gns::calculate_k_cores<V>(g);
   for (ulen u = 0; u < n; ++u)
-    std::printf("  core[%zu]: want=%zu got=%zu %s\n", size_t(u), size_t(want[u]),
-                size_t(got[u]), want[u] == got[u] ? "" : "  <<<< MISMATCH");
+    std::printf("  core[%zu]: want=%zu got=%zu %s\n", size_t(u),
+                size_t(want[u]), size_t(got[u]),
+                want[u] == got[u] ? "" : "  <<<< MISMATCH");
   return 0;
 }

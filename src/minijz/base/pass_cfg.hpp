@@ -120,7 +120,7 @@ inline constexpr const char *const PASS_TOGGLE_NAMES[PASS_TOGGLE_COUNT] = {
     "unroll", "lcf",      "constcall", "scctco",   "tailrec",  "cdfold",
     "ifconv", "inline",   "sccp",      "ldelim",   "callcse",  "deadargs",
     "fnspec", "icf",      "jthread",   "argpromo", "gvn",      "unswitch",
-    "lsimp",  "taildup",  "rotate",   "breq",     "dse"};
+    "lsimp",  "taildup",  "rotate",    "breq",     "dse"};
 constexpr bool apply_pass_flag(PassCfg &p, uint32_t idx, bool on) {
   switch (idx) {
   case 0:

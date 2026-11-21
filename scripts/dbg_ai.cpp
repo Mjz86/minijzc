@@ -19,7 +19,8 @@ struct CB {
     const int64_t hi = (*rh)[p] < st[0].hi ? (*rh)[p] : st[0].hi;
     st[0] = lo <= hi ? iv_t{lo, hi, false} : iv_t{0, 0, true};
   }
-  void phi_join(uintlen_t, std::vector<iv_t> &, const iv_t *, uintlen_t) const {}
+  void phi_join(uintlen_t, std::vector<iv_t> &, const iv_t *, uintlen_t) const {
+  }
   void transfer(uintlen_t b, std::vector<iv_t> &st) const {
     if (!st[0].bot) {
       st[0].hi = st[0].hi == INT64_MAX ? INT64_MAX : st[0].hi + (*step)[b];
@@ -31,9 +32,11 @@ struct CB {
 };
 
 // traced copy of solve_forward
-static bool trace_solve(uintlen_t nb, uintlen_t nv, const std::vector<std::vector<ulen>> &preds,
-                        const std::vector<char> &widen_at, uintlen_t entry_block,
-                        uintlen_t plain_cap, uintlen_t widen_cap, uintlen_t narrow_rounds,
+static bool trace_solve(uintlen_t nb, uintlen_t nv,
+                        const std::vector<std::vector<ulen>> &preds,
+                        const std::vector<char> &widen_at,
+                        uintlen_t entry_block, uintlen_t plain_cap,
+                        uintlen_t widen_cap, uintlen_t narrow_rounds,
                         const CB &cb) {
   std::vector<iv_t> entry((size_t)nb * nv, iv_t{0, 0, true});
   std::vector<iv_t> exit_((size_t)nb * nv, iv_t{0, 0, true});
@@ -116,7 +119,8 @@ static bool trace_solve(uintlen_t nb, uintlen_t nv, const std::vector<std::vecto
 int main(int argc, char **argv) {
   long seed = argc > 1 ? atol(argv[1]) : 407;
   std::mt19937_64 rng(uint64_t(seed) * 0x9E3779B97F4A7C15ull +
-                      uint64_t(25) * 0xBF58476D1CE4E5B9ull + // comp idx of opt.ai
+                      uint64_t(25) *
+                          0xBF58476D1CE4E5B9ull + // comp idx of opt.ai
                       0xD1B54A32D192ED03ull);
   const ulen nb = 2 + kz_pick(rng, 5);
   std::vector<std::vector<ulen>> succs(nb);
@@ -158,8 +162,8 @@ int main(int argc, char **argv) {
   std::printf("seed %ld: nb=%u c=%lld plain=%u wcap=%u\n", seed, nb,
               (long long)c, plain_cap, widen_cap);
   for (ulen b = 0; b < nb; ++b) {
-    std::printf("b%u: step=%lld ja=%lld jb=%lld succs=[", b,
-                (long long)step[b], (long long)ja[b], (long long)jb[b]);
+    std::printf("b%u: step=%lld ja=%lld jb=%lld succs=[", b, (long long)step[b],
+                (long long)ja[b], (long long)jb[b]);
     for (auto s : succs[b])
       std::printf("%u%s", s, marked[b][s] ? "m" : "");
     std::printf("] rl=%lld rh=%lld preds=[", (long long)rl[b],

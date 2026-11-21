@@ -43,7 +43,6 @@
 #include "../analysis/an.hpp"
 #include "../opt_generic.hpp"
 
-
 // ---- the lcf/unroll shared gates (the ckpt-31 dedup wave) ---------------
 // These three were verbatim twins in lcf_impl and unroll_impl (the unroll
 // decomposition of ckpt 25 kept them local to stay byte-identical; the

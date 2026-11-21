@@ -35,14 +35,12 @@ namespace mjz::graph_ns {
 // loops are tolerated, self loops never match). none_v marks the
 // unmatched.
 
-template <version_t version_v>
-struct bipartite_matching_result_t {
+template <version_t version_v> struct bipartite_matching_result_t {
   std::vector<uintlen_t> right_of_left{}; // none_v = free
   std::vector<uintlen_t> left_of_right{}; // none_v = free
   uintlen_t size{};
 };
-template <version_t version_v>
-struct maximum_matching_result_t {
+template <version_t version_v> struct maximum_matching_result_t {
   std::vector<uintlen_t> mate{}; // none_v = unmatched (undirected)
   uintlen_t size{};
 };
@@ -179,8 +177,7 @@ calculate_maximum_bipartite_matching_kuhn(const auto &left_rows,
     frame_cursor.push_back(0);
     while (!frame_node.empty()) {
       const uintlen_t l = frame_node.back();
-      if (frame_cursor.back() >=
-          uintlen_t(std::ranges::size(rows[l]))) {
+      if (frame_cursor.back() >= uintlen_t(std::ranges::size(rows[l]))) {
         frame_node.pop_back();
         frame_cursor.pop_back();
         if (!trail.empty() && !frame_node.empty())
@@ -450,15 +447,13 @@ calculate_maximum_matching(const basic_forest_t<version_v, R> &graph) noexcept {
 // deterministic in the input. The input must be a DAG (the name says
 // it: matched arcs cannot cycle on a real DAG, and the walk cap is
 // the belt-and-braces guard the capped resolves carry).
-template <version_t version_v>
-struct min_path_cover_result_t {
+template <version_t version_v> struct min_path_cover_result_t {
   uintlen_t path_count{};                      // the minimum
   std::vector<uintlen_t> succ_of{};            // node -> successor / none
-  std::vector<std::vector<uintlen_t>> paths{};  // the decomposition
+  std::vector<std::vector<uintlen_t>> paths{}; // the decomposition
 };
 template <version_t version_v, class R>
-MJZ_CX_FN min_path_cover_result_t<version_v>
-calculate_minimum_path_cover_dag(
+MJZ_CX_FN min_path_cover_result_t<version_v> calculate_minimum_path_cover_dag(
     const basic_forest_t<version_v, R> &graph) noexcept {
   min_path_cover_result_t<version_v> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
@@ -504,5 +499,5 @@ calculate_minimum_path_cover_dag(
   return ret;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_matching_FILE_

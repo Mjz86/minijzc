@@ -63,7 +63,7 @@ constexpr void scctco_fold(Fn &f, uint32_t H, uint32_t nparams, OptStats &os,
   sf_build_def_of(f, C); // dst -> instr index (the affine input)
   if (!sf_step_ok(f, C)) // Vl = V - c; 0 < c <= 8; c a power of two
     return;
-  sf_mark_regions(f, C); // reach (fwd from H) + back (rev, gated)
+  sf_mark_regions(f, C);   // reach (fwd from H) + back (rev, gated)
   if (!sf_loop_pure(f, C)) // no side effects in the loop proper
     return;
   if (!sf_scan_exits(f, C)) // [consts, ret const] exits; v_r == r

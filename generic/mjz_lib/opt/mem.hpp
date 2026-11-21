@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_mem_FILE_
 #define MJZ_SRC_OPT_mem_FILE_
 #include "base.hpp"
@@ -72,10 +71,10 @@ struct mem_hit_t {
   bool from_store{};
 };
 template <version_t version_v, class MayKill>
-MJZ_CX_FN std::vector<mem_hit_t> run_dom_scoped_table(
-    const auto &dominator_tree, const auto &sites_of_block,
-    const auto &drop_at, const auto &events_of_block,
-    const MayKill &may_kill) noexcept {
+MJZ_CX_FN std::vector<mem_hit_t>
+run_dom_scoped_table(const auto &dominator_tree, const auto &sites_of_block,
+                     const auto &drop_at, const auto &events_of_block,
+                     const MayKill &may_kill) noexcept {
   struct ent_t {
     uintlen_t group{}, key_tag{}, key_a{}, key_b{}, val{};
     bool from_store{};

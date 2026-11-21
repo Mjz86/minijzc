@@ -28,8 +28,7 @@ namespace mjz::graph_ns {
 // which is only sound without signedness traps. The flow VALUE is at
 // most the sum of capacities leaving the source -- pick a width where
 // that sum fits.
-template <version_t version_v, class cap_t>
-struct max_flow_result_t {
+template <version_t version_v, class cap_t> struct max_flow_result_t {
   cap_t flow{};                   // the maximum source->sink value
   std::vector<cap_t> edge_flow{}; // per INPUT edge: the net flow it carries
   std::vector<char> cut_side{};   // the MIN CUT's source side (post-flow)
@@ -46,8 +45,7 @@ concept flow_cap_c = std::unsigned_integral<cap_t> || requires() {
 // pairs, the per-node arc rows (each row's arcs in ascending edge
 // index -- one ascending scan fills them deterministically), the
 // headroom, and the edge endpoints cached once
-template <version_t version_v, flow_cap_c cap_t>
-struct residual_graph_t {
+template <version_t version_v, flow_cap_c cap_t> struct residual_graph_t {
   uintlen_t node_count{};
   std::vector<uintlen_t> edge_from{};    // per input edge
   std::vector<uintlen_t> edge_to{};      // per input edge
@@ -76,8 +74,7 @@ struct residual_graph_t {
 
   template <class R, usable_range_exact_c<version_v> caps_t>
   MJZ_CX_FN static residual_graph_t
-  make(const basic_forest_t<version_v, R> &graph,
-       const caps_t &caps) noexcept {
+  make(const basic_forest_t<version_v, R> &graph, const caps_t &caps) noexcept {
     residual_graph_t ret{};
     ret.node_count = uintlen_t(std::ranges::size(graph.range()));
     const uintlen_t nedges = uintlen_t(std::ranges::size(graph.edges));
@@ -143,11 +140,9 @@ struct residual_graph_t {
 // repeat (BFS levels over positive-headroom arcs, one blocking flow
 // with per-node cursors) until the sink stops being leveled
 template <version_t version_v, flow_cap_c cap_t>
-MJZ_CX_FN void
-dinic_run_(residual_graph_t<version_v, cap_t> &res, uintlen_t source,
-           uintlen_t sink) noexcept {
-  if (source == sink || source >= res.node_count ||
-      sink >= res.node_count)
+MJZ_CX_FN void dinic_run_(residual_graph_t<version_v, cap_t> &res,
+                          uintlen_t source, uintlen_t sink) noexcept {
+  if (source == sink || source >= res.node_count || sink >= res.node_count)
     return;
   std::vector<intlen_t> level(res.node_count);
   std::vector<uintlen_t> queue(res.node_count);
@@ -161,8 +156,7 @@ dinic_run_(residual_graph_t<version_v, cap_t> &res, uintlen_t source,
     queue[qt++] = source;
     while (qh < qt) {
       const uintlen_t u = queue[qh++];
-      for (uintlen_t k = res.arc_row_begin(u); k < res.arc_row_end(u);
-           ++k) {
+      for (uintlen_t k = res.arc_row_begin(u); k < res.arc_row_end(u); ++k) {
         const uintlen_t arc = res.arc_ids[k];
         const uintlen_t w = res.arc_to[arc];
         if (res.arc_headroom[arc] && level[w] < 0) {
@@ -196,8 +190,7 @@ dinic_run_(residual_graph_t<version_v, cap_t> &res, uintlen_t source,
       uintlen_t arc = uintlen_t(-1);
       while (cursor[v] < res.arc_row_end(v)) {
         const uintlen_t cand = res.arc_ids[cursor[v]];
-        if (res.arc_headroom[cand] &&
-            level[res.arc_to[cand]] == level[v] + 1) {
+        if (res.arc_headroom[cand] && level[res.arc_to[cand]] == level[v] + 1) {
           arc = cand;
           break;
         }
@@ -232,8 +225,7 @@ edge_flows_of_(const residual_graph_t<version_v, cap_t> &res,
   auto it_caps = std::ranges::begin(caps);
   std::vector<cap_t> edge_flow(res.edge_from.size());
   for (uintlen_t i = 0; i < edge_flow.size(); ++i)
-    edge_flow[i] =
-        cap_t(*(it_caps + intlen_t(i))) - res.arc_headroom[i * 2];
+    edge_flow[i] = cap_t(*(it_caps + intlen_t(i))) - res.arc_headroom[i * 2];
   return edge_flow;
 }
 
@@ -246,8 +238,7 @@ MJZ_CX_FN cap_t flow_value_of_(const residual_graph_t<version_v, cap_t> &res,
   auto it_caps = std::ranges::begin(caps);
   cap_t net{};
   for (uintlen_t i = 0; i < res.edge_from.size(); ++i) {
-    const cap_t f =
-        cap_t(*(it_caps + intlen_t(i))) - res.arc_headroom[i * 2];
+    const cap_t f = cap_t(*(it_caps + intlen_t(i))) - res.arc_headroom[i * 2];
     if (res.edge_to[i] == sink)
       net += f;
     if (res.edge_from[i] == sink)
@@ -260,8 +251,7 @@ MJZ_CX_FN cap_t flow_value_of_(const residual_graph_t<version_v, cap_t> &res,
 // THE MAXIMUM FLOW (Dinic: O(V^2 E) worst case, one level graph per
 // blocking flow). Deterministic in the input's edge order; the VALUE
 // is the maximum, the per-edge split is one witness.
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> caps_t,
+template <version_t version_v, class R, usable_range_exact_c<version_v> caps_t,
           detail::flow_cap_c cap_t = std::ranges::range_value_t<caps_t>>
 MJZ_CX_FN max_flow_result_t<version_v, cap_t>
 calculate_maximum_flow(uintlen_t source, uintlen_t sink,
@@ -287,8 +277,7 @@ struct st_min_cut_result_t {
   std::vector<char> source_side{};    // the S side of a minimum cut
   std::vector<uintlen_t> cut_edges{}; // input edge ids crossing S->T
 };
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> caps_t,
+template <version_t version_v, class R, usable_range_exact_c<version_v> caps_t,
           detail::flow_cap_c cap_t = std::ranges::range_value_t<caps_t>>
 MJZ_CX_FN st_min_cut_result_t<version_v, cap_t>
 calculate_st_min_cut(uintlen_t source, uintlen_t sink,
@@ -322,8 +311,7 @@ struct min_cost_flow_result_t {
   int64_t cost{}; // int64 floor; a wider caller domain is their call
   std::vector<cap_t> edge_flow{};
 };
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> caps_t,
+template <version_t version_v, class R, usable_range_exact_c<version_v> caps_t,
           usable_range_exact_c<version_v> costs_t,
           detail::flow_cap_c cap_t = std::ranges::range_value_t<caps_t>>
 MJZ_CX_FN min_cost_flow_result_t<version_v, cap_t>
@@ -354,8 +342,7 @@ calculate_min_cost_flow(uintlen_t source, uintlen_t sink,
     for (uintlen_t qh = 0; qh < queue.size(); ++qh) {
       const uintlen_t u = queue[qh];
       in_queue[u] = 0;
-      for (uintlen_t k = res.arc_row_begin(u); k < res.arc_row_end(u);
-           ++k) {
+      for (uintlen_t k = res.arc_row_begin(u); k < res.arc_row_end(u); ++k) {
         const uintlen_t arc = res.arc_ids[k];
         if (!res.arc_headroom[arc])
           continue;
@@ -391,9 +378,9 @@ calculate_min_cost_flow(uintlen_t source, uintlen_t sink,
       }
     }
     if (flow_limit != uintlen_t(-1)) {
-      const uintlen_t room =
-          flow_limit > uintlen_t(ret.flow) ? flow_limit - uintlen_t(ret.flow)
-                                           : 0;
+      const uintlen_t room = flow_limit > uintlen_t(ret.flow)
+                                 ? flow_limit - uintlen_t(ret.flow)
+                                 : 0;
       if (uintlen_t(f) > room)
         f = cap_t(room);
       if (!f)
@@ -414,5 +401,5 @@ calculate_min_cost_flow(uintlen_t source, uintlen_t sink,
   return ret;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_flow_FILE_

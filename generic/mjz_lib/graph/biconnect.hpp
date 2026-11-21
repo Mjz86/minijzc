@@ -29,13 +29,12 @@ namespace mjz::graph_ns {
 // in row order; the twin skip consumes the FIRST matching arc. Every
 // output is a pure function of the input CSR.
 
-template <version_t version_v>
-struct biconnect_result_t {
-  std::vector<char> is_bridge_edge{};  // per INPUT arc: the tree arc of
-                                       // each bridge (one arc per bridge
-                                       // edge -- its twin is the other
-                                       // direction of the same edge)
-  std::vector<char> is_articulation{}; // per node
+template <version_t version_v> struct biconnect_result_t {
+  std::vector<char> is_bridge_edge{};   // per INPUT arc: the tree arc of
+                                        // each bridge (one arc per bridge
+                                        // edge -- its twin is the other
+                                        // direction of the same edge)
+  std::vector<char> is_articulation{};  // per node
   std::vector<uintlen_t> bcc_of_edge{}; // per INPUT arc (both arcs of
                                         // one undirected edge share)
   uintlen_t bcc_count{};
@@ -53,7 +52,7 @@ biconnect_dfs_(const basic_forest_t<version_v, R> &graph) noexcept {
   ret.is_bridge_edge.assign(nedges, 0);
   ret.is_articulation.assign(n, 0);
   ret.bcc_of_edge.assign(nedges, uintlen_t(-1));
-  auto rows = graph.range();          // row slots -> TARGETS
+  auto rows = graph.range();           // row slots -> TARGETS
   auto edge_ids = graph.index_range(); // row slots -> arc ids
   auto edge_to = [&](uintlen_t e) noexcept {
     return uintlen_t(*(std::ranges::begin(graph.edges) + intlen_t(e)));
@@ -318,5 +317,5 @@ calculate_k_cores(const basic_forest_t<version_v, R> &graph) noexcept {
   return core;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_biconnect_FILE_

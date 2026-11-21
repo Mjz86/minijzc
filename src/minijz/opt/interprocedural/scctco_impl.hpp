@@ -200,10 +200,10 @@ struct ScctcoHead {
 
 struct ScctcoCtx {
   Fn &f;
-  const std::vector<Fn> &snap;         // PRE-collapse member snapshots
+  const std::vector<Fn> &snap;          // PRE-collapse member snapshots
   const std::vector<uint32_t> &snap_of; // fn id -> snapshot id (NONE: out)
   uint32_t nfn{}, self_fn{};
-  uint32_t nparams{}, NV{}; // carried values: params + trip
+  uint32_t nparams{}, NV{};  // carried values: params + trip
   uint32_t t0{}, k1{}, z0{}; // D's consts: 511 / 1 / 0
   ScctcoHead self{};
   std::vector<ScctcoHead> heads{};
@@ -213,8 +213,8 @@ struct ScctcoCtx {
   constexpr ScctcoCtx(Fn &f_, const std::vector<Fn> &snap_,
                       const std::vector<uint32_t> &snap_of_, uint32_t nfn_,
                       uint32_t self_fn_)
-      : f(f_), snap(snap_), snap_of(snap_of_), nfn(nfn_),
-        self_fn(self_fn_), nparams(f_.nparams) {}
+      : f(f_), snap(snap_), snap_of(snap_of_), nfn(nfn_), self_fn(self_fn_),
+        nparams(f_.nparams) {}
 };
 
 // ---- the gates --------------------------------------------------------------
@@ -334,8 +334,7 @@ constexpr void st_promote(Fn &f, ScctcoCtx &C, ScctcoHead &Hd, uint32_t b,
   std::vector<uint32_t> res;
   for (uint32_t v = 0; v < C.NV; ++v) {
     uint32_t dst = new_anon_vreg(f, f.base_of(Hd.root_vals[v]));
-    Instr P{
-        .k = K::Phi, .dst = dst, .c = (int64_t)f.base_of(Hd.root_vals[v])};
+    Instr P{.k = K::Phi, .dst = dst, .c = (int64_t)f.base_of(Hd.root_vals[v])};
     if (Hd.root_pred < b) {
       P.a = Hd.root_vals[v];
       P.t = Hd.root_pred;
@@ -392,8 +391,7 @@ constexpr void st_promote(Fn &f, ScctcoCtx &C, ScctcoHead &Hd, uint32_t b,
 }
 
 // add a back edge (b, vals) to Hd, extending the merge chain as needed
-constexpr void st_add_backedge(Fn &f, ScctcoCtx &C, ScctcoHead &Hd,
-                               uint32_t b,
+constexpr void st_add_backedge(Fn &f, ScctcoCtx &C, ScctcoHead &Hd, uint32_t b,
                                const std::vector<uint32_t> &vals) {
   if (!Hd.phis) {
     st_promote(f, C, Hd, b, vals);
@@ -426,8 +424,7 @@ constexpr void st_add_backedge(Fn &f, ScctcoCtx &C, ScctcoHead &Hd,
   scctco_retarget(f, b, NONE, M);
   // the entry phis' tip-side arg now arrives from M
   uint32_t v = 0;
-  for (uint32_t i = f.blocks[Hd.entry].begin; i < f.blocks[Hd.entry].end;
-       ++i) {
+  for (uint32_t i = f.blocks[Hd.entry].begin; i < f.blocks[Hd.entry].end; ++i) {
     Instr &P = f.code[i];
     if (P.k != K::Phi)
       break;
@@ -482,18 +479,17 @@ constexpr void st_ensure_trapb(Fn &f, ScctcoCtx &C) {
     return;
   const uint32_t c1 = new_anon_vreg(f, 0), c0 = new_anon_vreg(f, 0),
                  dx = new_anon_vreg(f, 0);
-  C.trapb = st_append_block(f,
-                            {Instr{.k = K::Const, .dst = c1, .c = 1},
-                             Instr{.k = K::Const, .dst = c0, .c = 0},
-                             Instr{.k = K::Bin, .b = B::Div, .dst = dx,
-                                   .a = c1, .b2 = c0},
-                             Instr{.k = K::Ret, .a = dx}});
+  C.trapb = st_append_block(
+      f, {Instr{.k = K::Const, .dst = c1, .c = 1},
+          Instr{.k = K::Const, .dst = c0, .c = 0},
+          Instr{.k = K::Bin, .b = B::Div, .dst = dx, .a = c1, .b2 = c0},
+          Instr{.k = K::Ret, .a = dx}});
 }
 
 // the frame guard: [r'=r-k1; cmp=r'<z0; cbr trapb/-] over the site's
 // block minus [the Call; its Ret]; returns tp (the decremented trip)
-constexpr uint32_t st_guard_site(Fn &f, ScctcoCtx &C, uint32_t sb,
-                                 uint32_t ci, uint32_t tripv) {
+constexpr uint32_t st_guard_site(Fn &f, ScctcoCtx &C, uint32_t sb, uint32_t ci,
+                                 uint32_t tripv) {
   const uint32_t tp = new_anon_vreg(f, 0);
   const uint32_t cmp = new_anon_vreg(f, 0);
   st_ensure_trapb(f, C);
@@ -503,8 +499,7 @@ constexpr uint32_t st_guard_site(Fn &f, ScctcoCtx &C, uint32_t sb,
       ns.push_back(f.code[i]);
   ns.push_back(
       Instr{.k = K::Bin, .b = B::Sub, .dst = tp, .a = tripv, .b2 = C.k1});
-  ns.push_back(
-      Instr{.k = K::Bin, .b = B::Lt, .dst = cmp, .a = tp, .b2 = C.z0});
+  ns.push_back(Instr{.k = K::Bin, .b = B::Lt, .dst = cmp, .a = tp, .b2 = C.z0});
   ns.push_back(Instr{.k = K::Cbr, .a = cmp, .t = C.trapb, .f = NONE});
   scctco_set_block(f, sb, std::move(ns));
   return tp;
@@ -513,8 +508,7 @@ constexpr uint32_t st_guard_site(Fn &f, ScctcoCtx &C, uint32_t sb,
 // inline the sibling's PRE-collapse snapshot body once; the copy's entry
 // block becomes its merge head, the site's edge retargeted into it
 constexpr void st_inline_sibling(Fn &f, ScctcoCtx &C, uint32_t callee,
-                                 uint32_t sb,
-                                 const std::vector<uint32_t> &args,
+                                 uint32_t sb, const std::vector<uint32_t> &args,
                                  const std::vector<uint32_t> &vals) {
   const Fn &G = C.snap[C.snap_of[callee]];
   const uint32_t nvG = G.nvars + (uint32_t)G.version_base.size();

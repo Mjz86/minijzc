@@ -16,8 +16,8 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "../analysis/an.hpp"
-#include "../opt_generic.hpp" // the shape kernels (header preds)
 #include "../linear/linform.hpp"
+#include "../opt_generic.hpp" // the shape kernels (header preds)
 
 // ============================================================================
 // 9e5. COUNTDOWN LOOP CLOSED FORM (cdfold) -- support layer

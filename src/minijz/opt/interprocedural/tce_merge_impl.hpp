@@ -281,7 +281,8 @@ constexpr void tm_alloc(const std::vector<Fn> &fns,
     const Fn &F = fns[members[x]];
     const uint32_t nvx = F.nvars + (uint32_t)F.version_base.size();
     for (uint32_t v = 0; v < nvx; ++v)
-      C.vmap[x][v] = (v < F.nparams) ? C.aHv[v] : new_anon_vreg(Fm, F.base_of(v));
+      C.vmap[x][v] =
+          (v < F.nparams) ? C.aHv[v] : new_anon_vreg(Fm, F.base_of(v));
   }
   // per-site emitted vregs (sel const, budget-1, eq) — in Fm space.
   // siteSEL is NOT pre-created: it is allocated at the member's Ret
@@ -289,7 +290,7 @@ constexpr void tm_alloc(const std::vector<Fn> &fns,
   C.siteSEL.assign(ks, NONE);
   C.siteBL.assign(ks, NONE);
   C.siteEQ.assign(ks, NONE);
-  for (uint32_t j = 0; j < ks; ++j) { // pre-create (the header phis and the
+  for (uint32_t j = 0; j < ks; ++j) {   // pre-create (the header phis and the
     C.siteBL[j] = new_anon_vreg(Fm, 0); // chain reference them before emission)
     C.siteEQ[j] = new_anon_vreg(Fm, 0);
   }
@@ -343,7 +344,8 @@ constexpr void tm_emit_header(TmCtx &C) {
       uint32_t eqv = new_anon_vreg(Fm, 0);
       uint32_t cv = new_anon_vreg(Fm, 0);
       nc.push_back({.k = K::Const, .dst = cv, .c = (val_t)from_blk});
-      nc.push_back({.k = K::Bin, .b = B::Eq, .dst = eqv, .a = C.selHv, .b2 = cv});
+      nc.push_back(
+          {.k = K::Bin, .b = B::Eq, .dst = eqv, .a = C.selHv, .b2 = cv});
       uint32_t tt = C.bmap_base[from_blk];
       // BUGFIX (bug #2, mutual-recursion ring dispatch): the false arm
       // used to be (from_blk+1 <= k-2) ? (from_blk+2) : bmap_base[0],
@@ -380,10 +382,10 @@ constexpr void tm_emit_header(TmCtx &C) {
   }
 }
 
-// ---- phase 4: the member bodies ----------------------------------------------
+// ---- phase 4: the member bodies
+// ----------------------------------------------
 constexpr void tm_emit_members(const std::vector<Fn> &fns,
-                               const std::vector<uint32_t> &members,
-                               TmCtx &C) {
+                               const std::vector<uint32_t> &members, TmCtx &C) {
   const uint32_t k = C.k;
   const uint32_t M = C.M;
   const uint32_t ks = C.ks;
@@ -426,8 +428,8 @@ constexpr void tm_emit_members(const std::vector<Fn> &fns,
           }
           tce_emit_site_check(Fm, nc, C.bHv, C.siteBL[(uint32_t)sidx],
                               C.siteEQ[(uint32_t)sidx]);
-          uint32_t next =
-              ((uint32_t)sidx + 1 < ks) ? C.Mb[(uint32_t)sidx + 1] : C.Mb[ks - 1];
+          uint32_t next = ((uint32_t)sidx + 1 < ks) ? C.Mb[(uint32_t)sidx + 1]
+                                                    : C.Mb[ks - 1];
           nc.push_back({.k = K::Cbr,
                         .a = C.siteEQ[(uint32_t)sidx],
                         .t = C.T,
@@ -452,8 +454,7 @@ constexpr void tm_emit_members(const std::vector<Fn> &fns,
 
 // ---- phase 5: the latch chain, the trap, and Fm's commit --------------------
 constexpr void tm_emit_latches(const std::vector<Fn> &fns,
-                               const std::vector<uint32_t> &members,
-                               TmCtx &C) {
+                               const std::vector<uint32_t> &members, TmCtx &C) {
   const uint32_t ks = C.ks;
   const uint32_t M = C.M;
   Fn &Fm = C.Fm;
@@ -481,12 +482,13 @@ constexpr void tm_emit_latches(const std::vector<Fn> &fns,
                   .t = pa,
                   .f = pb});
     for (uint32_t q = 1; q <= M; ++q)
-      nc.push_back({.k = K::Phi,
-                    .dst = C.Mp[j][q],
-                    .a = sitearg(C.sites[j - 1], q),
-                    .b2 = (j == ks - 1 ? sitearg(C.sites[j], q) : C.Mp[j + 1][q]),
-                    .t = pa,
-                    .f = pb});
+      nc.push_back(
+          {.k = K::Phi,
+           .dst = C.Mp[j][q],
+           .a = sitearg(C.sites[j - 1], q),
+           .b2 = (j == ks - 1 ? sitearg(C.sites[j], q) : C.Mp[j + 1][q]),
+           .t = pa,
+           .f = pb});
     nc.push_back({.k = K::Phi,
                   .dst = C.Mbv[j],
                   .a = C.siteBL[j - 1],
@@ -504,12 +506,12 @@ constexpr void tm_emit_latches(const std::vector<Fn> &fns,
   }
   Fm.code = std::move(nc);
   Fm.blocks = std::move(C.nbl);
-  Fm.resucc(); // succ wholesale from the fresh terminators + preds
+  Fm.resucc();      // succ wholesale from the fresh terminators + preds
   Fm.tce_sel = C.k; // sel in [0,k) at every call site: an invariant we made
 }
 
-// ---- phase 6: rewrite every external call site -------------------------------
-// member m -> Fm(sel=m, ...)
+// ---- phase 6: rewrite every external call site
+// ------------------------------- member m -> Fm(sel=m, ...)
 constexpr void tm_rewrite_callers(std::vector<Fn> &fns,
                                   const std::vector<uint32_t> &members,
                                   TmCtx &C) {

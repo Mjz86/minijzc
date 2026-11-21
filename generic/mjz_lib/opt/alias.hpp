@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_alias_FILE_
 #define MJZ_SRC_OPT_alias_FILE_
 #include "base.hpp"
@@ -50,8 +49,8 @@ inline constexpr uintlen_t alias_phi_v = 2;
 struct alias_def_t {
   uintlen_t var{};
   uintlen_t kind{alias_other_v};
-  uintlen_t src{};                  // copy source (copy only)
-  std::vector<uintlen_t> args{};    // phi args, raw (phi only)
+  uintlen_t src{};               // copy source (copy only)
+  std::vector<uintlen_t> args{}; // phi args, raw (phi only)
 };
 template <version_t version_v>
 MJZ_CX_FN void resolve_single_ids(const std::vector<alias_def_t> &defs,

@@ -63,21 +63,21 @@ namespace mjz::graph_ns {
 // sum accumulates in weight_t; kept and removed arcs are INPUT arc
 // ids, ascending; everything is a pure function of the CSR input.
 
-// ---- the minimum feedback arc set --------------------------------------------
+// ---- the minimum feedback arc set
+// --------------------------------------------
 template <version_t version_v, class weight_t>
 struct minimum_feedback_arc_set_result_t {
   std::vector<uintlen_t> removed_arcs{}; // the FAS: INPUT arc ids, ascending
-  std::vector<uintlen_t> order{}; // the survivors' topological order
-  weight_t total_weight{};        // the minimum the graph must pay
+  std::vector<uintlen_t> order{};        // the survivors' topological order
+  weight_t total_weight{};               // the minimum the graph must pay
 };
 
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN minimum_feedback_arc_set_result_t<version_v, weight_t>
-calculate_minimum_feedback_arc_set(
-    const basic_forest_t<version_v, R> &graph,
-    const weights_t &weights) noexcept {
+calculate_minimum_feedback_arc_set(const basic_forest_t<version_v, R> &graph,
+                                   const weights_t &weights) noexcept {
   minimum_feedback_arc_set_result_t<version_v, weight_t> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
   const uintlen_t nedges = uintlen_t(std::ranges::size(graph.edges));
@@ -92,7 +92,9 @@ calculate_minimum_feedback_arc_set(
     return uintlen_t(*(std::ranges::begin(graph.edges) + intlen_t(e)));
   };
   auto it_w = std::ranges::begin(weights);
-  auto wof = [&](uintlen_t e) noexcept { return weight_t(*(it_w + intlen_t(e))); };
+  auto wof = [&](uintlen_t e) noexcept {
+    return weight_t(*(it_w + intlen_t(e)));
+  };
 
   // the pool: arcs between DISTINCT nodes, filed under their head --
   // the sweep asks one question per (subset, head): what does the rest
@@ -170,7 +172,8 @@ calculate_minimum_feedback_arc_set(
   return ret;
 }
 
-// ---- the minimum feedback arc set of a REDUCIBLE flow graph ------------------
+// ---- the minimum feedback arc set of a REDUCIBLE flow graph
+// ------------------
 //
 // THE POLYNOMIAL CASE. The sweep above is exact on every digraph at
 // 2^V cost; on REDUCIBLE flow graphs the answer is polynomial
@@ -274,23 +277,21 @@ calculate_minimum_feedback_arc_set(
 // table inline and forwards. Same result either way, byte for byte:
 // the component fuzzer pins the two forms against each other and
 // the exact sweep.
-template <version_t version_v, class weight_t>
-struct reducible_fas_result_t {
+template <version_t version_v, class weight_t> struct reducible_fas_result_t {
   std::vector<uintlen_t> removed_arcs{}; // the FAS: INPUT arc ids, ascending
-  std::vector<uintlen_t> order{}; // the survivors' topological order
-  weight_t total_weight{};        // the minimum the graph must pay
-  weight_t packing_weight{};      // the dual witness: <= every FAS's weight
-  bool reducible{};               // the contract check's verdict
+  std::vector<uintlen_t> order{};        // the survivors' topological order
+  weight_t total_weight{};               // the minimum the graph must pay
+  weight_t packing_weight{}; // the dual witness: <= every FAS's weight
+  bool reducible{};          // the contract check's verdict
 };
 
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN reducible_fas_result_t<version_v, weight_t>
 calculate_minimum_feedback_arc_set_reducible_given_dominators(
     uintlen_t root, const basic_forest_t<version_v, R> &graph,
-    const weights_t &weights,
-    const std::vector<uintlen_t> &idoms) noexcept {
+    const weights_t &weights, const std::vector<uintlen_t> &idoms) noexcept {
   reducible_fas_result_t<version_v, weight_t> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
   const uintlen_t nedges = uintlen_t(std::ranges::size(graph.edges));
@@ -419,8 +420,7 @@ calculate_minimum_feedback_arc_set_reducible_given_dominators(
       in[h] = 1;
       for (uintlen_t e = 0; e < nedges; ++e) { // seed the back arc tails
         const uintlen_t u = from_of[e], v = edge_to(e);
-        if (u < n && v < n && u != v && v == h && dominates(h, u) &&
-            !in[u]) {
+        if (u < n && v < n && u != v && v == h && dominates(h, u) && !in[u]) {
           in[u] = 1;
           stack.push_back(u);
         }
@@ -631,7 +631,8 @@ calculate_minimum_feedback_arc_set_reducible_given_dominators(
       costs.reserve(net.edge_of.size());
       for (uintlen_t k = 0; k < net.edge_of.size(); ++k) {
         const uintlen_t e = net.edge_of[k];
-        caps.push_back(weight_t(wof(e) - (used[e] < wof(e) ? used[e] : wof(e))));
+        caps.push_back(
+            weight_t(wof(e) - (used[e] < wof(e) ? used[e] : wof(e))));
         // the price: how many ENCLOSING loops' paths cross this arc
         uintlen_t cost = 0;
         for (uintlen_t p = parent_loop[i]; p != uintlen_t(-1);
@@ -733,7 +734,7 @@ calculate_minimum_feedback_arc_set_reducible_given_dominators(
   for (uintlen_t e = 0; e < nedges; ++e)
     if (rm[e]) {
       ret.removed_arcs.push_back(e); // the row scan: ascending
-      ret.total_weight += wof(e); // the self loops and the cuts, once
+      ret.total_weight += wof(e);    // the self loops and the cuts, once
     }
   return ret;
 }
@@ -744,9 +745,9 @@ calculate_minimum_feedback_arc_set_reducible_given_dominators(
 // that already holds idoms for this graph (the compiler's An layer
 // does) calls the *_given_dominators form directly and skips the
 // rebuild; the component fuzzer pins the two forms equal.
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN reducible_fas_result_t<version_v, weight_t>
 calculate_minimum_feedback_arc_set_reducible(
     uintlen_t root, const basic_forest_t<version_v, R> &graph,
@@ -767,7 +768,8 @@ calculate_minimum_feedback_arc_set_reducible(
       version_v>(root, graph, weights, idoms);
 }
 
-// ---- cycle nodes (and the DAG contract checker) ------------------------------
+// ---- cycle nodes (and the DAG contract checker)
+// ------------------------------
 template <version_t version_v, class R>
 MJZ_CX_FN std::vector<char>
 calculate_cycle_nodes(const basic_forest_t<version_v, R> &graph) noexcept {
@@ -787,9 +789,9 @@ calculate_cycle_nodes(const basic_forest_t<version_v, R> &graph) noexcept {
   return cyc;
 }
 
-// ---- the transitive reduction of a DAG ---------------------------------------
-template <version_t version_v>
-struct transitive_reduction_result_t {
+// ---- the transitive reduction of a DAG
+// ---------------------------------------
+template <version_t version_v> struct transitive_reduction_result_t {
   std::vector<uintlen_t> keep_edges{}; // surviving INPUT arc ids
 };
 
@@ -808,7 +810,7 @@ calculate_transitive_reduction_dag(
     for (uintlen_t u = 0; u < n; ++u)
       asserts(!cyc[u]);
   }
-  auto rows = graph.range();          // targets
+  auto rows = graph.range();           // targets
   auto edge_ids = graph.index_range(); // arc ids
   const uintlen_t words = (n + 63) / 64;
   std::vector<uint64_t> reach(uintlen_t(n) * words, 0);
@@ -858,9 +860,9 @@ calculate_transitive_reduction_dag(
   return ret;
 }
 
-// ---- the minimum equivalent arc set (general digraphs) ------------------------
-template <version_t version_v>
-struct minimum_equivalent_arc_set_result_t {
+// ---- the minimum equivalent arc set (general digraphs)
+// ------------------------
+template <version_t version_v> struct minimum_equivalent_arc_set_result_t {
   std::vector<uintlen_t> keep_edges{}; // the surviving INPUT arc ids
   // honesty labels: exact between components, an approximation inside
   // (the true minimum equivalent graph is NP-hard)
@@ -877,7 +879,7 @@ calculate_minimum_equivalent_arc_set(
   const uintlen_t nedges = uintlen_t(std::ranges::size(graph.edges));
   if (!n)
     return ret;
-  auto rows = graph.range();          // targets
+  auto rows = graph.range();           // targets
   auto edge_ids = graph.index_range(); // arc ids
   auto edge_to = [&](uintlen_t e) noexcept {
     return uintlen_t(*(std::ranges::begin(graph.edges) + intlen_t(e)));
@@ -890,8 +892,7 @@ calculate_minimum_equivalent_arc_set(
   ret.scc_count = ncomp;
   std::vector<std::vector<uintlen_t>> uniq(ncomp);
   {
-    std::vector<std::vector<char>> seen(ncomp,
-                                        std::vector<char>(ncomp, 0));
+    std::vector<std::vector<char>> seen(ncomp, std::vector<char>(ncomp, 0));
     for (uintlen_t u = 0; u < n; ++u) {
       for (uintlen_t e : edge_ids[u]) {
         const uintlen_t v = edge_to(e);
@@ -913,8 +914,7 @@ calculate_minimum_equivalent_arc_set(
       make_basic_forest<version_v>(uniq);
   // ---- the exact inter-component minimum: the condensation's TR
   const auto red = calculate_transitive_reduction_dag<version_v>(condensed);
-  std::vector<char> keep_cond(
-      uintlen_t(std::ranges::size(condensed.edges)), 0);
+  std::vector<char> keep_cond(uintlen_t(std::ranges::size(condensed.edges)), 0);
   for (uintlen_t e : red.keep_edges)
     keep_cond[e] = 1;
   // the kept condensed arcs as a sorted (cu, cv) table for the
@@ -929,8 +929,8 @@ calculate_minimum_equivalent_arc_set(
         asserts(ce < uintlen_t(std::ranges::size(condensed.edges)));
         if (!keep_cond[ce])
           continue;
-        const uintlen_t cv = uintlen_t(
-            *(std::ranges::begin(condensed.edges) + intlen_t(ce)));
+        const uintlen_t cv =
+            uintlen_t(*(std::ranges::begin(condensed.edges) + intlen_t(ce)));
         kept_pairs.push_back({cu, cv});
       }
     std::ranges::sort(kept_pairs);
@@ -1040,11 +1040,11 @@ calculate_minimum_equivalent_arc_set(
     }
   }
   std::ranges::sort(ret.keep_edges);
-  ret.keep_edges.erase(std::unique(ret.keep_edges.begin(),
-                                   ret.keep_edges.end()),
-                       ret.keep_edges.end());
+  ret.keep_edges.erase(
+      std::unique(ret.keep_edges.begin(), ret.keep_edges.end()),
+      ret.keep_edges.end());
   return ret;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_rmas_FILE_

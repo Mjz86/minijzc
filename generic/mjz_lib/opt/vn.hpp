@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_vn_FILE_
 #define MJZ_SRC_OPT_vn_FILE_
 #include "base.hpp"
@@ -314,8 +313,7 @@ value_number(uintlen_t n_vars, const auto &dominator_tree,
 // One canonical shape per equivalence class is what makes CSE
 // hit -- the key is the algorithm, the ops it orders are policy.
 MJZ_CX_FN uint64_t mixed_sort_key(uintlen_t n_vars, const auto &const_mask,
-                                  const auto &const_val,
-                                  uintlen_t v) noexcept {
+                                  const auto &const_val, uintlen_t v) noexcept {
   if (v == none_v)
     return 0;
   if (v < n_vars && const_mask[v])

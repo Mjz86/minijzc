@@ -55,12 +55,11 @@
 // div/mod; vn_fill_bin_site declines the rest).
 constexpr bool opt_cse(Fn &fn, const An &A, OptStats &os) {
   uint32_t hits = 0;
-  const bool did = vn_run(
-      fn, A, hits,
-      [](const Instr &I, uint32_t nv, opt_ns::vn_site_t<V> &si,
-         std::vector<uintlen_t> &sa, std::vector<uintlen_t> &) {
-        vn_fill_bin_site(I, nv, si, sa);
-      });
+  const bool did =
+      vn_run(fn, A, hits,
+             [](const Instr &I, uint32_t nv, opt_ns::vn_site_t<V> &si,
+                std::vector<uintlen_t> &sa,
+                std::vector<uintlen_t> &) { vn_fill_bin_site(I, nv, si, sa); });
   if (!did)
     return false;
   os.cses += hits;

@@ -41,18 +41,15 @@ namespace mjz::graph_ns {
 // counts its own weight) -- symmetric input simply doubles the
 // answer, consistently.
 
-template <version_t version_v, class weight_t>
-struct global_min_cut_result_t {
-  weight_t weight{};               // the global minimum cut value
-  std::vector<char> side{};        // one side of the cheapest cut
+template <version_t version_v, class weight_t> struct global_min_cut_result_t {
+  weight_t weight{};        // the global minimum cut value
+  std::vector<char> side{}; // one side of the cheapest cut
 };
-template <version_t version_v, class weight_t>
-struct max_cut_result_t {
-  weight_t weight{};               // the cut value achieved
-  std::vector<char> side{};        // one side of the cut
+template <version_t version_v, class weight_t> struct max_cut_result_t {
+  weight_t weight{};        // the cut value achieved
+  std::vector<char> side{}; // one side of the cut
 };
-template <version_t version_v, class weight_t>
-struct gomory_hu_tree_t {
+template <version_t version_v, class weight_t> struct gomory_hu_tree_t {
   // node i's tree edge goes to parent[i] with weight[i] (node 0 is
   // the root, parent[0] and weight[0] are zero). The minimum cut
   // value between ANY two nodes is the minimum weight on their unique
@@ -62,13 +59,12 @@ struct gomory_hu_tree_t {
 };
 
 // ---- Stoer-Wagner ---------------------------------------------------------
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN global_min_cut_result_t<version_v, weight_t>
-calculate_global_min_cut_undirected(
-    const basic_forest_t<version_v, R> &graph,
-    const weights_t &weights) noexcept {
+calculate_global_min_cut_undirected(const basic_forest_t<version_v, R> &graph,
+                                    const weights_t &weights) noexcept {
   global_min_cut_result_t<version_v, weight_t> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
   ret.side.assign(n, 0);
@@ -98,7 +94,7 @@ calculate_global_min_cut_undirected(
   std::vector<char> merged(n, 0);
   std::vector<weight_t> conn(n); // connection weight to the added set
   std::vector<char> added(n);
-  weight_t best = weight_t(-1);  // "infinite": every weight_t cut is less
+  weight_t best = weight_t(-1);        // "infinite": every weight_t cut is less
   std::vector<uintlen_t> best_group{}; // the best phase's isolated side
   // n-1 phases: each isolates one vertex t (cut-of-the-phase = its
   // connection weight at isolation), then folds t into the vertex
@@ -155,12 +151,11 @@ calculate_global_min_cut_undirected(
 }
 
 // ---- the directed global minimum cut --------------------------------------
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> caps_t,
+template <version_t version_v, class R, usable_range_exact_c<version_v> caps_t,
           detail::flow_cap_c cap_t = std::ranges::range_value_t<caps_t>>
 MJZ_CX_FN global_min_cut_result_t<version_v, cap_t>
-calculate_global_min_cut_directed(
-    const basic_forest_t<version_v, R> &graph, const caps_t &caps) noexcept {
+calculate_global_min_cut_directed(const basic_forest_t<version_v, R> &graph,
+                                  const caps_t &caps) noexcept {
   global_min_cut_result_t<version_v, cap_t> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
   if (n <= 1)
@@ -225,8 +220,7 @@ calculate_max_cut_bruteforce(const basic_forest_t<version_v, R> &graph,
         const uintlen_t v = graph.get_edge_to(e);
         if (v == u || v >= n)
           continue;
-        const bool sv =
-            v == 0 ? false : bool((bits >> (v - 1)) & 1);
+        const bool sv = v == 0 ? false : bool((bits >> (v - 1)) & 1);
         if (su != sv)
           val += weight_t(*(it_w + intlen_t(e)));
       }
@@ -345,9 +339,9 @@ calculate_max_cut_greedy(const basic_forest_t<version_v, R> &graph,
 // convention above). parent[i] starts at 0; each round flows (i,
 // parent[i]), records the value, and re-parents every later node on
 // the i-side of that cut.
-template <version_t version_v, class R,
-          usable_range_exact_c<version_v> weights_t,
-          std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
+template <
+    version_t version_v, class R, usable_range_exact_c<version_v> weights_t,
+    std::unsigned_integral weight_t = std::ranges::range_value_t<weights_t>>
 MJZ_CX_FN gomory_hu_tree_t<version_v, weight_t>
 calculate_gomory_hu_tree(const basic_forest_t<version_v, R> &graph,
                          const weights_t &weights) noexcept {
@@ -412,8 +406,8 @@ calculate_gomory_hu_tree(const basic_forest_t<version_v, R> &graph,
 // common ancestor by depth)
 template <version_t version_v, class weight_t>
 MJZ_CX_FN weight_t
-gomory_hu_query(const gomory_hu_tree_t<version_v, weight_t> &tree,
-                uintlen_t u, uintlen_t v) noexcept {
+gomory_hu_query(const gomory_hu_tree_t<version_v, weight_t> &tree, uintlen_t u,
+                uintlen_t v) noexcept {
   const uintlen_t n = tree.parent.size();
   asserts(u < n && v < n);
   if (u == v)
@@ -469,9 +463,8 @@ gomory_hu_query(const gomory_hu_tree_t<version_v, weight_t> &tree,
 // nodes it strands, and the source side IS a heaviest closure. The
 // answer is the positive weight kept: sum(w+) - mincut (>= 0: the
 // empty set is closed, and cutting every source arc buys it).
-template <version_t version_v>
-struct max_closure_result_t {
-  int64_t weight{}; // int64 floor, the min_cost_flow precedent
+template <version_t version_v> struct max_closure_result_t {
+  int64_t weight{};               // int64 floor, the min_cost_flow precedent
   std::vector<char> in_closure{}; // the chosen closure (n entries)
 };
 template <version_t version_v, class R,
@@ -534,5 +527,5 @@ calculate_maximum_weight_closure(const basic_forest_t<version_v, R> &graph,
   return ret;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_cut_FILE_

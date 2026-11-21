@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_shape_FILE_
 #define MJZ_SRC_OPT_shape_FILE_
 #include "base.hpp"
@@ -75,8 +74,7 @@ struct loop_shape_t {
 };
 // arm0/arm1: the header branch's two VALID targets (slot order).
 MJZ_CX_FN loop_shape_t calculate_loop_shape(const auto &pred_row,
-                                            const auto &in_loop,
-                                            uintlen_t arm0,
+                                            const auto &in_loop, uintlen_t arm0,
                                             uintlen_t arm1) noexcept {
   loop_shape_t sh{};
   const header_preds_t hp = calculate_header_preds(pred_row, in_loop);

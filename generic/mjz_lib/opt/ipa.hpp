@@ -21,7 +21,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-
 #ifndef MJZ_SRC_OPT_ipa_FILE_
 #define MJZ_SRC_OPT_ipa_FILE_
 #include "base.hpp"
@@ -46,9 +45,9 @@ namespace mjz::opt_ns {
 struct soft_edge_t {
   uintlen_t h{}, q{}; // forwarded to (fn h, argument q)
 };
-MJZ_CX_FN void calculate_live_params(
-    const auto &eligible, const auto &softs,
-    std::vector<std::vector<char>> &alive) noexcept {
+MJZ_CX_FN void
+calculate_live_params(const auto &eligible, const auto &softs,
+                      std::vector<std::vector<char>> &alive) noexcept {
   const uintlen_t n = uintlen_t(eligible.size());
   for (bool ch = true; ch;) {
     ch = false;

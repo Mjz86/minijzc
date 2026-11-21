@@ -2901,7 +2901,7 @@ static void fz_liveness(std::mt19937_64 &rng, KzRec &R) {
         if (u != d && rin[ent][u])
           wedge(d, u); // live into the entry
       for (ulen u : edefs)
-        wedge(d, u);   // entry defs are pairwise, always
+        wedge(d, u); // entry defs are pairwise, always
     }
   for (ulen a = 0; a < nv; ++a) {
     R.ok(adj[a].size() == ulen(std::count(want[a].begin(), want[a].end(), 1)),
@@ -3076,8 +3076,7 @@ static void fz_escape(std::mt19937_64 &rng, KzRec &R) {
       continue;
     for (ulen s = 0; s < ns && !wesc; ++s)
       for (ulen j = 0; j < args[s].size(); ++j)
-        if (args[s][j] == v &&
-            !(j < safe[s].size() && safe[s][j])) {
+        if (args[s][j] == v && !(j < safe[s].size() && safe[s][j])) {
           wesc = true;
           break;
         }
@@ -3212,17 +3211,16 @@ static void fz_dse(std::mt19937_64 &rng, KzRec &R) {
 
 using KzFn = void (*)(std::mt19937_64 &, KzRec &);
 static const KzFn KZ_FNS[] = {
-    fz_forests,   fz_dom,   fz_df,     fz_phis,    fz_wrapper, fz_rename,
-    fz_reflow,    fz_chain, fz_mark,   fz_vn,      fz_sccp,    fz_pcopy,
-    fz_split,     fz_reach, fz_splice, fz_inv,     fz_ren,     fz_trivphi,
-    fz_shape,     fz_exits, fz_route,  fz_needs,   fz_alias,   fz_mem,
-    fz_iv,        fz_ai,    fz_key,    fz_leak,    fz_ipa,     fz_equi,
-    fz_liveness,  fz_trace, fz_escape, fz_dse,     fz_invfam,
-    fz_scc,       fz_seq,
-    fz_dsu,       fz_search, fz_dij,  fz_flow,     fz_stcut,   fz_mcf,
-    fz_gcut,      fz_dgcut, fz_maxcut, fz_gh,      fz_mst,     fz_match,
-    fz_blossom,   fz_bic,   fz_kcore,  fz_euler,    fz_tr,      fz_rmas,
-    fz_dist,      fz_meg,   fz_maxclosure, fz_pathcover, fz_rmasp};
+    fz_forests,  fz_dom,     fz_df,     fz_phis,       fz_wrapper,   fz_rename,
+    fz_reflow,   fz_chain,   fz_mark,   fz_vn,         fz_sccp,      fz_pcopy,
+    fz_split,    fz_reach,   fz_splice, fz_inv,        fz_ren,       fz_trivphi,
+    fz_shape,    fz_exits,   fz_route,  fz_needs,      fz_alias,     fz_mem,
+    fz_iv,       fz_ai,      fz_key,    fz_leak,       fz_ipa,       fz_equi,
+    fz_liveness, fz_trace,   fz_escape, fz_dse,        fz_invfam,    fz_scc,
+    fz_seq,      fz_dsu,     fz_search, fz_dij,        fz_flow,      fz_stcut,
+    fz_mcf,      fz_gcut,    fz_dgcut,  fz_maxcut,     fz_gh,        fz_mst,
+    fz_match,    fz_blossom, fz_bic,    fz_kcore,      fz_euler,     fz_tr,
+    fz_rmas,     fz_dist,    fz_meg,    fz_maxclosure, fz_pathcover, fz_rmasp};
 static_assert(sizeof(KZ_FNS) / sizeof(KZ_FNS[0]) == KZ_NCOMP,
               "component table mismatch");
 

@@ -32,9 +32,9 @@ namespace mjz::graph_ns {
 // (or uintN widths). NONE_V (uintlen_t(-1)) marks "no path"; the
 // caller passes INF_INITed rows where the algorithms write.
 
-// ---- Bellman-Ford ------------------------------------------------------------
-template <version_t version_v>
-struct bellman_ford_result_t {
+// ---- Bellman-Ford
+// ------------------------------------------------------------
+template <version_t version_v> struct bellman_ford_result_t {
   std::vector<int64_t> dist{}; // NONE_V = no path / poisoned by a cycle
   bool has_negative_cycle{};
 };
@@ -51,7 +51,7 @@ calculate_shortest_path_maybe_negative(
   ret.dist.assign(n, none_);
   if (entry >= n)
     return ret;
-  auto rows = graph.range();          // targets
+  auto rows = graph.range();           // targets
   auto edge_ids = graph.index_range(); // arc ids
   auto it_w = std::ranges::begin(weights);
   ret.dist[entry] = 0;
@@ -66,8 +66,7 @@ calculate_shortest_path_maybe_negative(
         if (v >= n)
           continue;
         const uintlen_t e = uintlen_t(edge_ids[u][intlen_t(k)]);
-        const int64_t cand =
-            ret.dist[u] + int64_t(*(it_w + intlen_t(e)));
+        const int64_t cand = ret.dist[u] + int64_t(*(it_w + intlen_t(e)));
         if (cand < ret.dist[v]) {
           ret.dist[v] = cand;
           changed = true;
@@ -118,9 +117,9 @@ calculate_shortest_path_maybe_negative(
   return ret;
 }
 
-// ---- Floyd-Warshall -----------------------------------------------------------
-template <version_t version_v>
-struct all_pairs_result_t {
+// ---- Floyd-Warshall
+// -----------------------------------------------------------
+template <version_t version_v> struct all_pairs_result_t {
   std::vector<int64_t> dist{}; // n*n row-major; NONE_V = no path
   bool has_negative_cycle{};
 };
@@ -128,9 +127,8 @@ struct all_pairs_result_t {
 template <version_t version_v, class R,
           usable_range_exact_c<version_v> weights_t>
 MJZ_CX_FN all_pairs_result_t<version_v>
-calculate_all_pairs_shortest_paths(
-    const basic_forest_t<version_v, R> &graph,
-    const weights_t &weights) noexcept {
+calculate_all_pairs_shortest_paths(const basic_forest_t<version_v, R> &graph,
+                                   const weights_t &weights) noexcept {
   all_pairs_result_t<version_v> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
   constexpr int64_t none_ = 0x7fffffffffffffff;
@@ -171,7 +169,8 @@ calculate_all_pairs_shortest_paths(
   return ret;
 }
 
-// ---- DAG shortest paths -------------------------------------------------------
+// ---- DAG shortest paths
+// -------------------------------------------------------
 template <version_t version_v, class R,
           usable_range_exact_c<version_v> weights_t>
 MJZ_CX_FN std::vector<int64_t>
@@ -188,7 +187,7 @@ calculate_dag_shortest_paths(uintlen_t entry,
     for (uintlen_t u = 0; u < n; ++u)
       asserts(!cyc[u]); // the DAG contract
   }
-  auto rows = graph.range();          // targets
+  auto rows = graph.range();           // targets
   auto edge_ids = graph.index_range(); // arc ids
   auto it_w = std::ranges::begin(weights);
   const auto [waves, wave_count] =
@@ -215,9 +214,9 @@ calculate_dag_shortest_paths(uintlen_t entry,
   return dist;
 }
 
-// ---- eccentricity / diameter / radius (unweighted) ------------------------------
-template <version_t version_v>
-struct eccentricity_result_t {
+// ---- eccentricity / diameter / radius (unweighted)
+// ------------------------------
+template <version_t version_v> struct eccentricity_result_t {
   static constexpr uintlen_t none_v = uintlen_t(-1);
   std::vector<uintlen_t> eccentricity{}; // per node; none_v = unreachable pair
   uintlen_t diameter{none_v};
@@ -226,8 +225,7 @@ struct eccentricity_result_t {
 };
 
 template <version_t version_v, class R>
-MJZ_CX_FN eccentricity_result_t<version_v>
-calculate_eccentricities_unweighted(
+MJZ_CX_FN eccentricity_result_t<version_v> calculate_eccentricities_unweighted(
     const basic_forest_t<version_v, R> &graph) noexcept {
   eccentricity_result_t<version_v> ret{};
   const uintlen_t n = uintlen_t(std::ranges::size(graph.range()));
@@ -260,18 +258,17 @@ calculate_eccentricities_unweighted(
   }
   for (uintlen_t u = 0; u < n; ++u)
     if (ret.eccentricity[u] != ret.none_v)
-      ret.diameter = ret.diameter == ret.none_v
-                         ? ret.eccentricity[u]
-                         : (ret.diameter < ret.eccentricity[u]
-                                ? ret.eccentricity[u]
-                                : ret.diameter);
+      ret.diameter =
+          ret.diameter == ret.none_v
+              ? ret.eccentricity[u]
+              : (ret.diameter < ret.eccentricity[u] ? ret.eccentricity[u]
+                                                    : ret.diameter);
   for (uintlen_t u = 0; u < n; ++u)
     if (ret.eccentricity[u] != ret.none_v)
       ret.radius = ret.radius == ret.none_v
                        ? ret.eccentricity[u]
-                       : (ret.eccentricity[u] < ret.radius
-                              ? ret.eccentricity[u]
-                              : ret.radius);
+                       : (ret.eccentricity[u] < ret.radius ? ret.eccentricity[u]
+                                                           : ret.radius);
   if (ret.radius != ret.none_v)
     for (uintlen_t u = 0; u < n; ++u)
       if (ret.eccentricity[u] == ret.radius)
@@ -279,5 +276,5 @@ calculate_eccentricities_unweighted(
   return ret;
 }
 
-}; // namespace mjz::graph_ns
+};     // namespace mjz::graph_ns
 #endif // MJZ_SRC_GRAPH_distances_FILE_

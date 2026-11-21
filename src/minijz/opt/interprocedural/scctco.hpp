@@ -36,8 +36,8 @@
 #include "../../base/pass_cfg.hpp"
 #include "../../ir/instr.hpp"
 #include "callgraph.hpp"
-#include "scctco_impl.hpp" // the helpers + ScctcoCtx + the phase layer
 #include "scctco_fold.hpp" // the residue fold (sees scctco_retarget)
+#include "scctco_impl.hpp" // the helpers + ScctcoCtx + the phase layer
 
 // ============================================================================
 // 9e1b. SCC tail-call optimization ("scctco")
@@ -117,7 +117,7 @@ constexpr bool scctco_member(Fn &f, uint32_t self_fn,
   if (d == st_drain_t::bail_e)
     return false; // a non-tail internal site surfaced mid-drain
   if (d == st_drain_t::capped_e)
-    return C.changed; // the iter bound: remaining sites stay calls
+    return C.changed;         // the iter bound: remaining sites stay calls
   st_rotate_raw_params(f, C); // 3b: pass-through params read the phis
   f.resucc();
   if (dbg >= 2)

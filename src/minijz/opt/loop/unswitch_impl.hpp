@@ -58,7 +58,7 @@
 // ---- the per-loop context ---------------------------------------------------
 // The block/vreg id fields default to NONE exactly like the monolith's
 // per-header locals did (`uint32_t g2 = NONE, fx = NONE, t1 = NONE`):
-// the && compound shape never allocates t1, and us_emit_guards' 
+// the && compound shape never allocates t1, and us_emit_guards'
 // `if (U.t1 != NONE)` guard reads that default. Zero-init would emit
 // the ||-only `t1: br H'` into block 0 (fuzz seed 20029 caught the
 // first draft doing exactly that).
@@ -85,9 +85,8 @@ struct UsCtx {
 // ---- the shape pick + the shared gates --------------------------------------
 // Trivial (primary = h, the zero-iteration edge is h's exit arm) or
 // compound (primary = mm). False = this header declines.
-constexpr bool us_shape_ok(const Fn &fn, const An &A,
-                           const LoopScan &S, uint32_t h,
-                           const LoopShape &sh, UsCtx &U) {
+constexpr bool us_shape_ok(const Fn &fn, const An &A, const LoopScan &S,
+                           uint32_t h, const LoopShape &sh, UsCtx &U) {
   if (sh.ok) {
     U.pre = sh.pre;
     U.latch = sh.latch;
@@ -179,8 +178,7 @@ constexpr void us_false_region(const Fn &fn, const LoopScan &S, UsCtx &U) {
 //     in F (the value left through the loop), nothing when it is
 //     (dominance forbids loop values there).
 // False = decline (bad); U.read_on_false marks the merge candidates.
-constexpr bool us_outside_uses_ok(const Fn &fn, const LoopScan &S,
-                                  UsCtx &U) {
+constexpr bool us_outside_uses_ok(const Fn &fn, const LoopScan &S, UsCtx &U) {
   const uint32_t nb = S.nb, nv = S.nv;
   const std::vector<char> &inL = U.inL, &F = U.F, &loopdef = U.loopdef;
   const std::vector<HPhi> &hphis = U.hphis;
@@ -207,7 +205,7 @@ constexpr bool us_outside_uses_ok(const Fn &fn, const LoopScan &S,
           if (v == NONE || v >= nv || !loopdef[v])
             return true;
           if (pred < nb && inL[pred]) {
-            if (pred == U.primary) {    // the zero-iteration edge:
+            if (pred == U.primary) {      // the zero-iteration edge:
               return hphi_idx(v) != NONE; // only header phis have an
             }                             // entry value to carry; others bail
             return true;                  // break edge: rekey + remap

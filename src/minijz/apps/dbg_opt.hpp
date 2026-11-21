@@ -130,7 +130,7 @@ static void dbg_opt_list(DbgSess &S) {
       cfg.p_tailrec,  cfg.p_cdfold,   cfg.p_ifconv,    cfg.do_inline,
       cfg.p_sccp,     cfg.p_ldelim,   cfg.p_callcse,   cfg.p_deadargs,
       cfg.p_fnspec,   cfg.p_icf,      cfg.p_jthread,   cfg.p_argpromo,
-      cfg.p_gvn,      cfg.p_unswitch, cfg.p_lsimp,      cfg.p_taildup,
+      cfg.p_gvn,      cfg.p_unswitch, cfg.p_lsimp,     cfg.p_taildup,
       cfg.p_rotate,   cfg.p_breq};
   std::printf("pass toggle table (%u names, -O%u):\n",
               (unsigned)PASS_TOGGLE_COUNT, (unsigned)cfg.level);

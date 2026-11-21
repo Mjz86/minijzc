@@ -5,10 +5,10 @@
 #define MJZ_LOG_NEW_ALLOCATIONS_ 0
 #define MJZ_aggregate_tuple_workaround false
 #include "../mjz_lib/mjz_lib/alllib_import.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <random>
 #include <vector>
-#include <algorithm>
 using namespace mjz;
 namespace gns = mjz::graph_ns;
 inline constexpr version_t V{};
