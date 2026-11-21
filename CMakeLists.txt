@@ -68,11 +68,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   # cl.exe: /constexpr:depth<N> and /constexpr:steps<N> (appended directly,
   # no space). cl has no -fconstexpr-anything; passing GNU flags would only
   # spray D9002 warnings.
-  set(MJZ_CX_LIMITS /constexpr:depth8192 /constexpr:steps4000000000)
+  set(MJZ_CX_LIMITS /constexpr:depth8192 /constexpr:steps40000000000)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set(MJZ_CX_LIMITS -fconstexpr-steps=4000000000)
+  set(MJZ_CX_LIMITS -fconstexpr-steps=40000000000)
 else()
-  set(MJZ_CX_LIMITS -fconstexpr-depth=8192 -fconstexpr-ops-limit=4000000000)
+  set(MJZ_CX_LIMITS -fconstexpr-depth=81920 -fconstexpr-ops-limit=40000000000)
 endif()
 
 # MSVC reads the sources as UTF-8 (the comments use em-dashes and other
