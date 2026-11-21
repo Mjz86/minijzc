@@ -126,7 +126,7 @@ endif()
 
 # the clone's graph module dir (whichever layout it has) -- an include
 # path for the generic/ families' upstream-form quoted includes
-set(MJZ_GRAPH_INC_DIRS "")
+set(MJZ_GRAPH_INC_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/../mjz_lib")
 foreach(_g mjz_lib/mjz_lib/graph mjz_lib/graph)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_g}/csr.hpp)
     list(APPEND MJZ_GRAPH_INC_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/${_g})
