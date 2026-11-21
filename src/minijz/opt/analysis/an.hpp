@@ -328,8 +328,8 @@ constexpr bool ssa_construct(Fn &fn, const An &A, SsaStats &st) {
         continue;
       auto use = [&](uint32_t &fld) {
         if (fld != NONE && fld < fn.nvars) {
-          const uint32_t rd = (uint32_t)R.reaching_def[site];
-          fld = rd == ssa_ns::ssa_none_v ? NONE : site_vreg[rd];
+          const auto rd = R.reaching_def[site];
+          fld = rd == ssa_ns::ssa_none_v ? NONE : site_vreg[uint32_t(rd)];
           ++site;
         }
       };
