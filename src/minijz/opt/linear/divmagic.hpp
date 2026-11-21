@@ -40,7 +40,7 @@
 //   sign re-applied by xor/sub;  D<0 negates;  r = n - q*D (wrapping-exact).
 // Powers of two: q = (n + ((n>>a63) & (2^t-1))) >>a t;
 //   r = (n & (2^t-1)) - ((n>>a63) & ((n & (2^t-1)) != 0 ? 2^t : 0)).
-constexpr bool divmagic_of(val_t D, uint64_t &inv, uint32_t &shift) {
+extern constexpr bool divmagic_of(val_t D, uint64_t &inv, uint32_t &shift) {
   uint64_t Dam = (uint64_t)(D < 0 ? (val_t)(0 - (uint64_t)D) : D);
   if (Dam < 3 || (Dam & (Dam - 1)) == 0)
     return false; // pow2: shifts only
@@ -56,21 +56,23 @@ constexpr bool divmagic_of(val_t D, uint64_t &inv, uint32_t &shift) {
     return false;
   uint64_t m = (uint64_t)invN.nth_word(0);
   // exactness gate (128-bit math; every term fits)
-  unsigned __int128 prod = (unsigned __int128)m * Dam;
-  unsigned __int128 two_s = (unsigned __int128)1 << s;
+  using u128 = mjz::uintN_t<mjz::version_t{}, 128>;
+  u128 prod = u128(m) * u128(Dam);
+  u128 two_s = u128(1) << s;
   if (prod < two_s)
     return false; // eps < 0: reciprocal too small
-  unsigned __int128 eps = prod - two_s;
-  unsigned __int128 Mp = (((unsigned __int128)1 << 63) + 1) / Dam;
-  if (Mp * eps >= (unsigned __int128)m)
+  u128 eps = prod - two_s;
+  u128 Mp = ((u128(1) << 63) + u128(1)) / u128(Dam);
+  if (Mp * eps >= u128(m))
     return false;
   inv = m;
   shift = s;
   return true;
 }
+
 // Build the lowering of `d(n) = I.a <op> D` into `out` (last def = I.dst).
-constexpr bool build_divmagic(Fn &fn, const Instr &I, val_t D,
-                              std::vector<Instr> &out) {
+extern constexpr bool build_divmagic(Fn &fn, const Instr &I, val_t D,
+                                     std::vector<Instr> &out) {
   const uint32_t n = I.a;
   const bool is_mod = (I.b == B::Mod);
   const uint32_t base = fn.base_of(n);

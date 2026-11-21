@@ -153,8 +153,8 @@ MJZ_PRINTER_FN std::string fn_ir_str(const Fn &fn, const char *title,
   return s;
 }
 
-MJZ_PRINTER_FN void print_fn(const Fn &fn, const char *title,
-                             std::string_view src) {
+extern MJZ_PRINTER_FN void print_fn(const Fn &fn, const char *title,
+                                    std::string_view src) {
   std::printf("%s", fn_ir_str(fn, title, src).c_str());
 }
 

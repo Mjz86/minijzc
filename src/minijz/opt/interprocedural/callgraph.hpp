@@ -666,7 +666,7 @@ constexpr void optimize_prog(std::vector<Fn> &fns,
 // ---------------------------------------------------------------- runtime-only
 // pass tracing (never on the constexpr path: guarded by cfg.debug, which the
 // compile-time pipeline always leaves at 0)
-inline void print_fn(const Fn &fn, const char *title,
+extern void print_fn(const Fn &fn, const char *title,
                      std::string_view src); // (defined in prog/runners.hpp)
 static void dbg_pass_rt(uint8_t debug, const Fn &fn, const char *pass,
                         bool ch) {
