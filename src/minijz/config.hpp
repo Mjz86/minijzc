@@ -539,3 +539,21 @@ constexpr Rv w_mulhi(val_t a, val_t b) { // high 64 bits of the unsigned prod
                              64)),
           false};
 }
+
+// ---------------------------------------------------------------------------
+// the compile-once linkage switches (the program.hpp/compile_impl.hpp
+// idiom, generalized): under MJZ_MULTI_CPP the heavy runner bodies live in
+// dedicated *_impl.hpp headers compiled ONCE into tu/runners.cpp; every
+// other TU sees plain external declarations and stops parsing, instantiating
+// and emitting them (the runner stack used to be ~1.2 MB of COMDAT text
+// duplicated into each of the seven app TUs). In the header-only build the
+// bodies are constexpr/inline exactly where they always were, so the cx
+// proofs (tests/constexpr_check.cpp, cx_tours.hpp's static_asserts) still
+// call run_prog/emit_bytecode/vm_run/run_ast in constant expressions.
+#ifdef MJZ_MULTI_CPP
+#define MJZ_RUNNER_FN   // plain external linkage; *_impl.hpp in tu/runners.cpp
+#define MJZ_PRINTER_FN  // ditto, for the runtime-only printer layer
+#else
+#define MJZ_RUNNER_FN constexpr
+#define MJZ_PRINTER_FN inline
+#endif

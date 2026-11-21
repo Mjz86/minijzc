@@ -8,6 +8,14 @@ cd "$(dirname "$0")/.."
 JOBS=${JOBS:-2}   # the sandbox OOMs under wide g++ parallelism
 mkdir -p build/hdrtest
 HDRS=$(cd src/minijz && find . -name "*.hpp" | sed 's|^\./||' | sort)
+# the String clone's graph module dir, wherever the clone lives (in-repo or
+# a sibling; root or nested layout -- mirrors CMakeLists.txt's probing):
+# the generic/ families include their String deps in upstream form
+# ("csr.hpp"), which resolves through the clone's graph module dir
+GRAPHHDRS=""
+for d in mjz_lib/graph mjz_lib/mjz_lib/graph ../mjz_lib/graph ../mjz_lib/mjz_lib/graph; do
+  if [ -e "$d/csr.hpp" ]; then GRAPHHDRS="$GRAPHHDRS -I../../$d"; fi
+done
 {
   echo '.PHONY: all'
   echo 'all:'
@@ -23,14 +31,14 @@ HDRS=$(cd src/minijz && find . -name "*.hpp" | sed 's|^\./||' | sort)
 int main() { return 0; }
 EOF
     echo "tu_$n.chk: tu_$n.cpp"
-    echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib -I../../mjz_lib/mjz_lib/graph -I../../mjz_lib/graph -fsyntax-only tu_$n.cpp && touch tu_$n.chk || echo 'ORDER-FAIL: minijz/$h'"
+    echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib $GRAPHHDRS -fsyntax-only tu_$n.cpp && touch tu_$n.chk || echo 'ORDER-FAIL: minijz/$h'"
   done
   cat > "build/hdrtest/umbrella.cpp" <<'EOF'
 #include "minijz.hpp"
 int main() { return 0; }
 EOF
   echo "umbrella.chk: umbrella.cpp"
-  echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib -I../../mjz_lib/mjz_lib/graph -I../../mjz_lib/graph -fsyntax-only umbrella.cpp && touch umbrella.chk || echo 'ORDER-FAIL: minijz.hpp'"
+  echo -e "\t@g++ -std=c++20 -O0 -I../../src -I../../mjz_lib $GRAPHHDRS -fsyntax-only umbrella.cpp && touch umbrella.chk || echo 'ORDER-FAIL: minijz.hpp'"
 } > build/hdrtest/Makefile
 make -C build/hdrtest -j"$JOBS" 2>&1 | grep -E "ORDER-FAIL|error:" | head -60
 n_fail=$(make -C build/hdrtest -j"$JOBS" 2>/dev/null | grep -c ORDER-FAIL || true)

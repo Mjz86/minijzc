@@ -67,66 +67,8 @@ constexpr std::vector<Fn> fns_of(const Program &P, int which) {
   return out;
 }
 // summed optimization statistics across all functions (iters: max)
-constexpr OptStats sum_ostats(const Program &P) {
-  OptStats t{};
-  for (const FnUnit &U : P.fns) {
-    t.folds += U.ostats.folds;
-    t.copies += U.ostats.copies;
-    t.brs_folded += U.ostats.brs_folded;
-    t.blocks_gone += U.ostats.blocks_gone;
-    t.dce += U.ostats.dce;
-    t.hoisted += U.ostats.hoisted;
-    t.copyprops += U.ostats.copyprops;
-    t.cses += U.ostats.cses;
-    t.splices += U.ostats.splices;
-    t.cbr_same += U.ostats.cbr_same;
-    t.cbr_reconv += U.ostats.cbr_reconv;
-    t.phi_degens += U.ostats.phi_degens;
-    t.canon_swaps += U.ostats.canon_swaps;
-    t.canon_cmps += U.ostats.canon_cmps;
-    t.inlines += U.ostats.inlines;
-    t.unrolls += U.ostats.unrolls;
-    t.reassocs += U.ostats.reassocs;
-    t.reassoc_gone += U.ostats.reassoc_gone;
-    t.lcf_loops += U.ostats.lcf_loops;
-    t.lcf_sims += U.ostats.lcf_sims;
-    t.lcf_gensims += U.ostats.lcf_gensims;
-    t.constcalls += U.ostats.constcalls;
-    t.deadallocs += U.ostats.deadallocs;
-    t.tces += U.ostats.tces;
-    t.tce_merges += U.ostats.tce_merges;
-    t.cdfolds += U.ostats.cdfolds;
-    t.ifconvs += U.ostats.ifconvs;
-    t.lcf_rt += U.ostats.lcf_rt;
-    t.divmagics += U.ostats.divmagics;
-    t.notcombs += U.ostats.notcombs;
-    t.traps_killed += U.ostats.traps_killed;
-    t.mem2reg_lifts += U.ostats.mem2reg_lifts;
-    t.mem2reg_dses += U.ostats.mem2reg_dses;
-    t.scctco += U.ostats.scctco;
-    t.scctco_folds += U.ostats.scctco_folds;
-    t.sccp_consts += U.ostats.sccp_consts;
-    t.sccp_brs += U.ostats.sccp_brs;
-    t.ld_fwds += U.ostats.ld_fwds;
-    t.ld_cses += U.ostats.ld_cses;
-    t.rangecmps += U.ostats.rangecmps;
-    t.cmpfacts += U.ostats.cmpfacts;
-    t.callcses += U.ostats.callcses;
-    t.deadargs += U.ostats.deadargs;
-    t.fnspecs += U.ostats.fnspecs;
-    t.icf += U.ostats.icf;
-    t.jthreads += U.ostats.jthreads;
-    t.argpromos += U.ostats.argpromos;
-    t.gvns += U.ostats.gvns;
-    t.unswitches += U.ostats.unswitches;
-    t.body_unswitches += U.ostats.body_unswitches;
-    t.lsimps += U.ostats.lsimps;
-    t.taildups += U.ostats.taildups;
-    t.rotations += U.ostats.rotations;
-    t.dse_overwrites += U.ostats.dse_overwrites;
-    t.dse_sames += U.ostats.dse_sames;
-    if (U.ostats.iters > t.iters)
-      t.iters = U.ostats.iters;
-  }
-  return t;
-}
+#ifdef MJZ_MULTI_CPP
+OptStats sum_ostats(const Program &P); // tu/runners.cpp (prog/printers_impl.hpp)
+#else
+constexpr OptStats sum_ostats(const Program &P); // body: prog/printers_impl.hpp
+#endif

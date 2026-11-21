@@ -206,14 +206,16 @@ endif()
 # the compiler binary
 # ---------------------------------------------------------------------------
 if(MINIJZ_MULTI_CPP)
-  # 10 real TUs (vs the historical 8 header-only slices that each
+  # 11 real TUs (vs the historical 8 header-only slices that each
   # recompiled the world): the heavy pipeline code is compiled ONCE per
-  # binary — tu/main only parses options (light), everything else links
-  # through declarations.
+  # binary -- tu/main only parses options (light), the runner stack
+  # (interpreters/VM/printers, ~1.2 MB of COMDAT text) lives in
+  # tu/runners.cpp, and everything else links through declarations.
   add_executable(minijz
     src/tu/main.cpp src/tu/cli_app.cpp src/tu/debugger.cpp src/tu/demo.cpp
     src/tu/shrink.cpp src/tu/cxtours.cpp src/tu/fuzz.cpp
-    src/tu/fuzz_kernels.cpp src/tu/prog.cpp src/tu/backends.cpp)
+    src/tu/fuzz_kernels.cpp src/tu/prog.cpp src/tu/backends.cpp
+    src/tu/runners.cpp)
   target_compile_definitions(minijz PRIVATE MJZ_MULTI_CPP)
 else()
   add_executable(minijz main.cpp)
@@ -233,7 +235,7 @@ target_compile_options(minijz PRIVATE ${MJZ_EXTRA_FLAGS} ${MJZ_CX_LIMITS})
 # on clang's default 1M-step limit just the same)
 
 # ---------------------------------------------------------------------------
-# precompiled header: all nine heavy TUs parse the same declaration stack
+# precompiled header: all the heavy TUs parse the same declaration stack
 # before a line of their own code -- the mjz_lib import (graph_lib.hpp),
 # the generic/ kernel families and every pass interface (opt_generic.hpp),
 # ~4s each at -O0 -g -- and the unit-test TU parses all of that too. One
@@ -252,10 +254,13 @@ target_compile_options(minijz PRIVATE ${MJZ_EXTRA_FLAGS} ${MJZ_CX_LIMITS})
 # linkage, compiled into the ONE designated TU that includes them
 # (MJZ_CX_TOUR_FN et al. are empty in this mode). Force-including the
 # umbrella into every TU would define cx_tour()/run_kernel_fuzz()/...
-# nine times and die at link. opt_generic.hpp is the largest header every
+# ten times and die at link. opt_generic.hpp is the largest header every
 # heavy TU already includes (verified: it is exactly the common include
-# intersection of the nine), so the PCH can only ever hold what every TU
-# parsed anyway.
+# intersection of the TUs), so the PCH can only ever hold what every TU
+# parsed anyway. The runner layer now follows the same discipline: its
+# bodies live in the *_impl.hpp headers and are compiled only into
+# tu/runners.cpp, so an edit to vm_step.hpp/interp_ssa.hpp/... rebuilds
+# ONE TU instead of the seven app TUs that pull them.
 #
 # tu/main.cpp is the exception by design (the thin entry parses only the
 # CLI -- app_api, no mjz_lib); SKIP_PRECOMPILE_HEADERS keeps it thin
@@ -283,10 +288,15 @@ target_compile_options(minijz_unit_tests PRIVATE ${MJZ_EXTRA_FLAGS}
 # it dies on the default 1M-step limit with
 # 'constexpr variable must be initialized by a constant expression ... hit
 # maximum step limit' deep inside byte_str/traits.hpp)
-# deliberately NO precompiled header here: this TU is rebuilt whenever a
-# compiler header changes, and each such rebuild would re-create a ~600 MB
-# umbrella PCH (~21s) to save ~5s of one TU -- a net loss in every loop
-# (the minijz target above amortizes its PCH across nine TUs instead).
+# PCH: the SAME opt_generic.hpp precompile the minijz target uses (NOT the
+# old ~600 MB umbrella idea this note used to reject): ~39 MB / ~5s, built
+# once and reused by every unit_tests.cpp iteration. A test-only edit goes
+# 15.3s -> ~10.5s (the String+generic+pass stack is memory-mapped in); a
+# header edit pays the PCH rebuild it caused anyway. The cx static_asserts
+# in cx_tours.hpp still compile: they live in headers included AFTER the
+# PCH's opt_generic.hpp, so their constexpr bodies stay visible.
+target_precompile_headers(minijz_unit_tests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/minijz/opt/opt_generic.hpp)
 
 enable_testing()
 
